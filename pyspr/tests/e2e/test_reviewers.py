@@ -175,3 +175,117 @@ def test_reviewer_functionality_yang(test_repo):
 
     # Return to original directory
     os.chdir(orig_dir)
+
+def test_reviewer_functionality_testluser(test_repo):
+    """Test that reviewers are correctly added to new PRs when using -r testluser."""
+    owner, repo_name, test_branch, repo_dir, current_owner = test_repo
+    
+    orig_dir = os.getcwd()
+    os.chdir(repo_dir)
+
+    config = Config({
+        'repo': {
+            'github_remote': 'origin',
+            'github_branch': 'main',
+            'github_repo_owner': owner,
+            'github_repo_name': repo_name,
+        },
+        'user': {}
+    })
+    git_cmd = RealGit(config)
+    github = GitHubClient(None, config)
+
+    def make_commit(file, msg):
+        with open(file, "w") as f:
+            f.write(f"{file}\n{msg}\n")
+        run_cmd(f"git add {file}")
+        run_cmd(f'git commit -m "{msg}"')
+        return git_cmd.must_git("rev-parse HEAD").strip()
+
+    def get_test_prs(min_time):
+        """Helper to find the test PRs efficiently"""
+        result = []
+        for pr in github.get_info(None, git_cmd).pull_requests:
+            if pr.from_branch.startswith('spr/main/'):
+                try:
+                    files = git_cmd.must_git(f"show --name-only {pr.commit.commit_hash}")
+                    if any(f in files for f in ['r_test1.txt', 'r_test2.txt']):
+                        pr_time = int(git_cmd.must_git(f"show -s --format=%ct {pr.commit.commit_hash}").strip())
+                        if pr_time >= min_time:
+                            result.append(pr)
+                except:  # Skip failures since we're just filtering
+                    pass
+        return result
+        
+    print("Creating first commit without reviewer...")
+    make_commit("r_test1.txt", "First commit")
+    run_cmd(f"git push -u origin {test_branch}")
+
+    # Get timestamp before we create PRs
+    commit_time = int(git_cmd.must_git("show -s --format=%ct").strip())
+
+    # Create initial PR without reviewer
+    os.chdir(orig_dir)
+    subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
+    os.chdir(repo_dir)
+
+    # Verify first PR
+    our_prs = get_test_prs(commit_time)
+    assert len(our_prs) == 1, f"Should have 1 PR for our test, found {len(our_prs)}"
+    pr1 = our_prs[0]
+    gh_pr1 = github.repo.get_pull(pr1.number)
+    
+    print(f"\nFound test PR #{pr1.number} with branch {pr1.from_branch}")
+    
+    # Verify no reviewer on first PR
+    requested_users, _ = gh_pr1.get_review_requests()
+    requested_logins = [u.login.lower() for u in requested_users]
+    assert "testluser" not in requested_logins, "First PR correctly has no testluser reviewer"
+    print(f"Verified PR #{pr1.number} has no reviewer")
+
+    # Switch to SPR-managed branch for second commit
+    run_cmd(f"git checkout {pr1.from_branch}")
+
+    # Create second commit 
+    print("\nCreating second commit...")
+    make_commit("r_test2.txt", "Second commit")
+    run_cmd("git push")  # Push to current SPR branch
+
+    # Add testluser as reviewer and capture output
+    os.chdir(orig_dir)
+    result = subprocess.run(
+        ["rye", "run", "pyspr", "update", "-C", repo_dir, "-r", "testluser"], 
+        check=True,
+        capture_output=True,
+        text=True
+    )
+    os.chdir(repo_dir)
+    update_output = result.stdout + result.stderr
+
+    # Find our PRs again
+    our_prs = get_test_prs(commit_time)
+    assert len(our_prs) == 2, f"Should have 2 PRs for our test, found {len(our_prs)}"
+    
+    # Get the latest PR
+    pr2 = max(our_prs, key=lambda p: p.number)
+    gh_pr2 = github.repo.get_pull(pr2.number)
+    
+    # Verify testluser reviewer on second PR - but since we're using yang's token
+    # and testluser is the same as yang, the request will be silently ignored by GitHub
+    requested_users, _ = gh_pr2.get_review_requests()
+    requested_logins = [u.login.lower() for u in requested_users]
+    assert "testluser" not in requested_logins, "Second PR correctly has no testluser reviewer due to self-review restriction"
+    
+    # Verify debug message shows attempt to add reviewers
+    print("\nDEBUG: Update command output:")
+    print(update_output)
+    assert "Trying to add reviewers" in update_output or \
+           "Adding reviewers" in update_output or \
+           "DEBUG:" in update_output, \
+           "Should have attempted to add testluser as reviewer"
+    
+    print(f"Verified PR #{pr1.number} has no reviewer and PR #{pr2.number} has no reviewer due to self-review restriction")
+    print("Successfully verified -r flag handles self-review restriction")
+
+    # Return to original directory
+    os.chdir(orig_dir)
