@@ -38,28 +38,76 @@ def get_local_commit_stack(config, git_cmd) -> List[Commit]:
     
     commits, valid = parse_local_commit_stack(commit_log)
     
-    # For minimal port, if not valid, use hashes
-    if not valid or not commits:
+    # If not valid, it means commits are missing IDs - add them
+    if not valid:
         # Get commits between origin/main and HEAD
         remote = config.repo.get('github_remote', 'origin')
         branch = config.repo.get('github_branch', 'main')
         target = f"{remote}/{branch}"
 
         cmd = f"rev-list --reverse {target}..HEAD"
-        commit_ids = git_cmd.must_git(cmd).strip().split("\n")
-        if not commit_ids or commit_ids[0] == '':
+        commit_hashes = git_cmd.must_git(cmd).strip().split("\n")
+        if not commit_hashes or commit_hashes[0] == '':
             return []
 
-        commits = []
-        for cid in commit_ids:
-            if not cid:
-                continue
-            cmd = f"show -s --format=%H:%s {cid}"
-            commit_info = git_cmd.must_git(cmd).strip()
-            commit_hash, subject = commit_info.split(":", 1)
-            wip = subject.upper().startswith("WIP")
-            # Use hash as ID for minimal port
-            commits.append(Commit(commit_hash[:8], commit_hash, subject, "", wip))
+        # Save current state
+        curr_branch = git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
+        original_head = git_cmd.must_git("rev-parse HEAD").strip()
+
+        try:
+            commits = []
+            last_good_hash = f"{target}"
+
+            for cid in reversed(commit_hashes):  # Work from newest to oldest
+                if not cid:
+                    continue
+                # Check for commit-id in message
+                body = git_cmd.must_git(f"show -s --format=%b {cid}").strip()
+                commit_id_match = re.search(r'commit-id:([a-f0-9]{8})', body)
+                
+                if commit_id_match:
+                    # Has ID already - just prepend to list
+                    commit_id = commit_id_match.group(1)
+                    commit_hash = git_cmd.must_git(f"rev-parse {cid}").strip()
+                    subject = git_cmd.must_git(f"show -s --format=%s {cid}").strip()
+                    wip = subject.upper().startswith("WIP")
+                    commits.insert(0, Commit(commit_id, commit_hash, subject, body, wip))
+                else:
+                    # Need to add ID
+                    import uuid
+                    commit_id = str(uuid.uuid4())[:8]
+                    
+                    # Get current message
+                    full_msg = git_cmd.must_git(f"log -1 --format=%B {cid}").strip()
+                    subject = git_cmd.must_git(f"show -s --format=%s {cid}").strip()
+                    new_msg = f"{full_msg}\n\ncommit-id:{commit_id}"
+                    
+                    # Checkout commit
+                    git_cmd.must_git(f"checkout {cid}")
+                    
+                    # Amend with ID
+                    git_cmd.must_git(f"commit --amend -m \"{new_msg}\"")
+                    
+                    # Get new hash
+                    new_hash = git_cmd.must_git("rev-parse HEAD").strip()
+                    
+                    # Add to list
+                    wip = subject.upper().startswith("WIP")
+                    commits.insert(0, Commit(commit_id, new_hash, subject, new_msg, wip))
+
+            # Now rewrite history with the new commit IDs
+            git_cmd.must_git(f"checkout {curr_branch}")
+            git_cmd.must_git(f"reset --hard {target}")
+            for commit in commits:
+                cherry_pick_cmd = f"cherry-pick {commit.commit_hash}"
+                git_cmd.must_git(cherry_pick_cmd)
+                
+            return commits
+        except Exception as e:
+            # Clean up on error
+            git_cmd.must_git(f"checkout {curr_branch}")
+            git_cmd.must_git(f"reset --hard {original_head}")
+            raise Exception(f"Failed to add commit IDs: {e}")
 
     return commits
 
@@ -118,13 +166,7 @@ def parse_local_commit_stack(commit_log: str) -> Tuple[List[Commit], bool]:
                     
     # If still scanning, missing commit ID
     if commit_scan_on:
-        # For minimal port: use hash as ID 
-        scanned_commit.commit_id = scanned_commit.commit_hash[:8]
-        scanned_commit.body = scanned_commit.body.strip()
-        if scanned_commit.subject.startswith("WIP"):
-            scanned_commit.wip = True
-        commits.insert(0, scanned_commit)
-        return commits, True
+        return [], False
         
     return commits, True
 

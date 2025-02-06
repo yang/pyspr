@@ -97,6 +97,14 @@ class GitHubClient(GitHubInterface):
                     # Extract commit ID from branch name - matches Go behavior
                     commit_id = branch_match.group(1)
                     commit_hash = git_cmd.must_git(f"rev-parse {pr.head.sha}").strip()
+                    # Get actual commit ID from commit message if possible
+                    try:
+                        body = git_cmd.must_git(f"show -s --format=%b {commit_hash}").strip()
+                        msg_commit_id = re.search(r'commit-id:([a-f0-9]{8})', body)
+                        if msg_commit_id:
+                            commit_id = msg_commit_id.group(1)
+                    except:
+                        pass  # Keep ID from branch name if can't get from message
                     commit = Commit(commit_id, commit_hash, pr.title)
                     commits = [commit]  # Simplified, no commit history check
                     pull_requests.append(PullRequest(pr.number, commit, commits))

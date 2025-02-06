@@ -196,6 +196,7 @@ class StackedPR:
         # Process commits in order to rebuild PRs array in correct order
         github_info.pull_requests = []
 
+        # Match commits to PRs first by ID if possible
         for commit_index, c in enumerate(non_wip_commits):
             if count is not None and commit_index == count:
                 break
@@ -218,13 +219,27 @@ class StackedPR:
                     break
 
             if not pr_found:
-                pr = self.github.create_pull_request(ctx, self.git_cmd, github_info, c, prev_commit)
-                github_info.pull_requests.append(pr)
-                update_queue.append({
-                    'pr': pr,
-                    'commit': c,
-                    'prev_commit': prev_commit
-                })
+                # If no match by ID, try to use PR at same position
+                if commit_index < len(valid_pull_requests):
+                    pr = valid_pull_requests[commit_index]
+                    update_queue.append({
+                        'pr': pr, 
+                        'commit': c,
+                        'prev_commit': prev_commit
+                    })
+                    pr.commit = c
+                    github_info.pull_requests.append(pr)
+                    if reviewers:
+                        print(f"warning: not updating reviewers for PR #{pr.number}")
+                else:
+                    # Create new PR if no existing one to reuse
+                    pr = self.github.create_pull_request(ctx, self.git_cmd, github_info, c, prev_commit)
+                    github_info.pull_requests.append(pr)
+                    update_queue.append({
+                        'pr': pr,
+                        'commit': c,
+                        'prev_commit': prev_commit
+                    })
                 if reviewers:
                     if assignable is None:
                         assignable = self.github.get_assignable_users(ctx)
