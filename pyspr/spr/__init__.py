@@ -22,14 +22,17 @@ class StackedPR:
 
     def align_local_commits(self, commits: List[Commit], prs: List[PullRequest]) -> List[Commit]:
         """Align local commits with pull requests."""
-        remote_commits = {c.commit_id: (c.commit_id == pr.commit.commit_id) 
-                          for pr in prs 
-                          for c in pr.commits}
+        # Map commit IDs to determine if they are PR head commits
+        remote_commits = {}
+        for pr in prs:
+            for c in pr.commits:
+                is_head = c.commit_id == pr.commit.commit_id
+                remote_commits[c.commit_id] = is_head
 
         result = []
         for commit in commits:
-            head, ok = remote_commits.get(commit.commit_id, (None, False))
-            if not ok or head:
+            # Keep commit if it's not in remote or if it's a PR head commit
+            if commit.commit_id not in remote_commits or remote_commits[commit.commit_id]:
                 result.append(commit)
 
         return result
