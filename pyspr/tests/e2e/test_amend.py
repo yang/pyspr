@@ -652,24 +652,49 @@ def test_replace_commit(test_repo):
         # 4. Verify:
         print("\nVerifying PR handling after replace...")
         info = github.get_info(None, git_cmd)
-        # Get all PRs with our commit IDs + PR for B to verify it's closed
-        relevant_prs = [pr for pr in info.pull_requests 
-                     if pr.commit.commit_id in [c1_id, new_c2_id, c3_id] or 
-                     pr.number == pr2_num]
-        active_pr_nums = [pr.number for pr in relevant_prs]
-        active_pr_ids = {pr.commit.commit_id: pr.number for pr in relevant_prs}
+        # Get relevant PRs: those with our commit IDs + B's PR if it's still open
+        pr_nums_to_check = set()  # Track all numbers we care about
+        relevant_prs = []
+        for pr in info.pull_requests:
+            if (pr.commit.commit_id in [c1_id, new_c2_id, c3_id] or
+                pr.number == pr2_num):
+                relevant_prs.append(pr)
+                pr_nums_to_check.add(pr.number)
         
-        # - PR for B was closed
-        assert pr2_num not in active_pr_nums, f"PR #{pr2_num} for B should be closed"
+        # Map of commit IDs to PRs
+        active_pr_ids = {pr.commit.commit_id: pr for pr in relevant_prs}
         
-        # - New PR created for D with new number
-        assert new_c2_id in active_pr_ids, f"Should create PR for new commit D ({new_c2_id})"
-        new_pr_num = active_pr_ids[new_c2_id]
-        assert new_pr_num != pr2_num, f"Should not reuse PR #{pr2_num} for new commit"
+        # - Verify B's PR state
+        if pr2_num in pr_nums_to_check:
+            # If it exists, it should not have B's commit ID anymore
+            reused_pr = next((pr for pr in relevant_prs if pr.number == pr2_num), None)
+            if reused_pr:
+                assert reused_pr.commit.commit_id == new_c2_id, f"PR #{pr2_num} should not retain B's commit - found {reused_pr.commit.commit_id}"
+                print(f"Found PR #{pr2_num} reused for commit {new_c2_id}")
+        else:
+            print(f"PR #{pr2_num} was properly closed")
+        
+        # - Verify new commit D has a PR
+        assert new_c2_id in active_pr_ids, f"Should have PR for new commit D ({new_c2_id})"
+        new_pr = active_pr_ids[new_c2_id]
+        print(f"Found PR #{new_pr.number} for new commit {new_c2_id}")
+        
+        # Key assertions to verify we don't use positional matching:
+        # 1. B's PR should be closed, not reused for any commit
+        assert pr2_num not in pr_nums_to_check, "B's PR should be closed, not reused via position matching"
+        # 2. D's new PR should not reuse B's PR number (which would happen with position matching)
+        assert new_pr.number != pr2_num, "Should not reuse B's PR number for D (no position matching)"
+        # 3. Verify we don't try to match removed commits to any remaining PRs
+        for remaining_pr in relevant_prs:
+            assert remaining_pr.commit.commit_id != c2_id, f"PR #{remaining_pr.number} should not be matched to removed commit B"
 
-        # Check final stack structure  
-        stack_prs = [pr for pr in relevant_prs if pr.from_branch.startswith('spr/main/')]
+        # Check final stack structure
+        stack_prs = sorted([pr for pr in relevant_prs 
+                          if pr.commit.commit_id in [c1_id, new_c2_id, c3_id]],
+                          key=lambda pr: pr.number)
         assert len(stack_prs) == 3, f"Should have 3 active PRs in stack, found {len(stack_prs)}"
+
+        # Get PRs by commit ID 
         prs_by_id = {pr.commit.commit_id: pr for pr in stack_prs}
         pr1 = prs_by_id.get(c1_id)
         pr_d = prs_by_id.get(new_c2_id)

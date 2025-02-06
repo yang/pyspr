@@ -15,6 +15,7 @@ class PullRequest:
     commit: Commit
     commits: List[Commit]
     base_ref: Optional[str] = None
+    from_branch: Optional[str] = None  # Added to match Go version's field name
     in_queue: bool = False
     body: str = ""
     title: str = ""
@@ -187,9 +188,10 @@ class GitHubClient(GitHubInterface):
                         
                         in_queue = False  # Auto merge info not critical
                         
+                        from_branch = pr_data['headRefName']
                         pull_requests.append(PullRequest(number, commit, commits,
-                                                        base_ref=base_ref, in_queue=in_queue,
-                                                        title=title, body=body))
+                                                        base_ref=base_ref, from_branch=from_branch,
+                                                        in_queue=in_queue, title=title, body=body))
             
         except Exception as e:
             print(f"GraphQL query failed: {e}")
@@ -225,7 +227,8 @@ class GitHubClient(GitHubInterface):
                     except:
                         in_queue = False
                     pull_requests.append(PullRequest(pr.number, commit, commits,
-                                                   base_ref=pr.base.ref, in_queue=in_queue,
+                                                   base_ref=pr.base.ref, from_branch=pr.head.ref,
+                                                   in_queue=in_queue,
                                                    title=pr.title, body=pr.body))
                 
         return GitHubInfo(local_branch, pull_requests)
