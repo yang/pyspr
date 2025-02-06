@@ -14,6 +14,7 @@ class PullRequest:
     number: int
     commit: Commit
     commits: List[Commit]
+    base_ref: Optional[str] = None
 
     def mergeable(self, config) -> bool:
         """Check if PR is mergeable."""
@@ -107,7 +108,7 @@ class GitHubClient(GitHubInterface):
                         pass  # Keep ID from branch name if can't get from message
                     commit = Commit(commit_id, commit_hash, pr.title)
                     commits = [commit]  # Simplified, no commit history check
-                    pull_requests.append(PullRequest(pr.number, commit, commits))
+                    pull_requests.append(PullRequest(pr.number, commit, commits, base_ref=pr.base.ref))
                 
         return GitHubInfo(local_branch, pull_requests)
 
@@ -127,7 +128,7 @@ class GitHubClient(GitHubInterface):
         body = git_cmd.must_git(f"show -s --format=%b {commit.commit_hash}").strip()
         
         pr = self.repo.create_pull(title=title, body=body, head=branch_name, base=base)
-        return PullRequest(pr.number, commit, [commit])
+        return PullRequest(pr.number, commit, [commit], base_ref=base)
 
     def update_pull_request(self, ctx, git_cmd, prs: List[PullRequest], 
                            pr: PullRequest, commit: Commit, prev_commit: Optional[Commit]):

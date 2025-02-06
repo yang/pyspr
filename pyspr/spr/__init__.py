@@ -59,10 +59,16 @@ class StackedPR:
         """Sort PRs by local commit order."""
         pull_request_map = {pr.commit.commit_id: pr for pr in pull_requests}
 
+        print("DEBUG sort_pull_requests:")
+        print(f"  Local commit IDs: {[c.commit_id for c in local_commits]}")
+        print(f"  PR commit IDs: {[pr.commit.commit_id for pr in pull_requests]}")
+        print(f"  PR map: {list(pull_request_map.keys())}")
+
         sorted_pull_requests = []
         for commit in local_commits:
             if not commit.wip and commit.commit_id in pull_request_map:
                 sorted_pull_requests.append(pull_request_map[commit.commit_id])
+        print(f"  Sorted PRs: {[pr.commit.commit_id for pr in sorted_pull_requests]}")
         return sorted_pull_requests
 
     def fetch_and_get_github_info(self, ctx) -> Optional[GitHubInfo]:
