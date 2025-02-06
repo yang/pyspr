@@ -1,0 +1,33 @@
+[project]
+name = "pyspr"
+version = "0.1.0"
+description = "Stacked PR management tool - Python port of spr (minimal update command)"
+authors = [
+    { name = "Bot", email = "bot@users.noreply.github.com" }
+]
+dependencies = [
+    "pyyaml>=6.0.2",
+    "pygithub>=2.5.0", 
+    "gitpython>=3.1.44",
+    "click>=8.1.7",
+    "pydantic>=2.9.2"
+]
+readme = "README.md"
+requires-python = ">= 3.8"
+
+[project.scripts]
+pyspr = "pyspr.cmd.spr.main:main"
+git-spr = "pyspr.cmd.spr.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.rye]
+managed = true
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["pyspr"]
