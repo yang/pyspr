@@ -248,8 +248,22 @@ def test_merge_workflow(test_repo):
         with open(file, "w") as f:
             f.write(f"{file}\n{line}\n")
         try:
+            print(f"Creating file {file}...")
             run_cmd(f"git add {file}")
-            run_cmd(f'git commit -m "{msg}"')
+            run_cmd("git status")  # Debug: show git status after add
+            # Capture output to debug commit issues
+            result = subprocess.run(f'git commit -m "{msg}"', shell=True, check=False,
+                                  stderr=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  universal_newlines=True)
+            if result.returncode != 0:
+                print(f"Git commit failed with code {result.returncode}")
+                print(f"STDOUT: {result.stdout}")
+                print(f"STDERR: {result.stderr}")
+                print("Directory contents:")
+                subprocess.run(["ls", "-la"], check=False)
+                raise subprocess.CalledProcessError(result.returncode, result.args,
+                                                   output=result.stdout,
+                                                   stderr=result.stderr)
         except subprocess.CalledProcessError as e:
             print(f"Failed to commit: {e}")
             raise
@@ -257,9 +271,11 @@ def test_merge_workflow(test_repo):
         
     print("Creating commits...")
     try:
-        c1_hash = make_commit("test_merge1.txt", "line 1", "Test multi commit 1")
-        c2_hash = make_commit("test_merge2.txt", "line 1", "Test multi commit 2")  
-        c3_hash = make_commit("test_merge3.txt", "line 1", "Test multi commit 3")
+        # Use static filenames but unique content
+        unique = str(uuid.uuid4())[:8]
+        c1_hash = make_commit("test_merge1.txt", f"line 1 - {unique}", "Test multi commit 1")
+        c2_hash = make_commit("test_merge2.txt", f"line 1 - {unique}", "Test multi commit 2")  
+        c3_hash = make_commit("test_merge3.txt", f"line 1 - {unique}", "Test multi commit 3")
         run_cmd(f"git push -u origin {test_branch}")  # Push branch with commits
     except subprocess.CalledProcessError as e:
         # Get git status for debugging
@@ -340,7 +356,7 @@ def test_merge_workflow(test_repo):
     # Verify merge commit contains all 3 commits
     merge_files = git_cmd.must_git(f"show --name-only {merge_sha}").splitlines()
     assert "test_merge1.txt" in merge_files, "Merge should include first commit's file"
-    assert "test_merge2.txt" in merge_files, "Merge should include second commit's file"
+    assert "test_merge2.txt" in merge_files, "Merge should include second commit's file" 
     assert "test_merge3.txt" in merge_files, "Merge should include third commit's file"
     
     # Return to project dir
