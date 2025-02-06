@@ -43,10 +43,14 @@ def test_repo():
         # Configure git
         run_cmd("git config user.name 'Test User'")
         run_cmd("git config user.email 'test@example.com'")
+        run_cmd("git checkout -b test_local") # Create local branch first
         
-        yield repo_name, test_branch
+        repo_dir = os.path.abspath(os.getcwd())
+        os.chdir(orig_dir)
+        yield repo_name, test_branch, repo_dir
 
-        # Cleanup - delete test branch locally and remotely
+        # Cleanup - go back to repo to delete branch
+        os.chdir(repo_dir)
         run_cmd("git checkout main")
         run_cmd(f"git branch -D {test_branch}")
         try:
@@ -216,3 +220,128 @@ def test_amend_workflow(test_repo):
         message = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}").strip()
         print(f"PR #{pr.number} message:\n{message}\n")
         assert f"commit-id:{pr.commit.commit_id}" in message, f"PR #{pr.number} should have correct commit ID in message"
+
+def test_merge_workflow(test_repo):
+    """Test full merge workflow with real PRs."""
+    repo_name, test_branch, repo_dir = test_repo
+    owner = "yang"  # Hard-code since we know the test repo
+
+    orig_dir = os.getcwd()
+    # Temporarily go to repo to create commits
+    os.chdir(repo_dir)
+
+    # Real config using the test repo
+    config = Config({
+        'repo': {
+            'github_remote': 'origin',
+            'github_branch': 'main',
+            'github_repo_owner': owner,
+            'github_repo_name': 'teststack',
+        },
+        'user': {}
+    })
+    git_cmd = RealGit(config)
+    github = GitHubClient(None, config)  # Real GitHub client
+    
+    # Create 3 commits
+    def make_commit(file, line, msg):
+        with open(file, "w") as f:
+            f.write(f"{file}\n{line}\n")
+        try:
+            run_cmd(f"git add {file}")
+            run_cmd(f'git commit -m "{msg}"')
+        except subprocess.CalledProcessError as e:
+            print(f"Failed to commit: {e}")
+            raise
+        return git_cmd.must_git("rev-parse HEAD").strip()
+        
+    print("Creating commits...")
+    try:
+        c1_hash = make_commit("test_merge1.txt", "line 1", "Test multi commit 1")
+        c2_hash = make_commit("test_merge2.txt", "line 1", "Test multi commit 2")  
+        c3_hash = make_commit("test_merge3.txt", "line 1", "Test multi commit 3")
+        run_cmd(f"git push -u origin {test_branch}")  # Push branch with commits
+    except subprocess.CalledProcessError as e:
+        # Get git status for debugging
+        subprocess.run(["git", "status"], check=False)
+        raise
+    
+    # Go back to project dir to run commands
+    os.chdir(orig_dir)
+    
+    # Initial update to create PRs
+    print("Creating initial PRs...")
+    subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
+    
+    os.chdir(repo_dir)
+    # Verify PRs created
+    info = github.get_info(None, git_cmd)
+    assert len(info.pull_requests) == 3
+    pr1, pr2, pr3 = sorted(info.pull_requests, key=lambda pr: pr.number)
+    print(f"Created PRs: #{pr1.number}, #{pr2.number}, #{pr3.number}")
+
+    # Verify initial PR chain
+    assert pr1.base_ref == "main"
+    assert pr2.base_ref == f"spr/main/{pr1.commit.commit_id}"
+    assert pr3.base_ref == f"spr/main/{pr2.commit.commit_id}"
+
+    # Save numbers before merge
+    pr1_num = pr1.number
+    pr2_num = pr2.number
+    pr3_num = pr3.number 
+
+    # Go back to project dir to run merge
+    os.chdir(orig_dir)
+
+    # Run merge for all PRs
+    print("\nMerging all PRs...")
+    try:
+        merge_output = subprocess.check_output(
+            ["rye", "run", "pyspr", "merge", "-C", repo_dir],
+            stderr=subprocess.STDOUT,
+            universal_newlines=True
+        )
+        print(merge_output)
+    except subprocess.CalledProcessError as e:
+        # Get final PR state to help debug failure
+        os.chdir(repo_dir)
+        info = github.get_info(None, git_cmd)
+        print("\nFinal PR state after merge attempt:")
+        for pr in sorted(info.pull_requests, key=lambda pr: pr.number):
+            gh_pr = github.repo.get_pull(pr.number)
+            print(f"PR #{pr.number}:")
+            print(f"  Title: {gh_pr.title}")
+            print(f"  Base: {gh_pr.base.ref}")
+            print(f"  State: {gh_pr.state}")
+            print(f"  Merged: {gh_pr.merged}")
+        os.chdir(orig_dir)
+        print(f"Merge failed with output:\n{e.output}")
+        raise
+
+    # Verify top PR was merged
+    assert f"Merging PR #{pr3_num} to main" in merge_output, "Should merge top PR"
+    assert f"This will merge 3 PRs" in merge_output, "Should merge all 3 PRs"
+
+    # Go back to repo to verify final state 
+    os.chdir(repo_dir)
+
+    # Verify all PRs merged
+    info = github.get_info(None, git_cmd)
+    assert len(info.pull_requests) == 0, "All PRs should be merged and closed"
+    
+    # Get the merge commit
+    run_cmd("git fetch origin main")
+    merge_sha = git_cmd.must_git("rev-parse origin/main").strip()
+    merge_msg = git_cmd.must_git(f"show -s --format=%B {merge_sha}").strip()
+    
+    # Verify merge commit contains the right PR number
+    assert f"#{pr3_num}" in merge_msg, f"Merge commit should reference PR #{pr3_num}"
+    
+    # Verify merge commit contains all 3 commits
+    merge_files = git_cmd.must_git(f"show --name-only {merge_sha}").splitlines()
+    assert "test_merge1.txt" in merge_files, "Merge should include first commit's file"
+    assert "test_merge2.txt" in merge_files, "Merge should include second commit's file"
+    assert "test_merge3.txt" in merge_files, "Merge should include third commit's file"
+    
+    # Return to project dir
+    os.chdir(orig_dir)

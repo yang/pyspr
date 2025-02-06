@@ -15,6 +15,7 @@ class PullRequest:
     commit: Commit
     commits: List[Commit]
     base_ref: Optional[str] = None
+    in_queue: bool = False
 
     def mergeable(self, config) -> bool:
         """Check if PR is mergeable."""
@@ -64,6 +65,10 @@ class GitHubInterface:
     def get_assignable_users(self, ctx) -> List[Dict]:
         """Get assignable users."""
         raise NotImplementedError()
+        
+    def merge_pull_request(self, ctx, pr: PullRequest, merge_method: str):
+        """Merge pull request."""
+        raise NotImplementedError()
 
 class GitHubClient(GitHubInterface):
     """GitHub client implementation."""
@@ -108,7 +113,12 @@ class GitHubClient(GitHubInterface):
                         pass  # Keep ID from branch name if can't get from message
                     commit = Commit(commit_id, commit_hash, pr.title)
                     commits = [commit]  # Simplified, no commit history check
-                    pull_requests.append(PullRequest(pr.number, commit, commits, base_ref=pr.base.ref))
+                    try:
+                        in_queue = pr.auto_merge is not None
+                    except:
+                        in_queue = False
+                    pull_requests.append(PullRequest(pr.number, commit, commits, 
+                                                    base_ref=pr.base.ref, in_queue=in_queue))
                 
         return GitHubInfo(local_branch, pull_requests)
 
@@ -131,7 +141,7 @@ class GitHubClient(GitHubInterface):
         return PullRequest(pr.number, commit, [commit], base_ref=base)
 
     def update_pull_request(self, ctx, git_cmd, prs: List[PullRequest], 
-                           pr: PullRequest, commit: Commit, prev_commit: Optional[Commit]):
+                           pr: PullRequest, commit: Optional[Commit], prev_commit: Optional[Commit]):
         """Update pull request."""
         gh_pr = self.repo.get_pull(pr.number)
         
@@ -140,24 +150,30 @@ class GitHubClient(GitHubInterface):
         print(f"  Title: {gh_pr.title}")
         print(f"  Current base: {gh_pr.base.ref}")
         
-        # Update title if needed
-        if gh_pr.title != commit.subject:
+        # Update title if needed and commit is provided
+        if commit and gh_pr.title != commit.subject:
             gh_pr.edit(title=commit.subject)
 
-        # Update base branch to maintain stack
-        current_base = gh_pr.base.ref
-        desired_base = None
-        
-        if prev_commit:
-            desired_base = self.branch_name_from_commit(prev_commit)
-            print(f"  Should target: {desired_base} (prev commit: {prev_commit.commit_hash[:8]})")
-        else:
-            desired_base = self.config.repo.get('github_branch', 'main')
-            print("  Should target: main (no prev commit)")
+        # Update base branch to maintain stack, but not if in merge queue
+        try:
+            in_queue = gh_pr.auto_merge is not None
+        except:
+            in_queue = False
+
+        if not in_queue:
+            current_base = gh_pr.base.ref
+            desired_base = None
             
-        if current_base != desired_base:
-            print(f"  Updating base from {current_base} to {desired_base}")
-            gh_pr.edit(base=desired_base)
+            if prev_commit:
+                desired_base = self.branch_name_from_commit(prev_commit)
+                print(f"  Should target: {desired_base} (prev commit: {prev_commit.commit_hash[:8]})")
+            else:
+                desired_base = self.config.repo.get('github_branch', 'main')
+                print("  Should target: main (no prev commit)")
+                
+            if current_base != desired_base:
+                print(f"  Updating base from {current_base} to {desired_base}")
+                gh_pr.edit(base=desired_base)
 
     def add_reviewers(self, ctx, pr: PullRequest, user_ids: List[str]):
         """Add reviewers to pull request."""
@@ -178,6 +194,35 @@ class GitHubClient(GitHubInterface):
         """Get assignable users."""
         users = self.repo.get_assignees()
         return [{"login": u.login, "id": u.login} for u in users]
+
+    def merge_pull_request(self, ctx, pr: PullRequest, merge_method: str):
+        """Merge pull request using merge queue if configured."""
+        gh_pr = self.repo.get_pull(pr.number)
+        
+        # Check if merge queue is enabled and supported for this repo
+        merge_queue_enabled = self.config.repo.get('merge_queue', False)
+        if merge_queue_enabled:
+            try:
+                # Try to enable auto-merge (merge queue)
+                gh_pr.enable_automerge(merge_method=merge_method)
+                print(f"PR #{pr.number} added to merge queue")
+            except Exception as e:
+                print(f"Merge queue not supported or error: {e}")
+                # Fall back to regular merge
+                if merge_method == 'squash':
+                    gh_pr.merge(merge_method='squash')
+                elif merge_method == 'rebase':
+                    gh_pr.merge(merge_method='rebase')
+                else:
+                    gh_pr.merge(merge_method='merge')
+        else:
+            # Regular merge
+            if merge_method == 'squash':
+                gh_pr.merge(merge_method='squash')
+            elif merge_method == 'rebase':
+                gh_pr.merge(merge_method='rebase')
+            else:
+                gh_pr.merge(merge_method='merge')
 
     def branch_name_from_commit(self, commit: Commit) -> str:
         """Generate branch name from commit. Matches Go implementation."""

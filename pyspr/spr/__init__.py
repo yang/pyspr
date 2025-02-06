@@ -282,3 +282,99 @@ class StackedPR:
         else:
             for pr in reversed(github_info.pull_requests):
                 print(str(pr))
+
+    def merge_pull_requests(self, ctx, count: Optional[int] = None):
+        """Merge all mergeable pull requests."""
+        github_info = self.github.get_info(ctx, self.git_cmd)
+
+        # MergeCheck handling
+        if self.config.repo.get('merge_check'):
+            local_commits = get_local_commit_stack(self.config, self.git_cmd)
+            if local_commits:
+                last_commit = local_commits[-1]
+                checked_commit = self.config.state.get('merge_check_commit', {}).get(github_info.key())
+                
+                if not checked_commit:
+                    print("Need to run merge check 'spr check' before merging")
+                    return
+                elif checked_commit != "SKIP" and last_commit.commit_hash != checked_commit:
+                    print("Need to run merge check 'spr check' before merging")
+                    return
+
+        if not github_info.pull_requests:
+            return
+
+        # Sort PRs in stack order (bottom to top)
+        prs_in_order = []
+        pr_map = {pr.commit.commit_id: pr for pr in github_info.pull_requests}
+        
+        # Find base PR (the one targeting main)
+        base_pr = None
+        branch = self.config.repo.get('github_branch', 'main')
+        for pr in github_info.pull_requests:
+            if pr.base_ref == branch:
+                base_pr = pr
+                break
+
+        if not base_pr:
+            return
+
+        # Build stack from bottom up
+        current_pr = base_pr
+        while current_pr:
+            prs_in_order.append(current_pr)
+            next_pr = None
+            for pr in github_info.pull_requests:
+                # If this PR targets current PR's branch
+                if pr.base_ref == f"spr/{branch}/{current_pr.commit.commit_id}":
+                    next_pr = pr
+                    break
+            current_pr = next_pr
+
+        # Now find highest mergeable PR in the stack
+        pr_index = len(prs_in_order) - 1  # Start from top
+        while pr_index >= 0:
+            if prs_in_order[pr_index].mergeable(self.config):
+                if count is not None and pr_index + 1 > count:
+                    pr_index -= 1
+                    continue
+                break
+            pr_index -= 1
+
+        if pr_index < 0:
+            return
+
+        github_info.pull_requests = prs_in_order  # Update list to be in stack order
+        pr_to_merge = prs_in_order[pr_index]
+
+        # Update base of merging PR to target branch
+        main_branch = self.config.repo.get('github_branch', 'main')
+        # Debug prints
+        print(f"Merging PR #{pr_to_merge.number} to {main_branch}")
+        print(f"This will merge {pr_index + 1} PRs")
+
+        # Update the base of the PR to merge to main branch
+        self.github.update_pull_request(ctx, self.git_cmd, github_info.pull_requests, 
+                                       pr_to_merge, None, None)
+
+        # Merge the PR
+        merge_method = self.config.repo.get('merge_method', 'squash')
+        self.github.merge_pull_request(ctx, pr_to_merge, merge_method)
+
+        # Close PRs below the merged one
+        for i in range(pr_index):
+            pr = github_info.pull_requests[i]
+            comment = (
+                f"✓ Commit merged in pull request "
+                f"[#{pr_to_merge.number}](https://{self.config.repo.get('github_host', 'github.com')}/"
+                f"{self.config.repo.get('github_repo_owner')}/{self.config.repo.get('github_repo_name')}"
+                f"/pull/{pr_to_merge.number})"
+            )
+            self.github.comment_pull_request(ctx, pr, comment)
+            self.github.close_pull_request(ctx, pr)
+
+        # Print status of merged PRs
+        for i in range(pr_index + 1):
+            pr = github_info.pull_requests[i]
+            pr.merged = True
+            print(str(pr))

@@ -21,6 +21,13 @@ def check(err):
 @click.pass_context
 def cli(ctx):
     """SPR - Stacked Pull Requests on GitHub."""
+    ctx.obj = {}
+
+def setup_git(directory: Optional[str] = None):
+    """Setup Git command and config."""
+    if directory:
+        os.chdir(directory)
+        
     # Check git dir
     git_cmd = RealGit(default_config())
     try:
@@ -34,34 +41,50 @@ def cli(ctx):
     cfg = parse_config(git_cmd)
     config = Config(cfg)
     git_cmd = RealGit(config)
-
-    ctx.obj = {
-        'config': config,
-        'git_cmd': git_cmd,
-        'github': GitHubClient(None, config),
-    }
+    github = GitHubClient(None, config)
+    
+    return config, git_cmd, github
 
 @cli.command(name="update", help="Update and create pull requests for updated commits in the stack")
+@click.option('-C', '--directory', type=click.Path(exists=True, file_okay=False, dir_okay=True),
+              help='Run as if spr was started in DIRECTORY instead of the current working directory')
 @click.option('--reviewer', '-r', multiple=True, 
               help="Add the specified reviewer to newly created pull requests")
 @click.option('--count', '-c', type=int,
               help="Update a specified number of pull requests from the bottom of the stack")
 @click.option('--no-rebase', '-nr', is_flag=True, help="Disable rebasing")
 @click.pass_context
-def update(ctx, reviewer: List[str], count: Optional[int], no_rebase: bool):
+def update(ctx, directory, reviewer: List[str], count: Optional[int], no_rebase: bool):
     """Update command."""
     if no_rebase:
         os.environ["SPR_NOREBASE"] = "true"
 
-    stackedpr = StackedPR(ctx.obj['config'], ctx.obj['github'], ctx.obj['git_cmd'])
+    config, git_cmd, github = setup_git(directory)
+    stackedpr = StackedPR(config, github, git_cmd)
     stackedpr.update_pull_requests(None, reviewer if reviewer else None, count)
 
 @cli.command(name="status", help="Show status of open pull requests")
+@click.option('-C', '--directory', type=click.Path(exists=True, file_okay=False, dir_okay=True),
+              help='Run as if spr was started in DIRECTORY instead of the current working directory')
 @click.pass_context
-def status(ctx):
+def status(ctx, directory):
     """Status command."""
-    stackedpr = StackedPR(ctx.obj['config'], ctx.obj['github'], ctx.obj['git_cmd'])
+    config, git_cmd, github = setup_git(directory)
+    stackedpr = StackedPR(config, github, git_cmd)
     stackedpr.status_pull_requests(None)
+
+@cli.command(name="merge", help="Merge all mergeable pull requests")
+@click.option('-C', '--directory', type=click.Path(exists=True, file_okay=False, dir_okay=True),
+              help='Run as if spr was started in DIRECTORY instead of the current working directory')
+@click.option('--count', '-c', type=int,
+              help="Merge a specified number of pull requests from the bottom of the stack")
+@click.pass_context
+def merge(ctx, directory, count: Optional[int]):
+    """Merge command."""
+    config, git_cmd, github = setup_git(directory)
+    stackedpr = StackedPR(config, github, git_cmd)
+    stackedpr.merge_pull_requests(None, count)
+    # Don't update after merge - this would create new PRs
 
 def main():
     """Main entry point."""
