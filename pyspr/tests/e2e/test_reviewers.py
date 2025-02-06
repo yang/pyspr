@@ -1,10 +1,15 @@
 """End-to-end test for reviewer functionality (-r flag)."""
+# pyright: reportUnusedVariable=false
+# pyright: reportUnusedImport=false
+# pyright: reportUnknownVariableType=false
+# pyright: reportUnknownMemberType=false
+# pyright: reportOptionalMemberAccess=false
 
 import os
 import tempfile
 import uuid
 import subprocess
-from pathlib import Path
+from typing import Generator, Tuple
 import pytest
 
 from pyspr.config import Config
@@ -16,7 +21,7 @@ def run_cmd(cmd: str) -> None:
     subprocess.run(cmd, shell=True, check=True)
 
 @pytest.fixture
-def test_repo():
+def test_repo() -> Generator[Tuple[str, str, str, str, str], None, None]:
     """Use yang/teststack repo with a temporary test branch."""
     orig_dir = os.getcwd()
     owner = "yang"
@@ -60,7 +65,7 @@ def test_repo():
 
         os.chdir(orig_dir)
 
-def test_reviewer_functionality_yang(test_repo):
+def test_reviewer_functionality_yang(test_repo: Tuple[str, str, str, str, str]) -> None:
     """Test that reviewers are correctly added to new PRs but not existing ones. 
     Special case: Since we're using yang's token, test verifies that the attempt
     to add yang as a reviewer is handled properly (can't review your own PR)."""
@@ -82,7 +87,7 @@ def test_reviewer_functionality_yang(test_repo):
     github = GitHubClient(None, config)
 
     # Create first commit and PR without reviewer
-    def make_commit(file, msg):
+    def make_commit(file: str, msg: str) -> str:
         with open(file, "w") as f:
             f.write(f"{file}\n{msg}\n")
         run_cmd(f"git add {file}")
@@ -100,8 +105,10 @@ def test_reviewer_functionality_yang(test_repo):
 
     # Verify first PR exists with no reviewer
     info = github.get_info(None, git_cmd)
+    assert info is not None, "GitHub info should not be None"
     assert len(info.pull_requests) == 1, f"Should have 1 PR, found {len(info.pull_requests)}"
     pr1 = info.pull_requests[0]
+    assert github.repo is not None, "GitHub repo should be available"
     gh_pr1 = github.repo.get_pull(pr1.number)
     
     # Debug review requests for first PR
@@ -133,11 +140,13 @@ def test_reviewer_functionality_yang(test_repo):
     # - First PR still has no reviewer 
     # - Second PR also has no reviewer (because we can't review our own PRs)
     info = github.get_info(None, git_cmd)
+    assert info is not None, "GitHub info should not be None"
     assert len(info.pull_requests) == 2, f"Should have 2 PRs, found {len(info.pull_requests)}"
     prs_by_num = {pr.number: pr for pr in info.pull_requests}
     assert pr1.number in prs_by_num, "First PR should still exist"
     
     # Debug first PR reviews - verify still no reviewer
+    assert github.repo is not None, "GitHub repo should be available"
     gh_pr1 = github.repo.get_pull(pr1.number)
     print("\nDEBUG: First PR review requests after update")
     try:

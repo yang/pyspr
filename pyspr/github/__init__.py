@@ -40,7 +40,7 @@ class GraphQLResponse(TypedDict):
     data: Dict[str, GraphQLViewer]
 
 from ..git import Commit, GitInterface, ConfigProtocol
-from ..typing import StackedPRContextProtocol
+from ..typing import StackedPRContextProtocol, StackedPRContextType
 
 @dataclass
 class PullRequest:
@@ -76,38 +76,38 @@ class GitHubInfo:
 
 class GitHubInterface(Protocol):
     """GitHub interface."""
-    def get_info(self, ctx: StackedPRContextProtocol, git_cmd: GitInterface) -> Optional[GitHubInfo]:
+    def get_info(self, ctx: StackedPRContextType, git_cmd: GitInterface) -> Optional[GitHubInfo]:
         """Get GitHub info."""
         ...
 
-    def create_pull_request(self, ctx: StackedPRContextProtocol, git_cmd: GitInterface, 
+    def create_pull_request(self, ctx: StackedPRContextType, git_cmd: GitInterface, 
                            info: GitHubInfo, commit: Commit, prev_commit: Optional[Commit]) -> PullRequest:
         """Create pull request."""
         ...
 
-    def update_pull_request(self, ctx: StackedPRContextProtocol, git_cmd: GitInterface, 
+    def update_pull_request(self, ctx: StackedPRContextType, git_cmd: GitInterface, 
                            prs: List[PullRequest], pr: PullRequest, commit: Optional[Commit], 
                            prev_commit: Optional[Commit]) -> None:
         """Update pull request."""
         ...
 
-    def add_reviewers(self, ctx: StackedPRContextProtocol, pr: PullRequest, user_ids: List[str]) -> None:
+    def add_reviewers(self, ctx: StackedPRContextType, pr: PullRequest, user_ids: List[str]) -> None:
         """Add reviewers to pull request."""
         ...
 
-    def comment_pull_request(self, ctx: StackedPRContextProtocol, pr: PullRequest, comment: str) -> None:
+    def comment_pull_request(self, ctx: StackedPRContextType, pr: PullRequest, comment: str) -> None:
         """Comment on pull request."""
         ...
 
-    def close_pull_request(self, ctx: StackedPRContextProtocol, pr: PullRequest) -> None:
+    def close_pull_request(self, ctx: StackedPRContextType, pr: PullRequest) -> None:
         """Close pull request."""
         ...
 
-    def get_assignable_users(self, ctx: StackedPRContextProtocol) -> List[Dict[str, str]]:
+    def get_assignable_users(self, ctx: StackedPRContextType) -> List[Dict[str, str]]:
         """Get assignable users."""
         ...
         
-    def merge_pull_request(self, ctx: StackedPRContextProtocol, pr: PullRequest, merge_method: str) -> None:
+    def merge_pull_request(self, ctx: StackedPRContextType, pr: PullRequest, merge_method: str) -> None:
         """Merge pull request."""
         ...
 
@@ -167,7 +167,7 @@ class GitHubClient:
                 self._repo = self.client.get_repo(f"{owner}/{name}")
         return self._repo
 
-    def get_info(self, ctx: StackedPRContextProtocol, git_cmd: GitInterface) -> Optional[GitHubInfo]:
+    def get_info(self, ctx: StackedPRContextType, git_cmd: GitInterface) -> Optional[GitHubInfo]:
         """Get GitHub info."""
         local_branch = git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
         
@@ -291,7 +291,7 @@ class GitHubClient:
                 
         return GitHubInfo(local_branch, pull_requests)
 
-    def create_pull_request(self, ctx: StackedPRContextProtocol, git_cmd: GitInterface, info: GitHubInfo,
+    def create_pull_request(self, ctx: StackedPRContextType, git_cmd: GitInterface, info: GitHubInfo,
                          commit: Commit, prev_commit: Optional[Commit]) -> PullRequest:
         """Create pull request."""
         if not self.repo:
@@ -328,7 +328,7 @@ class GitHubClient:
         pr.edit(body=body)
         return PullRequest(pr.number, commit, [commit], base_ref=base, title=title, body=body)
 
-    def update_pull_request(self, ctx: StackedPRContextProtocol, git_cmd: GitInterface, 
+    def update_pull_request(self, ctx: StackedPRContextType, git_cmd: GitInterface, 
                            prs: List[PullRequest], pr: PullRequest,
                            commit: Optional[Commit], prev_commit: Optional[Commit]) -> None:
         """Update pull request."""
@@ -381,7 +381,7 @@ class GitHubClient:
                 print(f"  Updating base from {current_base} to {desired_base}")
                 gh_pr.edit(base=desired_base)
 
-    def add_reviewers(self, ctx: StackedPRContextProtocol, pr: PullRequest, user_ids: List[str]) -> None:
+    def add_reviewers(self, ctx: StackedPRContextType, pr: PullRequest, user_ids: List[str]) -> None:
         """Add reviewers to pull request."""
         if not self.repo:
             return
@@ -390,28 +390,28 @@ class GitHubClient:
         gh_pr.create_review_request(reviewers=user_ids)  # type: ignore
         print(f"DEBUG: Called add_reviewers for PR #{pr.number} with IDs: {user_ids}")
 
-    def comment_pull_request(self, ctx: StackedPRContextProtocol, pr: PullRequest, comment: str) -> None:
+    def comment_pull_request(self, ctx: StackedPRContextType, pr: PullRequest, comment: str) -> None:
         """Comment on pull request."""
         if not self.repo:
             return
         gh_pr = self.repo.get_pull(pr.number)
         gh_pr.create_issue_comment(comment)
 
-    def close_pull_request(self, ctx: StackedPRContextProtocol, pr: PullRequest) -> None:
+    def close_pull_request(self, ctx: StackedPRContextType, pr: PullRequest) -> None:
         """Close pull request."""
         if not self.repo:
             return
         gh_pr = self.repo.get_pull(pr.number)
         gh_pr.edit(state="closed")  # type: ignore  # PyGithub typing wrong; state is valid
 
-    def get_assignable_users(self, ctx: StackedPRContextProtocol) -> List[Dict[str, str]]:
+    def get_assignable_users(self, ctx: StackedPRContextType) -> List[Dict[str, str]]:
         """Get assignable users."""
         if not self.repo:
             return []
         users = self.repo.get_assignees()
         return [{"login": u.login, "id": u.login} for u in users]
 
-    def merge_pull_request(self, ctx: StackedPRContextProtocol, pr: PullRequest, merge_method: str) -> None:
+    def merge_pull_request(self, ctx: StackedPRContextType, pr: PullRequest, merge_method: str) -> None:
         """Merge pull request using merge queue if configured."""
         if not self.repo:
             return
