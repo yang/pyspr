@@ -201,14 +201,28 @@ class GitHubClient(GitHubInterface):
         
         # Check if merge queue is enabled and supported for this repo
         merge_queue_enabled = self.config.repo.get('merge_queue', False)
+        print(f"Merge queue enabled in config: {merge_queue_enabled}")
+        
         if merge_queue_enabled:
             try:
+                # Debug API info
+                print("Pull request attributes available:")
+                print(f"  auto_merge: {getattr(gh_pr, 'auto_merge', None)}")
+                print(f"  mergeable: {gh_pr.mergeable}")
+                print(f"  mergeable_state: {gh_pr.mergeable_state}")
+                # Convert merge method to uppercase for PyGithub
+                gh_method = merge_method.upper()
                 # Try to enable auto-merge (merge queue)
-                gh_pr.enable_automerge(merge_method=merge_method)
+                gh_pr.enable_automerge(merge_method=gh_method)
                 print(f"PR #{pr.number} added to merge queue")
+                return  # Success, we're done
             except Exception as e:
                 print(f"Merge queue not supported or error: {e}")
-                # Fall back to regular merge
+                print(f"Error type: {type(e)}")
+                # If repository requires merge queue, don't fall back
+                if "Changes must be made through the merge queue" in str(e):
+                    raise Exception("Repository requires merge queue but failed to add PR to queue") from e
+                # Fall back to regular merge only if merge queue is optional
                 if merge_method == 'squash':
                     gh_pr.merge(merge_method='squash')
                 elif merge_method == 'rebase':
