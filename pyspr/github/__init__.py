@@ -163,10 +163,15 @@ class GitHubClient(GitHubInterface):
         
         # Get current PR stack for interlinking
         current_prs = info.pull_requests[:] if info and info.pull_requests else []
+        print(f"DEBUG: Create PR - Current stack has {len(current_prs)} PRs")
+        for i, pr in enumerate(current_prs):
+            print(f"  #{i}: PR#{pr.number} - {pr.commit.commit_id}")
         new_pr = PullRequest(0, commit, [commit], base_ref=base, title=title)
         current_prs.append(new_pr)  # Add new PR to stack for proper linking
+        print(f"DEBUG: Added new PR, stack now has {len(current_prs)} PRs")
         
         body = self.format_body(commit, current_prs)
+        print(f"DEBUG: Formatted body:\n{body}")
         
         pr = self.repo.create_pull(title=title, body=body, head=branch_name, base=base)
         return PullRequest(pr.number, commit, [commit], base_ref=base, title=title, body=body)
