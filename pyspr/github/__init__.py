@@ -2,11 +2,45 @@
 
 import os
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Protocol, TypedDict, cast
 from github import Github
+from github.Repository import Repository
 import re
 
-from ..git import Commit, GitInterface
+# Types for GraphQL responses 
+class GraphQLCommitNode(TypedDict):
+    oid: str
+    messageHeadline: str
+    messageBody: str
+
+class GraphQLCommitData(TypedDict):
+    commit: GraphQLCommitNode
+
+class GraphQLCommits(TypedDict):
+    nodes: List[GraphQLCommitData]
+
+class GraphQLPullRequest(TypedDict):
+    id: str
+    number: int
+    title: str
+    body: str
+    baseRefName: str
+    headRefName: str
+    mergeable: str
+    commits: GraphQLCommits
+
+class GraphQLPRData(TypedDict):
+    nodes: List[GraphQLPullRequest]
+
+class GraphQLViewer(TypedDict):
+    login: str
+    pullRequests: GraphQLPRData
+
+class GraphQLResponse(TypedDict):
+    data: Dict[str, GraphQLViewer]
+
+from ..git import Commit, GitInterface, ConfigProtocol
+from ..typing import StackedPRContextProtocol
 
 @dataclass
 class PullRequest:
@@ -20,7 +54,7 @@ class PullRequest:
     body: str = ""
     title: str = ""
 
-    def mergeable(self, config) -> bool:
+    def mergeable(self, config: ConfigProtocol) -> bool:
         """Check if PR is mergeable."""
         return True # Simplified for minimal port
 
@@ -39,44 +73,46 @@ class GitHubInfo:
         """Get unique key for this info."""
         return self.local_branch
 
-class GitHubInterface:
+class GitHubInterface(Protocol):
     """GitHub interface."""
-    def get_info(self, ctx, git_cmd) -> Optional[GitHubInfo]:
+    def get_info(self, ctx: StackedPRContextProtocol, git_cmd: GitInterface) -> Optional[GitHubInfo]:
         """Get GitHub info."""
-        raise NotImplementedError()
+        ...
 
-    def create_pull_request(self, ctx, git_cmd, info, commit: Commit, prev_commit: Optional[Commit]) -> PullRequest:
+    def create_pull_request(self, ctx: StackedPRContextProtocol, git_cmd: GitInterface, 
+                           info: GitHubInfo, commit: Commit, prev_commit: Optional[Commit]) -> PullRequest:
         """Create pull request."""
-        raise NotImplementedError()
+        ...
 
-    def update_pull_request(self, ctx, git_cmd, prs: List[PullRequest], 
-                           pr: PullRequest, commit: Commit, prev_commit: Optional[Commit]):
+    def update_pull_request(self, ctx: StackedPRContextProtocol, git_cmd: GitInterface, 
+                           prs: List[PullRequest], pr: PullRequest, commit: Optional[Commit], 
+                           prev_commit: Optional[Commit]) -> None:
         """Update pull request."""
-        raise NotImplementedError()
+        ...
 
-    def add_reviewers(self, ctx, pr: PullRequest, user_ids: List[str]):
+    def add_reviewers(self, ctx: StackedPRContextProtocol, pr: PullRequest, user_ids: List[str]) -> None:
         """Add reviewers to pull request."""
-        raise NotImplementedError()
+        ...
 
-    def comment_pull_request(self, ctx, pr: PullRequest, comment: str):
+    def comment_pull_request(self, ctx: StackedPRContextProtocol, pr: PullRequest, comment: str) -> None:
         """Comment on pull request."""
-        raise NotImplementedError()
+        ...
 
-    def close_pull_request(self, ctx, pr: PullRequest):
+    def close_pull_request(self, ctx: StackedPRContextProtocol, pr: PullRequest) -> None:
         """Close pull request."""
-        raise NotImplementedError()
+        ...
 
-    def get_assignable_users(self, ctx) -> List[Dict]:
+    def get_assignable_users(self, ctx: StackedPRContextProtocol) -> List[Dict[str, str]]:
         """Get assignable users."""
-        raise NotImplementedError()
+        ...
         
-    def merge_pull_request(self, ctx, pr: PullRequest, merge_method: str):
+    def merge_pull_request(self, ctx: StackedPRContextProtocol, pr: PullRequest, merge_method: str) -> None:
         """Merge pull request."""
-        raise NotImplementedError()
+        ...
 
-class GitHubClient(GitHubInterface):
+class GitHubClient:
     """GitHub client implementation."""
-    def __init__(self, ctx, config):
+    def __init__(self, ctx: Optional[StackedPRContextProtocol], config: ConfigProtocol):
         """Initialize with config."""
         self.config = config
         self.token = self._find_token()
@@ -84,7 +120,7 @@ class GitHubClient(GitHubInterface):
             print("Error: No GitHub token found. Try one of:\n1. Set GITHUB_TOKEN env var\n2. Log in with 'gh auth login'\n3. Put token in /home/ubuntu/code/pyspr/token file")
             return
         self.client = Github(self.token)
-        self._repo = None
+        self._repo: Optional[Repository] = None
 
     def _find_token(self) -> Optional[str]:
         """Find GitHub token from env var, gh CLI config, or token file."""
@@ -121,7 +157,7 @@ class GitHubClient(GitHubInterface):
             print(f"Error reading token file: {e}")
 
     @property
-    def repo(self):
+    def repo(self) -> Optional[Repository]:
         """Get GitHub repository."""
         if self._repo is None:
             owner = self.config.repo.get('github_repo_owner')
@@ -130,11 +166,11 @@ class GitHubClient(GitHubInterface):
                 self._repo = self.client.get_repo(f"{owner}/{name}")
         return self._repo
 
-    def get_info(self, ctx, git_cmd) -> Optional[GitHubInfo]:
+    def get_info(self, ctx: StackedPRContextProtocol, git_cmd: GitInterface) -> Optional[GitHubInfo]:
         """Get GitHub info."""
         local_branch = git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
         
-        pull_requests = []
+        pull_requests: List[PullRequest] = []
         if not self.repo:
             return GitHubInfo(local_branch, pull_requests)
             
@@ -167,13 +203,17 @@ class GitHubClient(GitHubInterface):
         }
         """
         
+        spr_branch_pattern = r'^spr/[^/]+/([a-f0-9]{8})'
         try:
             # Execute GraphQL query
-            spr_branch_pattern = r'^spr/[^/]+/([a-f0-9]{8})'
-            resp = self.client.get_app().create_graphql_query(query)
+            # PyGithub typing is wrong; create_graphql_query exists but isn't in stubs
+            gh_app = self.client.get_app()
+            gh_resp = getattr(gh_app, 'create_graphql_query')(query)  # type: ignore
+            resp = cast(GraphQLResponse, gh_resp)
             data = resp['data']
-            user_login = data['viewer']['login']
-            graphql_prs = data['viewer']['pullRequests']['nodes']
+            viewer_data = data['viewer']
+            user_login = viewer_data['login']
+            graphql_prs = viewer_data['pullRequests']['nodes']
             
             print(f"Found {len(graphql_prs)} open PRs by {user_login}")
             
@@ -195,7 +235,7 @@ class GitHubClient(GitHubInterface):
                             commit_id = msg_commit_id.group(1)
                             
                         commit = Commit(commit_id, commit_hash, last_commit['messageHeadline'])
-                        commits = [commit]  # Simplified, full commit history not needed
+                        commits: List[Commit] = [commit]  # Simplified, full commit history not needed
                         
                         # Get basic PR info
                         number = pr_data['number']
@@ -250,7 +290,8 @@ class GitHubClient(GitHubInterface):
                 
         return GitHubInfo(local_branch, pull_requests)
 
-    def create_pull_request(self, ctx, git_cmd, info, commit: Commit, prev_commit: Optional[Commit]) -> PullRequest:
+    def create_pull_request(self, ctx: StackedPRContextProtocol, git_cmd: GitInterface, info: GitHubInfo,
+                         commit: Commit, prev_commit: Optional[Commit]) -> PullRequest:
         """Create pull request."""
         if not self.repo:
             raise Exception("GitHub repo not initialized - check token and repo owner/name config")
@@ -266,7 +307,7 @@ class GitHubClient(GitHubInterface):
         commit.body = git_cmd.must_git(f"show -s --format=%b {commit.commit_hash}").strip()
         
         # Get current PR stack for interlinking
-        current_prs = info.pull_requests[:] if info and info.pull_requests else []
+        current_prs: List[PullRequest] = info.pull_requests[:] if info and info.pull_requests else []
         print(f"DEBUG: Create PR - Current stack has {len(current_prs)} PRs")
         for i, pr in enumerate(current_prs):
             print(f"  #{i}: PR#{pr.number} - {pr.commit.commit_id}")
@@ -286,9 +327,13 @@ class GitHubClient(GitHubInterface):
         pr.edit(body=body)
         return PullRequest(pr.number, commit, [commit], base_ref=base, title=title, body=body)
 
-    def update_pull_request(self, ctx, git_cmd, prs: List[PullRequest], 
-                           pr: PullRequest, commit: Optional[Commit], prev_commit: Optional[Commit]):
+    def update_pull_request(self, ctx: StackedPRContextProtocol, git_cmd: GitInterface, 
+                           prs: List[PullRequest], pr: PullRequest,
+                           commit: Optional[Commit], prev_commit: Optional[Commit]) -> None:
         """Update pull request."""
+        if not self.repo:
+            return
+            
         gh_pr = self.repo.get_pull(pr.number)
         
         # Debug print
@@ -300,13 +345,11 @@ class GitHubClient(GitHubInterface):
         pr.title = gh_pr.title
         
         # Update title if needed and commit is provided 
-        need_body_update = False
         if commit:
             commit.body = git_cmd.must_git(f"show -s --format=%b {commit.commit_hash}").strip()
             if gh_pr.title != commit.subject:
                 gh_pr.edit(title=commit.subject)
                 pr.title = commit.subject
-                need_body_update = True
         
         # Always update body with current stack info 
         if commit:
@@ -316,8 +359,9 @@ class GitHubClient(GitHubInterface):
             pr.body = body
 
         # Update base branch to maintain stack, but not if in merge queue
+        # PyGithub typing is wrong; auto_merge exists but isn't in stubs
         try:
-            in_queue = gh_pr.auto_merge is not None
+            in_queue = getattr(gh_pr, 'auto_merge', None) is not None  # type: ignore
         except:
             in_queue = False
 
@@ -336,29 +380,40 @@ class GitHubClient(GitHubInterface):
                 print(f"  Updating base from {current_base} to {desired_base}")
                 gh_pr.edit(base=desired_base)
 
-    def add_reviewers(self, ctx, pr: PullRequest, user_ids: List[str]):
+    def add_reviewers(self, ctx: StackedPRContextProtocol, pr: PullRequest, user_ids: List[str]) -> None:
         """Add reviewers to pull request."""
+        if not self.repo:
+            return
         gh_pr = self.repo.get_pull(pr.number)
-        gh_pr.create_review_request(reviewers=user_ids)
+        # PyGithub typing is wrong; it actually accepts a list of strings
+        gh_pr.create_review_request(reviewers=user_ids)  # type: ignore
         print(f"DEBUG: Called add_reviewers for PR #{pr.number} with IDs: {user_ids}")
 
-    def comment_pull_request(self, ctx, pr: PullRequest, comment: str):
+    def comment_pull_request(self, ctx: StackedPRContextProtocol, pr: PullRequest, comment: str) -> None:
         """Comment on pull request."""
+        if not self.repo:
+            return
         gh_pr = self.repo.get_pull(pr.number)
         gh_pr.create_issue_comment(comment)
 
-    def close_pull_request(self, ctx, pr: PullRequest):
+    def close_pull_request(self, ctx: StackedPRContextProtocol, pr: PullRequest) -> None:
         """Close pull request."""
+        if not self.repo:
+            return
         gh_pr = self.repo.get_pull(pr.number)
-        gh_pr.edit(state="closed")
+        gh_pr.edit(state="closed")  # type: ignore  # PyGithub typing wrong; state is valid
 
-    def get_assignable_users(self, ctx) -> List[Dict]:
+    def get_assignable_users(self, ctx: StackedPRContextProtocol) -> List[Dict[str, str]]:
         """Get assignable users."""
+        if not self.repo:
+            return []
         users = self.repo.get_assignees()
         return [{"login": u.login, "id": u.login} for u in users]
 
-    def merge_pull_request(self, ctx, pr: PullRequest, merge_method: str):
+    def merge_pull_request(self, ctx: StackedPRContextProtocol, pr: PullRequest, merge_method: str) -> None:
         """Merge pull request using merge queue if configured."""
+        if not self.repo:
+            return
         gh_pr = self.repo.get_pull(pr.number)
         
         # Check if merge queue is enabled and supported for this repo
@@ -408,7 +463,7 @@ class GitHubClient(GitHubInterface):
     def format_stack_markdown(self, commit: Commit, stack: List[PullRequest]) -> str:
         """Format stack of PRs as markdown."""
         show_pr_titles = self.config.repo.get('show_pr_titles_in_stack', False)
-        lines = []
+        lines: List[str] = []
         # Reverse stack to match Go implementation (top to bottom)
         for pr in reversed(stack):
             is_current = pr.commit.commit_id == commit.commit_id
