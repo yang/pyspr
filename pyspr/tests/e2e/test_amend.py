@@ -558,6 +558,135 @@ def test_partial_merge_queue_workflow(test_mq_repo):
     """Test partial merge queue workflow, merging only 2 of 3 PRs to queue."""
     _run_merge_test(test_mq_repo, "yangenttest1", True, 3, count=2)
 
+def test_replace_commit(test_repo):
+    """Test replacing a commit in the middle of stack with new commit.
+    
+    This verifies that when a commit is replaced with an entirely new commit:
+    1. The PR for old commit is closed
+    2. A new PR is created for new commit
+    3. The old PR is not reused for the new commit
+    
+    This specifically tests the case where positional matching would be wrong.
+    """
+    owner, repo_name, test_branch, repo_dir = test_repo
+    orig_dir = os.getcwd()
+    os.chdir(repo_dir)
+
+    config = Config({
+        'repo': {
+            'github_remote': 'origin',
+            'github_branch': 'main',
+            'github_repo_owner': owner,
+            'github_repo_name': repo_name,
+        },
+        'user': {}
+    })
+    git_cmd = RealGit(config)
+    github = GitHubClient(None, config)
+
+    def make_commit(file, line, msg):
+        commit_id = uuid.uuid4().hex[:8]
+        full_msg = f"{msg}\n\ncommit-id:{commit_id}"
+        with open(file, "w") as f:
+            f.write(f"{file}\n{line}\n")
+        run_cmd(f"git add {file}")
+        run_cmd(f'git commit -m "{full_msg}"')
+        commit_hash = git_cmd.must_git("rev-parse HEAD").strip()
+        return commit_hash, commit_id
+
+    try:
+        print("\nCreating initial stack of 3 commits...")
+        run_cmd("git checkout main")
+        run_cmd("git pull")
+        branch = f"test-replace-{uuid.uuid4().hex[:7]}"
+        run_cmd(f"git checkout -b {branch}")
+
+        # 1. Create stack with commits A -> B -> C
+        c1_hash, c1_id = make_commit("file1.txt", "line 1", "Commit A")
+        c2_hash, c2_id = make_commit("file2.txt", "line 1", "Commit B")
+        c3_hash, c3_id = make_commit("file3.txt", "line 1", "Commit C")
+        run_cmd(f"git push -u origin {branch}")
+
+        print("Creating initial PRs...")
+        os.chdir(orig_dir)
+        subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
+        os.chdir(repo_dir)
+
+        # Get initial PR info and filter to our newly created PRs
+        info = github.get_info(None, git_cmd)
+        # Find PRs matching our commit IDs 
+        commit_prs = [pr for pr in info.pull_requests 
+                    if pr.commit.commit_id in [c1_id, c2_id, c3_id] and
+                    pr.from_branch.startswith('spr/main/')]
+        commit_prs = sorted(commit_prs, key=lambda pr: pr.number)
+        assert len(commit_prs) == 3, f"Should find 3 PRs for our commits, found {len(commit_prs)}"
+        
+        # Verify each commit has a PR
+        prs_by_id = {pr.commit.commit_id: pr for pr in commit_prs}
+        assert c1_id in prs_by_id, f"No PR found for commit A ({c1_id})"
+        assert c2_id in prs_by_id, f"No PR found for commit B ({c2_id})" 
+        assert c3_id in prs_by_id, f"No PR found for commit C ({c3_id})"
+        
+        pr1, pr2, pr3 = prs_by_id[c1_id], prs_by_id[c2_id], prs_by_id[c3_id]
+        print(f"Created PRs: #{pr1.number} (A), #{pr2.number} (B), #{pr3.number} (C)")
+        pr2_num = pr2.number  # Remember B's PR number
+
+        # Verify PR stack
+        assert pr1.base_ref == "main", "PR1 should target main"
+        assert pr2.base_ref == f"spr/main/{c1_id}", "PR2 should target PR1"
+        assert pr3.base_ref == f"spr/main/{c2_id}", "PR3 should target PR2"
+
+        # 2. Replace commit B with new commit D
+        print("\nReplacing commit B with new commit D...")
+        run_cmd("git reset --hard HEAD~2")  # Remove B and C
+        new_c2_hash, new_c2_id = make_commit("file2_new.txt", "line 1", "New Commit D")
+        run_cmd(f"git cherry-pick {c3_hash}")  # Add C back
+        run_cmd("git push -f origin")
+
+        # 3. Run update
+        print("Running update after replace...")
+        os.chdir(orig_dir)
+        subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
+        os.chdir(repo_dir)
+
+        # 4. Verify:
+        print("\nVerifying PR handling after replace...")
+        info = github.get_info(None, git_cmd)
+        # Get all PRs with our commit IDs + PR for B to verify it's closed
+        relevant_prs = [pr for pr in info.pull_requests 
+                     if pr.commit.commit_id in [c1_id, new_c2_id, c3_id] or 
+                     pr.number == pr2_num]
+        active_pr_nums = [pr.number for pr in relevant_prs]
+        active_pr_ids = {pr.commit.commit_id: pr.number for pr in relevant_prs}
+        
+        # - PR for B was closed
+        assert pr2_num not in active_pr_nums, f"PR #{pr2_num} for B should be closed"
+        
+        # - New PR created for D with new number
+        assert new_c2_id in active_pr_ids, f"Should create PR for new commit D ({new_c2_id})"
+        new_pr_num = active_pr_ids[new_c2_id]
+        assert new_pr_num != pr2_num, f"Should not reuse PR #{pr2_num} for new commit"
+
+        # Check final stack structure  
+        stack_prs = [pr for pr in relevant_prs if pr.from_branch.startswith('spr/main/')]
+        assert len(stack_prs) == 3, f"Should have 3 active PRs in stack, found {len(stack_prs)}"
+        prs_by_id = {pr.commit.commit_id: pr for pr in stack_prs}
+        pr1 = prs_by_id.get(c1_id)
+        pr_d = prs_by_id.get(new_c2_id)
+        pr3 = prs_by_id.get(c3_id)
+        
+        print(f"Final PR stack: #{pr1.number} <- #{pr_d.number} <- #{pr3.number}")
+        
+        assert pr1.base_ref == "main", "PR1 should target main"
+        assert pr_d.base_ref == f"spr/main/{c1_id}", "New PR should target PR1"
+        assert pr3.base_ref == f"spr/main/{new_c2_id}", "PR3 should target new PR"
+
+    finally:
+        # Cleanup 
+        run_cmd("git checkout main")
+        run_cmd(f"git push origin --delete {branch} || true")
+        os.chdir(orig_dir)
+
 def test_stack_isolation(test_repo):
     """Test that PRs from different stacks don't interfere with each other.
     
