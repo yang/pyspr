@@ -80,19 +80,35 @@ class GitHubClient(GitHubInterface):
         self.config = config
         self.token = self._find_token()
         if not self.token:
-            print("Error: No GitHub token found. Define GITHUB_TOKEN env var or put token in /home/ubuntu/code/pyspr/token file")
+            print("Error: No GitHub token found. Try one of:\n1. Set GITHUB_TOKEN env var\n2. Log in with 'gh auth login'\n3. Put token in /home/ubuntu/code/pyspr/token file")
             return
         self.client = Github(self.token)
         self._repo = None
 
     def _find_token(self) -> Optional[str]:
-        """Find GitHub token from file or env var."""
+        """Find GitHub token from env var, gh CLI config, or token file."""
+        import yaml
+        from pathlib import Path
+
         # First try environment variable
         token = os.environ.get("GITHUB_TOKEN")
         if token:
             return token
 
-        # Then try token file
+        # Then try gh CLI config at ~/.config/gh/hosts.yml
+        try:
+            gh_config_path = Path.home() / ".config" / "gh" / "hosts.yml"
+            if gh_config_path.exists():
+                with open(gh_config_path, "r") as f:
+                    gh_config = yaml.safe_load(f)
+                    if gh_config and "github.com" in gh_config:
+                        github_config = gh_config["github.com"]
+                        if "oauth_token" in github_config:
+                            return github_config["oauth_token"]
+        except Exception as e:
+            print(f"Error reading gh CLI config: {e}")
+
+        # Finally try token file
         token_file = "/home/ubuntu/code/pyspr/token"
         try:
             if os.path.exists(token_file):
