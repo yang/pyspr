@@ -142,8 +142,15 @@ class StackedPR:
                 print(f"Branch '{branch}' not found on remote '{remote}'. First push to the remote.")
                 return None
 
-            # Simple rebase
-            self.git_cmd.must_git(f"rebase {remote}/{branch} --autostash")
+            # Check for no-rebase from env var or config
+            no_rebase = (
+                os.environ.get("SPR_NOREBASE") == "true" or 
+                self.config.user.get('noRebase', False)
+            )
+            
+            if not no_rebase:
+                # Simple rebase
+                self.git_cmd.must_git(f"rebase {remote}/{branch} --autostash")
         except Exception as e:
             print(f"Rebase failed: {e}")
             return None
