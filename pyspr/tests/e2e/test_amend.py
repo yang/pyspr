@@ -1,4 +1,4 @@
-"""End-to-end test for amending commits in stack."""
+"""End-to-end test for amending commits in stack and PR stack isolation."""
 
 import os
 import tempfile
@@ -477,3 +477,148 @@ def test_partial_merge_workflow(test_repo):
 def test_partial_merge_queue_workflow(test_mq_repo):
     """Test partial merge queue workflow, merging only 2 of 3 PRs to queue."""
     _run_merge_test(test_mq_repo, "yangenttest1", True, 3, count=2)
+
+def test_stack_isolation(test_repo):
+    """Test that PRs from different stacks don't interfere with each other.
+    
+    This verifies that removing commits from one stack doesn't close PRs from another stack.
+    We test using two stacks of PRs (2 PRs each) in the same repo:
+    
+    Stack 1:        Stack 2:
+    PR1B <- PR1A    PR2B <- PR2A
+    
+    Then remove PR1A and verify only PR1B gets closed, while stack 2 remains untouched.
+    """
+    owner, repo_name, test_branch, repo_dir = test_repo
+    orig_dir = os.getcwd()
+    os.chdir(repo_dir)
+
+    # Real config using the test repo
+    config = Config({
+        'repo': {
+            'github_remote': 'origin',
+            'github_branch': 'main',
+            'github_repo_owner': owner,
+            'github_repo_name': repo_name,
+        },
+        'user': {}
+    })
+    git_cmd = RealGit(config)
+    github = GitHubClient(None, config)  # Real GitHub client
+
+    # Helper to make commit with unique commit-id
+    def make_commit(file, line, msg):
+        commit_id = uuid.uuid4().hex[:8]
+        full_msg = f"{msg}\n\ncommit-id:{commit_id}"
+        with open(file, "w") as f:
+            f.write(f"{file}\n{line}\n")
+        run_cmd(f"git add {file}")
+        run_cmd(f'git commit -m "{full_msg}"')
+        commit_hash = git_cmd.must_git("rev-parse HEAD").strip()
+        return commit_hash, commit_id
+
+    try:
+        # 1. Create branch1 with 2 connected PRs
+        print("\nCreating branch1 with 2-PR stack...")
+        run_cmd("git checkout main")
+        run_cmd("git pull")
+        branch1 = f"test-stack1-{uuid.uuid4().hex[:7]}"
+        run_cmd(f"git checkout -b {branch1}")
+
+        # First commit for PR1A
+        c1a_hash, c1a_id = make_commit("stack1a.txt", "line 1", "Stack 1 commit A")
+        # Second commit for PR1B
+        c1b_hash, c1b_id = make_commit("stack1b.txt", "line 1", "Stack 1 commit B")
+        run_cmd(f"git push -u origin {branch1}")
+
+        # Update to create connected PRs 1A and 1B
+        print("Creating stack 1 PRs...")
+        os.chdir(orig_dir)
+        subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
+        os.chdir(repo_dir)
+
+        # 2. Create branch2 with 2 connected PRs 
+        print("\nCreating branch2 with 2-PR stack...")
+        run_cmd("git checkout main")
+        branch2 = f"test-stack2-{uuid.uuid4().hex[:7]}"
+        run_cmd(f"git checkout -b {branch2}")
+
+        # First commit for PR2A
+        c2a_hash, c2a_id = make_commit("stack2a.txt", "line 1", "Stack 2 commit A")
+        # Second commit for PR2B
+        c2b_hash, c2b_id = make_commit("stack2b.txt", "line 1", "Stack 2 commit B")
+        run_cmd(f"git push -u origin {branch2}")
+
+        # Update to create connected PRs 2A and 2B
+        print("Creating stack 2 PRs...")
+        os.chdir(orig_dir)
+        subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
+        os.chdir(repo_dir)
+
+        # Verify all 4 PRs exist with correct connections
+        print("\nVerifying initial state of PRs...")
+        info = github.get_info(None, git_cmd)
+        # Find PRs by commit ID
+        all_prs = {}
+        for pr in info.pull_requests:
+            for cid in [c1a_id, c1b_id, c2a_id, c2b_id]:
+                if pr.commit.commit_id == cid:
+                    all_prs[cid] = pr
+
+        # Check we found all PRs
+        for label, cid in [("PR1A", c1a_id), ("PR1B", c1b_id), 
+                           ("PR2A", c2a_id), ("PR2B", c2b_id)]:
+            assert cid in all_prs, f"{label} is missing"
+
+        pr1a, pr1b = all_prs[c1a_id], all_prs[c1b_id]
+        pr2a, pr2b = all_prs[c2a_id], all_prs[c2b_id]
+
+        # Verify stack 1 connections
+        assert pr1a.base_ref == "main", "PR1A should target main"
+        assert pr1b.base_ref == f"spr/main/{c1a_id}", "PR1B should target PR1A"
+
+        # Verify stack 2 connections
+        assert pr2a.base_ref == "main", "PR2A should target main"
+        assert pr2b.base_ref == f"spr/main/{c2a_id}", "PR2B should target PR2A"
+
+        print(f"Created stacks - Stack1: #{pr1a.number} <- #{pr1b.number}, Stack2: #{pr2a.number} <- #{pr2b.number}")
+
+        # 3. Remove commit from branch1
+        print("\nRemoving first commit from branch1...")
+        run_cmd(f"git checkout {branch1}")
+        run_cmd("git reset --hard HEAD~2")  # Remove both commits
+        run_cmd("git cherry-pick {}".format(c1b_hash))  # Add back just the second commit
+        run_cmd("git push -f origin")  # Force push the change
+
+        # Run update in branch1
+        print("Running update in branch1...")
+        os.chdir(orig_dir)
+        subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
+        os.chdir(repo_dir)
+
+        # 4. Verify PR1A is closed, PR1B retargeted to main, while PR2A and PR2B remain untouched
+        print("\nVerifying PR state after updates...")
+        info = github.get_info(None, git_cmd)
+        
+        # Get remaining PRs and their targets
+        remaining_prs = {}
+        for pr in info.pull_requests:
+            remaining_prs[pr.number] = pr.base_ref
+        
+        # Stack 1: PR1A should be closed, PR1B retargeted to main
+        assert pr1a.number not in remaining_prs, f"PR1A #{pr1a.number} should be closed"
+        assert pr1b.number in remaining_prs, f"PR1B #{pr1b.number} should still exist"
+        assert remaining_prs[pr1b.number] == "main", f"PR1B should be retargeted to main, got {remaining_prs[pr1b.number]}"
+        
+        # Stack 2 should remain untouched
+        assert pr2a.number in remaining_prs, f"PR2A #{pr2a.number} should still exist"
+        assert pr2b.number in remaining_prs, f"PR2B #{pr2b.number} should still exist"
+        assert remaining_prs[pr2a.number] == "main", f"PR2A should target main, got {remaining_prs[pr2a.number]}"
+        assert remaining_prs[pr2b.number] == f"spr/main/{c2a_id}", f"PR2B should target PR2A, got {remaining_prs[pr2b.number]}"
+
+    finally:
+        # Cleanup 
+        run_cmd("git checkout main")
+        run_cmd(f"git push origin --delete {branch1} || true")
+        run_cmd(f"git push origin --delete {branch2} || true")
+        os.chdir(orig_dir)
