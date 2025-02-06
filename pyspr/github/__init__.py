@@ -119,25 +119,35 @@ class GitHubClient(GitHubInterface):
         pull_requests = []
         if self.repo:
             spr_branch_pattern = r'^spr/[^/]+/([a-f0-9]{8})'
-            open_prs = self.repo.get_pulls(state='open')
-            for pr in open_prs:
+            # Get only PRs created by authenticated user
+            current_user = self.client.get_user().login
+            open_prs = list(self.repo.get_pulls(state='open'))
+            user_prs = [pr for pr in open_prs if pr.user.login == current_user]
+            print(f"Found {len(user_prs)} open PRs by {current_user} out of {len(open_prs)} total")
+            for pr in user_prs:
                 branch_match = re.match(spr_branch_pattern, pr.head.ref)
                 if branch_match:
+                    print(f"Processing PR #{pr.number} with branch {pr.head.ref}")
                     # Extract commit ID from branch name - matches Go behavior
                     commit_id = branch_match.group(1)
-                    commit_hash = git_cmd.must_git(f"rev-parse {pr.head.sha}").strip()
+                    commit_hash = pr.head.sha  # GitHub API already gives us this
                     # Get actual commit ID from commit message if possible
                     try:
-                        body = git_cmd.must_git(f"show -s --format=%b {commit_hash}").strip()
-                        msg_commit_id = re.search(r'commit-id:([a-f0-9]{8})', body)
-                        if msg_commit_id:
-                            commit_id = msg_commit_id.group(1)
-                    except:
-                        pass  # Keep ID from branch name if can't get from message
+                        commits_in_pr = list(pr.get_commits())
+                        if commits_in_pr:
+                            last_commit = commits_in_pr[-1]
+                            msg_commit_id = re.search(r'commit-id:([a-f0-9]{8})', last_commit.commit.message)
+                            if msg_commit_id:
+                                commit_id = msg_commit_id.group(1)
+                    except Exception as e:
+                        print(f"Error getting commits for PR #{pr.number}: {e}")
+                        pass  # Keep ID from branch name if we can't get from message
+
                     commit = Commit(commit_id, commit_hash, pr.title)
                     commits = [commit]  # Simplified, no commit history check
                     try:
-                        in_queue = pr.auto_merge is not None
+                        # Not sure if PyGithub supports auto merge info
+                        in_queue = False
                     except:
                         in_queue = False
                     pull_requests.append(PullRequest(pr.number, commit, commits,

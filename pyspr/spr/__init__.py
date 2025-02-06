@@ -54,6 +54,52 @@ class StackedPR:
                 return True
         return False
 
+    def match_pull_request_stack(self, target_branch: str, local_commits: List[Commit], 
+                           all_pull_requests: List[PullRequest]) -> List[PullRequest]:
+        """Build connected stack of PRs following branch relationships."""
+        if not local_commits or not all_pull_requests:
+            return []
+        
+        print("DEBUG match_pull_request_stack:")
+        print(f"  Target branch: {target_branch}")
+        print(f"  Local commits: {[c.commit_id for c in local_commits]}")
+        print(f"  All PRs: {[(pr.number, pr.commit.commit_id, pr.base_ref) for pr in all_pull_requests]}")
+            
+        # Map PRs by commit ID
+        pull_request_map = {pr.commit.commit_id: pr for pr in all_pull_requests}
+        
+        pull_requests = []
+        
+        # Find top PR in local commits
+        curr_pr = None
+        for commit in reversed(local_commits):
+            if commit.commit_id in pull_request_map:
+                curr_pr = pull_request_map[commit.commit_id]
+                print(f"  Found top PR #{curr_pr.number} for commit {commit.commit_id}")
+                break
+            
+        # Build stack following branch relationships
+        while curr_pr:
+            pull_requests.insert(0, curr_pr)  # Prepend like Go
+            print(f"  Added PR #{curr_pr.number} ({curr_pr.commit.commit_id}) to stack, base: {curr_pr.base_ref}")
+            if curr_pr.base_ref == target_branch:
+                print("  Reached target branch, stopping")
+                break
+            
+            # Parse next commit ID from base branch
+            match = re.match(r'spr/[^/]+/([a-f0-9]{8})', curr_pr.base_ref)
+            if not match:
+                print(f"  Error: Invalid base branch: {curr_pr.base_ref}")
+                raise Exception(f"Invalid base branch: {curr_pr.base_ref}")
+            next_commit_id = match.group(1)
+            curr_pr = pull_request_map.get(next_commit_id)
+            if not curr_pr:
+                print(f"  No PR found for commit {next_commit_id}, stopping")
+                break
+        
+        print(f"  Final stack: {[pr.number for pr in pull_requests]}")
+        return pull_requests
+
     def sort_pull_requests_by_local_commit_order(self, pull_requests: List[PullRequest], 
                                                 local_commits: List[Commit]) -> List[PullRequest]:
         """Sort PRs by local commit order."""
@@ -171,11 +217,19 @@ class StackedPR:
             github_info.pull_requests
         )
 
-        # Close PRs for deleted commits
+        # Build connected stack like Go version
+        target_branch = self.config.repo.get('github_branch', 'main')
+        all_prs = github_info.pull_requests[:]
+        github_info.pull_requests = self.match_pull_request_stack(
+            target_branch, local_commits, all_prs
+        )
+
+        # Close PRs for deleted commits, but only within the stack
         valid_pull_requests = []
         local_commit_map = {commit.commit_id: commit for commit in local_commits}
         for pr in github_info.pull_requests:
             if pr.commit.commit_id not in local_commit_map:
+                print(f"Closing PR #{pr.number} - commit {pr.commit.commit_id} has gone away")
                 self.github.comment_pull_request(ctx, pr, "Closing pull request: commit has gone away")
                 self.github.close_pull_request(ctx, pr)
             else:
@@ -189,9 +243,6 @@ class StackedPR:
                 break
             non_wip_commits.append(commit)
 
-        # First sort the PRs to match commit order
-        github_info.pull_requests = self.sort_pull_requests_by_local_commit_order(
-            github_info.pull_requests, non_wip_commits)
         if not self.sync_commit_stack_to_github(ctx, local_commits, github_info):
             return
 
