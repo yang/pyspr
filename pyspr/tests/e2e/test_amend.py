@@ -21,7 +21,9 @@ def run_cmd(cmd: str) -> None:
 def test_repo():
     """Use yang/teststack repo with a temporary test branch."""
     orig_dir = os.getcwd()
-    repo_name = "yang/teststack"
+    owner = "yang"
+    name = "teststack"
+    repo_name = f"{owner}/{name}"
     test_branch = f"test-spr-amend-{uuid.uuid4().hex[:7]}"
     print(f"Using test branch {test_branch} in {repo_name}")
     
@@ -47,7 +49,7 @@ def test_repo():
         
         repo_dir = os.path.abspath(os.getcwd())
         os.chdir(orig_dir)
-        yield repo_name, test_branch, repo_dir
+        yield owner, name, test_branch, repo_dir
 
         # Cleanup - go back to repo to delete branch
         os.chdir(repo_dir)
@@ -63,8 +65,7 @@ def test_repo():
 
 def test_amend_workflow(test_repo):
     """Test full amend workflow with real PRs."""
-    repo_name, test_branch = test_repo
-    owner = "yang"  # Hard-code since we know the test repo
+    owner, repo_name, test_branch = test_repo[:3]
 
     # Real config using the test repo
     config = Config({
@@ -221,29 +222,32 @@ def test_amend_workflow(test_repo):
         print(f"PR #{pr.number} message:\n{message}\n")
         assert f"commit-id:{pr.commit.commit_id}" in message, f"PR #{pr.number} should have correct commit ID in message"
 
-def test_merge_workflow(test_repo):
-    """Test full merge workflow with real PRs."""
-    repo_name, test_branch, repo_dir = test_repo
-    owner = "yang"  # Hard-code since we know the test repo
+def _run_merge_test(repo_fixture, owner: str, use_merge_queue: bool, num_commits: int):
+    """Common test logic for merge workflows."""
+    if len(repo_fixture) == 3:
+        repo_name, test_branch, repo_dir = repo_fixture
+    else:
+        owner, repo_name, test_branch, repo_dir = repo_fixture
 
     orig_dir = os.getcwd()
     # Temporarily go to repo to create commits
     os.chdir(repo_dir)
 
-    # Real config using the test repo
+    # Config based on parameters
     config = Config({
         'repo': {
             'github_remote': 'origin',
             'github_branch': 'main',
             'github_repo_owner': owner,
-            'github_repo_name': 'teststack',
+            'github_repo_name': repo_name,
+            'merge_queue': use_merge_queue,
         },
         'user': {}
     })
     git_cmd = RealGit(config)
     github = GitHubClient(None, config)  # Real GitHub client
     
-    # Create 3 commits
+    # Create commits
     def make_commit(file, line, msg):
         with open(file, "w") as f:
             f.write(f"{file}\n{line}\n")
@@ -251,7 +255,6 @@ def test_merge_workflow(test_repo):
             print(f"Creating file {file}...")
             run_cmd(f"git add {file}")
             run_cmd("git status")  # Debug: show git status after add
-            # Capture output to debug commit issues
             result = subprocess.run(f'git commit -m "{msg}"', shell=True, check=False,
                                   stderr=subprocess.PIPE, stdout=subprocess.PIPE,
                                   universal_newlines=True)
@@ -273,9 +276,12 @@ def test_merge_workflow(test_repo):
     try:
         # Use static filenames but unique content
         unique = str(uuid.uuid4())[:8]
-        c1_hash = make_commit("test_merge1.txt", f"line 1 - {unique}", "Test multi commit 1")
-        c2_hash = make_commit("test_merge2.txt", f"line 1 - {unique}", "Test multi commit 2")  
-        c3_hash = make_commit("test_merge3.txt", f"line 1 - {unique}", "Test multi commit 3")
+        commit_hashes = []
+        for i in range(num_commits):
+            prefix = "test_merge" if not use_merge_queue else "mq_test"
+            c_hash = make_commit(f"{prefix}{i+1}.txt", f"line 1 - {unique}", 
+                               f"Test {'merge queue' if use_merge_queue else 'multi'} commit {i+1}")
+            commit_hashes.append(c_hash)
         run_cmd(f"git push -u origin {test_branch}")  # Push branch with commits
     except subprocess.CalledProcessError as e:
         # Get git status for debugging
@@ -292,25 +298,22 @@ def test_merge_workflow(test_repo):
     os.chdir(repo_dir)
     # Verify PRs created
     info = github.get_info(None, git_cmd)
-    assert len(info.pull_requests) == 3
-    pr1, pr2, pr3 = sorted(info.pull_requests, key=lambda pr: pr.number)
-    print(f"Created PRs: #{pr1.number}, #{pr2.number}, #{pr3.number}")
+    assert len(info.pull_requests) == num_commits, f"Should have created {num_commits} PRs"
+    prs = sorted(info.pull_requests, key=lambda pr: pr.number)
+    pr_nums = [pr.number for pr in prs]
+    print(f"Created PRs: {', '.join(f'#{num}' for num in pr_nums)}")
 
     # Verify initial PR chain
-    assert pr1.base_ref == "main"
-    assert pr2.base_ref == f"spr/main/{pr1.commit.commit_id}"
-    assert pr3.base_ref == f"spr/main/{pr2.commit.commit_id}"
-
-    # Save numbers before merge
-    pr1_num = pr1.number
-    pr2_num = pr2.number
-    pr3_num = pr3.number 
+    assert prs[0].base_ref == "main", f"Bottom PR should target main, got {prs[0].base_ref}"
+    for i in range(1, len(prs)):
+        assert prs[i].base_ref == f"spr/main/{prs[i-1].commit.commit_id}", \
+            f"PR #{prs[i].number} should target PR #{prs[i-1].number}, got {prs[i].base_ref}"
 
     # Go back to project dir to run merge
     os.chdir(orig_dir)
 
     # Run merge for all PRs
-    print("\nMerging all PRs...")
+    print(f"\nMerging {'to queue' if use_merge_queue else 'all'} PRs...")
     try:
         merge_output = subprocess.check_output(
             ["rye", "run", "pyspr", "merge", "-C", repo_dir],
@@ -330,37 +333,58 @@ def test_merge_workflow(test_repo):
             print(f"  Base: {gh_pr.base.ref}")
             print(f"  State: {gh_pr.state}")
             print(f"  Merged: {gh_pr.merged}")
+            if use_merge_queue:
+                print(f"  Mergeable state: {gh_pr.mergeable_state}")
+                print(f"  Auto merge: {getattr(gh_pr, 'auto_merge', None)}")
         os.chdir(orig_dir)
         print(f"Merge failed with output:\n{e.output}")
         raise
 
-    # Verify top PR was merged
-    assert f"Merging PR #{pr3_num} to main" in merge_output, "Should merge top PR"
-    assert f"This will merge 3 PRs" in merge_output, "Should merge all 3 PRs"
+    # Verify merge output
+    top_pr_num = pr_nums[-1]
+    assert f"Merging PR #{top_pr_num} to main" in merge_output, "Should merge top PR"
+    assert f"This will merge {num_commits} PRs" in merge_output, f"Should merge {num_commits} PRs"
+    if use_merge_queue:
+        assert "added to merge queue" in merge_output, "PR should be added to merge queue"
 
     # Go back to repo to verify final state 
     os.chdir(repo_dir)
-
-    # Verify all PRs merged
     info = github.get_info(None, git_cmd)
-    assert len(info.pull_requests) == 0, "All PRs should be merged and closed"
-    
-    # Get the merge commit
-    run_cmd("git fetch origin main")
-    merge_sha = git_cmd.must_git("rev-parse origin/main").strip()
-    merge_msg = git_cmd.must_git(f"show -s --format=%B {merge_sha}").strip()
-    
-    # Verify merge commit contains the right PR number
-    assert f"#{pr3_num}" in merge_msg, f"Merge commit should reference PR #{pr3_num}"
-    
-    # Verify merge commit contains all 3 commits
-    merge_files = git_cmd.must_git(f"show --name-only {merge_sha}").splitlines()
-    assert "test_merge1.txt" in merge_files, "Merge should include first commit's file"
-    assert "test_merge2.txt" in merge_files, "Merge should include second commit's file" 
-    assert "test_merge3.txt" in merge_files, "Merge should include third commit's file"
-    
+
+    if use_merge_queue:
+        # For merge queue: top PR open, others closed
+        assert len(info.pull_requests) == 1, "Only top PR should remain open while in merge queue"
+        prs_by_num = {pr.number: pr for pr in info.pull_requests}
+        assert top_pr_num in prs_by_num, f"Top PR #{top_pr_num} should remain open"
+        for num in pr_nums[:-1]:
+            assert num not in prs_by_num, f"PR #{num} should be closed" 
+        top_pr = prs_by_num[top_pr_num]
+        gh_pr = github.repo.get_pull(top_pr.number)  # Get raw GitHub PR
+        assert gh_pr.base.ref == "main", "Top PR should target main for merge queue"
+        assert gh_pr.state == "open", "Top PR should remain open while in merge queue"
+    else:
+        # For regular merge: all PRs closed, verify merge commit
+        assert len(info.pull_requests) == 0, "All PRs should be merged and closed"
+        # Get the merge commit
+        run_cmd("git fetch origin main")
+        merge_sha = git_cmd.must_git("rev-parse origin/main").strip()
+        merge_msg = git_cmd.must_git(f"show -s --format=%B {merge_sha}").strip()
+        # Verify merge commit contains the right PR number
+        assert f"#{top_pr_num}" in merge_msg, f"Merge commit should reference PR #{top_pr_num}"
+        # Verify merge commit contains all commits
+        merge_files = git_cmd.must_git(f"show --name-only {merge_sha}").splitlines()
+        prefix = "test_merge" if not use_merge_queue else "mq_test"
+        for i in range(num_commits):
+            filename = f"{prefix}{i+1}.txt"
+            assert filename in merge_files, f"Merge should include {filename}"
+
     # Return to project dir
     os.chdir(orig_dir)
+
+def test_merge_workflow(test_repo):
+    """Test full merge workflow with real PRs."""
+    owner, name, test_branch, repo_dir = test_repo
+    _run_merge_test(test_repo, owner, False, 3)
 
 @pytest.fixture
 def test_mq_repo():
@@ -408,134 +432,4 @@ def test_mq_repo():
 
 def test_merge_queue_workflow(test_mq_repo):
     """Test merge queue workflow with real PRs."""
-    owner, repo_name, test_branch, repo_dir = test_mq_repo
-
-    orig_dir = os.getcwd()
-    # Temporarily go to repo to create commits
-    os.chdir(repo_dir)
-
-    # Real config using the test repo with merge queue
-    config = Config({
-        'repo': {
-            'github_remote': 'origin',
-            'github_branch': 'main',
-            'github_repo_owner': owner,
-            'github_repo_name': repo_name,
-            'merge_queue': True,  # Enable merge queue
-        },
-        'user': {}
-    })
-    git_cmd = RealGit(config)
-    github = GitHubClient(None, config)  # Real GitHub client
-    
-    # Create 2 test commits
-    def make_commit(file, line, msg):
-        with open(file, "w") as f:
-            f.write(f"{file}\n{line}\n")
-        try:
-            print(f"Creating file {file}...")
-            run_cmd(f"git add {file}")
-            run_cmd("git status")  # Debug: show git status after add
-            result = subprocess.run(f'git commit -m "{msg}"', shell=True, check=False,
-                                  stderr=subprocess.PIPE, stdout=subprocess.PIPE,
-                                  universal_newlines=True)
-            if result.returncode != 0:
-                print(f"Git commit failed with code {result.returncode}")
-                print(f"STDOUT: {result.stdout}")
-                print(f"STDERR: {result.stderr}")
-                raise subprocess.CalledProcessError(result.returncode, result.args,
-                                                   output=result.stdout,
-                                                   stderr=result.stderr)
-        except subprocess.CalledProcessError as e:
-            print(f"Failed to commit: {e}")
-            raise
-        return git_cmd.must_git("rev-parse HEAD").strip()
-        
-    print("Creating test commits...")
-    try:
-        # Use unique content to avoid conflicts
-        unique = str(uuid.uuid4())[:8]
-        c1_hash = make_commit("mq_test1.txt", f"line 1 - {unique}", "Test merge queue commit 1")
-        c2_hash = make_commit("mq_test2.txt", f"line 1 - {unique}", "Test merge queue commit 2")  
-        run_cmd(f"git push -u origin {test_branch}")  # Push branch with commits
-    except subprocess.CalledProcessError as e:
-        subprocess.run(["git", "status"], check=False)  # Debug
-        raise
-    
-    # Go back to project dir to run commands
-    os.chdir(orig_dir)
-    
-    # Initial update to create PRs
-    print("Creating initial PRs...")
-    subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
-    
-    os.chdir(repo_dir)
-    # Verify PRs created
-    info = github.get_info(None, git_cmd)
-    assert len(info.pull_requests) == 2, "Should have created 2 PRs"
-    pr1, pr2 = sorted(info.pull_requests, key=lambda pr: pr.number)
-    print(f"Created PRs: #{pr1.number}, #{pr2.number}")
-
-    # Verify initial PR chain
-    assert pr1.base_ref == "main", f"Bottom PR should target main, got {pr1.base_ref}"
-    assert pr2.base_ref == f"spr/main/{pr1.commit.commit_id}", f"Top PR should target bottom PR, got {pr2.base_ref}"
-
-    # Save PR numbers before merge 
-    pr1_num = pr1.number
-    pr2_num = pr2.number
-
-    # Go back to project dir to run merge
-    os.chdir(orig_dir)
-
-    # Run merge for all PRs
-    print("\nMerging PRs with merge queue...")
-    try:
-        merge_output = subprocess.check_output(
-            ["rye", "run", "pyspr", "merge", "-C", repo_dir],
-            stderr=subprocess.STDOUT,
-            universal_newlines=True
-        )
-        print(merge_output)
-    except subprocess.CalledProcessError as e:
-        # Get final PR state to help debug failure
-        os.chdir(repo_dir)
-        info = github.get_info(None, git_cmd)
-        print("\nFinal PR state after merge queue attempt:")
-        for pr in sorted(info.pull_requests, key=lambda pr: pr.number):
-            gh_pr = github.repo.get_pull(pr.number)
-            print(f"PR #{pr.number}:")
-            print(f"  Title: {gh_pr.title}")
-            print(f"  Base: {gh_pr.base.ref}")
-            print(f"  State: {gh_pr.state}")
-            print(f"  Merged: {gh_pr.merged}")
-            print(f"  Mergeable state: {gh_pr.mergeable_state}")
-            print(f"  Auto merge: {getattr(gh_pr, 'auto_merge', None)}")
-        os.chdir(orig_dir)
-        print(f"Merge failed with output:\n{e.output}")
-        raise
-
-    # Verify merge queue behavior
-    assert f"Merging PR #{pr2_num} to main" in merge_output, "Should use top PR for merge queue"
-    assert f"This will merge 2 PRs" in merge_output, "Should merge both PRs through merge queue"
-    assert "added to merge queue" in merge_output, "PR should be added to merge queue"
-
-    # Check final PR state
-    os.chdir(repo_dir)
-    info = github.get_info(None, git_cmd)
-    assert len(info.pull_requests) == 1, "Only top PR should remain open while in merge queue"
-    
-    # Check that top PR is in merge queue
-    prs_by_num = {pr.number: pr for pr in info.pull_requests}
-    assert pr2_num in prs_by_num, f"Top PR #{pr2_num} should remain open"
-    assert pr1_num not in prs_by_num, f"Bottom PR #{pr1_num} should be closed"
-    top_pr = prs_by_num[pr2_num]
-    gh_pr = github.repo.get_pull(top_pr.number)  # Get raw GitHub PR
-    
-    # Verify top PR is set up for merge queue
-    assert gh_pr.base.ref == "main", "Top PR should target main for merge queue"
-    assert gh_pr.state == "open", "Top PR should remain open while in merge queue"
-    # Note: We don't assert on auto_merge being set since our token might not have
-    # permissions to see it, but we verified from debug logs that it was added to queue
-
-    # Return to project dir
-    os.chdir(orig_dir)
+    _run_merge_test(test_mq_repo, "yangenttest1", True, 2)
