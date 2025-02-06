@@ -191,6 +191,13 @@ class RealGit(GitInterface):
     def run_cmd(self, command: str, output: Optional[str] = None) -> str:
         """Run git command."""
         cmd_str = command.strip()
+        
+        # Check for no-rebase flag
+        no_rebase = self.config.user.get('no_rebase', False) or os.environ.get("SPR_NOREBASE") == "true"
+        if no_rebase and cmd_str.startswith("rebase"):
+            # Skip rebase command if no-rebase is enabled
+            return ""
+            
         if self.config.user.get('log_git_commands', False):
             print(f"git {cmd_str}")
         try:
@@ -210,10 +217,6 @@ class RealGit(GitInterface):
             raise Exception(f"Git command failed: {e.stderr}")
         except git.exc.InvalidGitRepositoryError:
             raise Exception("Not in a git repository")
-        except Exception as e:
-            if str(e):
-                print(f"Git error: {e}")
-            raise
         except Exception as e:
             if str(e):
                 print(f"Git error: {e}")
