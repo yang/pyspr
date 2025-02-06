@@ -16,6 +16,8 @@ class PullRequest:
     commits: List[Commit]
     base_ref: Optional[str] = None
     in_queue: bool = False
+    body: str = ""
+    title: str = ""
 
     def mergeable(self, config) -> bool:
         """Check if PR is mergeable."""
@@ -138,8 +140,9 @@ class GitHubClient(GitHubInterface):
                         in_queue = pr.auto_merge is not None
                     except:
                         in_queue = False
-                    pull_requests.append(PullRequest(pr.number, commit, commits, 
-                                                    base_ref=pr.base.ref, in_queue=in_queue))
+                    pull_requests.append(PullRequest(pr.number, commit, commits,
+                                                    base_ref=pr.base.ref, in_queue=in_queue,
+                                                    title=pr.title, body=pr.body))
                 
         return GitHubInfo(local_branch, pull_requests)
 
@@ -156,10 +159,17 @@ class GitHubClient(GitHubInterface):
             base = self.config.repo.get('github_branch', 'main')
         
         title = commit.subject
-        body = git_cmd.must_git(f"show -s --format=%b {commit.commit_hash}").strip()
+        commit.body = git_cmd.must_git(f"show -s --format=%b {commit.commit_hash}").strip()
+        
+        # Get current PR stack for interlinking
+        current_prs = info.pull_requests[:] if info and info.pull_requests else []
+        new_pr = PullRequest(0, commit, [commit], base_ref=base, title=title)
+        current_prs.append(new_pr)  # Add new PR to stack for proper linking
+        
+        body = self.format_body(commit, current_prs)
         
         pr = self.repo.create_pull(title=title, body=body, head=branch_name, base=base)
-        return PullRequest(pr.number, commit, [commit], base_ref=base)
+        return PullRequest(pr.number, commit, [commit], base_ref=base, title=title, body=body)
 
     def update_pull_request(self, ctx, git_cmd, prs: List[PullRequest], 
                            pr: PullRequest, commit: Optional[Commit], prev_commit: Optional[Commit]):
@@ -171,9 +181,23 @@ class GitHubClient(GitHubInterface):
         print(f"  Title: {gh_pr.title}")
         print(f"  Current base: {gh_pr.base.ref}")
         
-        # Update title if needed and commit is provided
-        if commit and gh_pr.title != commit.subject:
-            gh_pr.edit(title=commit.subject)
+        # Get fresh info from PR
+        pr.title = gh_pr.title
+        
+        # Update title if needed and commit is provided 
+        need_body_update = False
+        if commit:
+            commit.body = git_cmd.must_git(f"show -s --format=%b {commit.commit_hash}").strip()
+            if gh_pr.title != commit.subject:
+                gh_pr.edit(title=commit.subject)
+                pr.title = commit.subject
+                need_body_update = True
+        
+        # Update body with stack info if we have a commit
+        if commit and (need_body_update or not pr.body):
+            body = self.format_body(commit, prs)
+            gh_pr.edit(body=body)
+            pr.body = body
 
         # Update base branch to maintain stack, but not if in merge queue
         try:
@@ -263,3 +287,32 @@ class GitHubClient(GitHubInterface):
         """Generate branch name from commit. Matches Go implementation."""
         remote_branch = self.config.repo.get('github_branch', 'main')
         return f"spr/{remote_branch}/{commit.commit_id}"
+        
+    def format_stack_markdown(self, commit: Commit, stack: List[PullRequest]) -> str:
+        """Format stack of PRs as markdown."""
+        show_pr_titles = self.config.repo.get('show_pr_titles_in_stack', False)
+        lines = []
+        # Reverse stack to match Go implementation (top to bottom)
+        for pr in reversed(stack):
+            is_current = pr.commit.commit_id == commit.commit_id
+            suffix = " ⬅" if is_current else ""
+            title_part = f"{pr.title} " if show_pr_titles and pr.title else ""
+            lines.append(f"- {title_part}#{pr.number}{suffix}")
+        return "\n".join(lines)
+
+    def format_body(self, commit: Commit, stack: List[PullRequest]) -> str:
+        """Format PR body with stack info."""
+        body = commit.body if hasattr(commit, 'body') and commit.body else ""
+        body = body.strip()
+
+        if len(stack) <= 1:
+            return body
+
+        stack_markdown = self.format_stack_markdown(commit, stack)
+        warning = ("\n\n⚠️ *Part of a stack created by [spr](https://github.com/ejoffe/spr). " +
+                  "Do not merge manually using the UI - doing so may have unexpected results.*")
+
+        if not body:
+            return f"**Stack**:\n{stack_markdown}{warning}"
+        else:
+            return f"{body}\n\n---\n\n**Stack**:\n{stack_markdown}{warning}"
