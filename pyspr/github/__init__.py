@@ -117,21 +117,96 @@ class GitHubClient(GitHubInterface):
         local_branch = git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
         
         pull_requests = []
-        if self.repo:
+        if not self.repo:
+            return GitHubInfo(local_branch, pull_requests)
+            
+        # Use GraphQL to efficiently get all data in one query, matching Go behavior
+        query = """
+        query {
+          viewer {
+            login
+            pullRequests(first:100, states:[OPEN]) {
+              nodes {
+                id
+                number
+                title
+                body
+                baseRefName
+                headRefName
+                mergeable
+                commits(first:100) {
+                  nodes {
+                    commit {
+                      oid
+                      messageHeadline
+                      messageBody
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        """
+        
+        try:
+            # Execute GraphQL query
             spr_branch_pattern = r'^spr/[^/]+/([a-f0-9]{8})'
-            # Get only PRs created by authenticated user
+            resp = self.client.get_app().create_graphql_query(query)
+            data = resp['data']
+            user_login = data['viewer']['login']
+            graphql_prs = data['viewer']['pullRequests']['nodes']
+            
+            print(f"Found {len(graphql_prs)} open PRs by {user_login}")
+            
+            for pr_data in graphql_prs:
+                branch_match = re.match(spr_branch_pattern, pr_data['headRefName'])
+                if branch_match:
+                    print(f"Processing PR #{pr_data['number']} with branch {pr_data['headRefName']}")
+                    commit_id = branch_match.group(1)
+                    
+                    # Get commit info
+                    commit_nodes = pr_data['commits']['nodes']
+                    if commit_nodes:
+                        last_commit = commit_nodes[-1]['commit']
+                        commit_hash = last_commit['oid']
+                        commit_msg = last_commit['messageBody']
+                        # Try to get commit ID from message
+                        msg_commit_id = re.search(r'commit-id:([a-f0-9]{8})', commit_msg)
+                        if msg_commit_id:
+                            commit_id = msg_commit_id.group(1)
+                            
+                        commit = Commit(commit_id, commit_hash, last_commit['messageHeadline'])
+                        commits = [commit]  # Simplified, full commit history not needed
+                        
+                        # Get basic PR info
+                        number = pr_data['number']
+                        base_ref = pr_data['baseRefName']
+                        title = pr_data['title']
+                        body = pr_data['body']
+                        
+                        in_queue = False  # Auto merge info not critical
+                        
+                        pull_requests.append(PullRequest(number, commit, commits,
+                                                        base_ref=base_ref, in_queue=in_queue,
+                                                        title=title, body=body))
+            
+        except Exception as e:
+            print(f"GraphQL query failed: {e}")
+            print("Falling back to REST API")
+            
+            # Fallback to REST API if GraphQL fails
             current_user = self.client.get_user().login
             open_prs = list(self.repo.get_pulls(state='open'))
             user_prs = [pr for pr in open_prs if pr.user.login == current_user]
             print(f"Found {len(user_prs)} open PRs by {current_user} out of {len(open_prs)} total")
+            
             for pr in user_prs:
                 branch_match = re.match(spr_branch_pattern, pr.head.ref)
                 if branch_match:
                     print(f"Processing PR #{pr.number} with branch {pr.head.ref}")
-                    # Extract commit ID from branch name - matches Go behavior
                     commit_id = branch_match.group(1)
-                    commit_hash = pr.head.sha  # GitHub API already gives us this
-                    # Get actual commit ID from commit message if possible
+                    commit_hash = pr.head.sha
                     try:
                         commits_in_pr = list(pr.get_commits())
                         if commits_in_pr:
@@ -141,18 +216,17 @@ class GitHubClient(GitHubInterface):
                                 commit_id = msg_commit_id.group(1)
                     except Exception as e:
                         print(f"Error getting commits for PR #{pr.number}: {e}")
-                        pass  # Keep ID from branch name if we can't get from message
+                        pass
 
                     commit = Commit(commit_id, commit_hash, pr.title)
-                    commits = [commit]  # Simplified, no commit history check
+                    commits = [commit]
                     try:
-                        # Not sure if PyGithub supports auto merge info
                         in_queue = False
                     except:
                         in_queue = False
                     pull_requests.append(PullRequest(pr.number, commit, commits,
-                                                    base_ref=pr.base.ref, in_queue=in_queue,
-                                                    title=pr.title, body=pr.body))
+                                                   base_ref=pr.base.ref, in_queue=in_queue,
+                                                   title=pr.title, body=pr.body))
                 
         return GitHubInfo(local_branch, pull_requests)
 
