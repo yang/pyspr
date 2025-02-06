@@ -75,9 +75,30 @@ class GitHubClient(GitHubInterface):
     def __init__(self, ctx, config):
         """Initialize with config."""
         self.config = config
-        self.token = os.environ.get("GITHUB_TOKEN")
+        self.token = self._find_token()
+        if not self.token:
+            print("Error: No GitHub token found. Define GITHUB_TOKEN env var or put token in /home/ubuntu/code/pyspr/token file")
+            return
         self.client = Github(self.token)
         self._repo = None
+
+    def _find_token(self) -> Optional[str]:
+        """Find GitHub token from file or env var."""
+        # First try environment variable
+        token = os.environ.get("GITHUB_TOKEN")
+        if token:
+            return token
+
+        # Then try token file
+        token_file = "/home/ubuntu/code/pyspr/token"
+        try:
+            if os.path.exists(token_file):
+                with open(token_file, "r") as f:
+                    token = f.read().strip()
+                    if token:
+                        return token
+        except Exception as e:
+            print(f"Error reading token file: {e}")
 
     @property
     def repo(self):
