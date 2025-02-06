@@ -1,6 +1,7 @@
 """Stacked PR implementation."""
 
 import concurrent.futures
+import os
 import sys
 import re
 from typing import Dict, List, Optional
