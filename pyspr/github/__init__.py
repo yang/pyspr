@@ -206,11 +206,11 @@ class GitHubClient:
         
         spr_branch_pattern = r'^spr/[^/]+/([a-f0-9]{8})'
         try:
-            # Execute GraphQL query
-            # PyGithub typing is wrong; create_graphql_query exists but isn't in stubs
-            gh_app = self.client.get_app()
-            gh_resp = getattr(gh_app, 'create_graphql_query')(query)  # type: ignore
-            resp = cast(GraphQLResponse, gh_resp)
+            # Execute GraphQL query through raw requester
+            _, response = self.client._Github__requester.requestJsonAndCheck(
+                "POST", "https://api.github.com/graphql", input={"query": query}
+            )
+            resp = cast(GraphQLResponse, response)
             data = resp['data']
             viewer_data = data['viewer']
             user_login = viewer_data['login']
