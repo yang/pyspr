@@ -4,10 +4,11 @@ import concurrent.futures
 import os
 import sys
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 from ..git import Commit, get_local_commit_stack, branch_name_from_commit
 from ..github import GitHubInfo, PullRequest
+from ..typing import StackedPRContextProtocol
 
 class StackedPR:
     """StackedPR implementation."""
@@ -87,6 +88,9 @@ class StackedPR:
                 break
             
             # Parse next commit ID from base branch
+            if not curr_pr.base_ref:
+                print(f"  Error: Empty base branch")
+                raise Exception("Empty base branch")
             match = re.match(r'spr/[^/]+/([a-f0-9]{8})', curr_pr.base_ref)
             if not match:
                 print(f"  Error: Invalid base branch: {curr_pr.base_ref}")
@@ -117,7 +121,7 @@ class StackedPR:
         print(f"  Sorted PRs: {[pr.commit.commit_id for pr in sorted_pull_requests]}")
         return sorted_pull_requests
 
-    def fetch_and_get_github_info(self, ctx) -> Optional[GitHubInfo]:
+    def fetch_and_get_github_info(self, ctx: StackedPRContextProtocol) -> Optional[GitHubInfo]:
         """Fetch from remote and get GitHub info."""
         # Basic fetch and validation
         remote = self.config.repo.get('github_remote', 'origin')
@@ -146,9 +150,10 @@ class StackedPR:
             return None
 
         info = self.github.get_info(ctx, self.git_cmd)
-        # Basic branch name validation
+        # Basic branch name validation 
         branch_name_regex = r"pr_[0-9a-f]{8}"
-        if re.search(branch_name_regex, info.local_branch):
+        local_branch = info.local_branch if info else None
+        if local_branch and re.search(branch_name_regex, local_branch):
             print("error: don't run spr in a remote pr branch")
             print(" this could lead to weird duplicate pull requests getting created")
             print(" in general there is no need to checkout remote branches used for prs")
@@ -213,7 +218,9 @@ class StackedPR:
                 cmd = f"push --force --atomic {remote} " + " ".join(ref_names)
                 self.git_cmd.must_git(cmd)
 
-    def update_pull_requests(self, ctx, reviewers: Optional[List[str]] = None, count: Optional[int] = None):
+    def update_pull_requests(self, ctx: StackedPRContextProtocol, 
+                         reviewers: Optional[List[str]] = None, 
+                         count: Optional[int] = None) -> None:
         """Update pull requests for commits."""
         github_info = self.fetch_and_get_github_info(ctx)
         if not github_info:
@@ -324,7 +331,7 @@ class StackedPR:
         # Status
         self.status_pull_requests(ctx)
 
-    def status_pull_requests(self, ctx):
+    def status_pull_requests(self, ctx: StackedPRContextProtocol) -> None:
         """Show status of pull requests."""
         from ..pretty import print_header
         github_info = self.github.get_info(ctx, self.git_cmd)
@@ -341,7 +348,7 @@ class StackedPR:
                 print(f"   {str(pr)} {status}")
             print("")  # Empty line after list
 
-    def merge_pull_requests(self, ctx, count: Optional[int] = None):
+    def merge_pull_requests(self, ctx: StackedPRContextProtocol, count: Optional[int] = None) -> None:
         """Merge all mergeable pull requests."""
         github_info = self.github.get_info(ctx, self.git_cmd)
 

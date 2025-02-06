@@ -1,13 +1,19 @@
 """Config parser logic."""
 
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Union, Any
 import yaml
 
-def parse_config(git_cmd) -> Dict:
+from ...git import GitInterface
+
+ConfigValue = Union[str, bool]
+RepoConfig = Dict[str, Any]  # Use Any since yaml can return various types
+Config = Dict[str, RepoConfig]
+
+def parse_config(git_cmd: GitInterface) -> Config:
     """Parse config from repository and user config files."""
     # Simple config implementation enough to support update
-    config = {
+    config: Config = {
         'repo': {
             'github_remote': 'origin',
             'github_branch': 'main',

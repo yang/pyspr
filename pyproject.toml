@@ -34,3 +34,13 @@ allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["pyspr"]
+
+[tool.pyright]
+typeCheckingMode = "strict"
+reportMissingTypeStubs = true
+reportUnknownMemberType = true
+reportUnknownParameterType = true
+reportUnknownVariableType = true
+reportUnknownArgumentType = true
+reportUntypedFunctionDecorator = true
+reportMissingTypeArgument = true
