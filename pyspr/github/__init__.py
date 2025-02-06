@@ -170,10 +170,16 @@ class GitHubClient(GitHubInterface):
         current_prs.append(new_pr)  # Add new PR to stack for proper linking
         print(f"DEBUG: Added new PR, stack now has {len(current_prs)} PRs")
         
+        # Create PR first to get number
+        pr = self.repo.create_pull(title=title, body="Creating...", head=branch_name, base=base)
+        new_pr.number = pr.number  # Update number in stack
+        
+        # Now format body with correct PR numbers
         body = self.format_body(commit, current_prs)
         print(f"DEBUG: Formatted body:\n{body}")
         
-        pr = self.repo.create_pull(title=title, body=body, head=branch_name, base=base)
+        # Update PR with proper body
+        pr.edit(body=body)
         return PullRequest(pr.number, commit, [commit], base_ref=base, title=title, body=body)
 
     def update_pull_request(self, ctx, git_cmd, prs: List[PullRequest], 
@@ -198,9 +204,10 @@ class GitHubClient(GitHubInterface):
                 pr.title = commit.subject
                 need_body_update = True
         
-        # Update body with stack info if we have a commit
-        if commit and (need_body_update or not pr.body):
+        # Always update body with current stack info 
+        if commit:
             body = self.format_body(commit, prs)
+            print(f"DEBUG: Updating body for PR #{pr.number}:\n{body}")
             gh_pr.edit(body=body)
             pr.body = body
 
