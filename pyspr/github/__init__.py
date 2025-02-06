@@ -53,6 +53,7 @@ class PullRequest:
     in_queue: bool = False
     body: str = ""
     title: str = ""
+    merged: bool = False  # Added to track merge status
 
     def mergeable(self, config: ConfigProtocol) -> bool:
         """Check if PR is mergeable."""

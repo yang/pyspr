@@ -11,7 +11,6 @@ from ...config.config_parser import parse_config
 from ...git import RealGit
 from ...github import GitHubClient 
 from ...spr import StackedPR
-from ...typing import StackedPRContextProtocol
 
 def check(err: Exception) -> None:
     """Check for error and exit if needed."""

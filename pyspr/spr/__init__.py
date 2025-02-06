@@ -1,19 +1,18 @@
 """Stacked PR implementation."""
 
 import concurrent.futures
-import os
 import sys
 import re
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional
 
-from ..git import Commit, get_local_commit_stack, branch_name_from_commit
-from ..github import GitHubInfo, PullRequest
+from ..git import Commit, get_local_commit_stack, branch_name_from_commit, ConfigProtocol, GitInterface  
+from ..github import GitHubInfo, PullRequest, GitHubInterface
 from ..typing import StackedPRContextProtocol
 
 class StackedPR:
     """StackedPR implementation."""
 
-    def __init__(self, config, github, git_cmd):
+    def __init__(self, config: ConfigProtocol, github: GitHubInterface, git_cmd: GitInterface):
         """Initialize with config, GitHub and git clients."""
         self.config = config
         self.github = github
@@ -23,14 +22,14 @@ class StackedPR:
 
     def align_local_commits(self, commits: List[Commit], prs: List[PullRequest]) -> List[Commit]:
         """Align local commits with pull requests."""
-        # Map commit IDs to determine if they are PR head commits
-        remote_commits = {}
+        # Map commit IDs to determine if they are PR head commits 
+        remote_commits: Dict[str, bool] = {}
         for pr in prs:
             for c in pr.commits:
                 is_head = c.commit_id == pr.commit.commit_id
                 remote_commits[c.commit_id] = is_head
 
-        result = []
+        result: List[Commit] = []
         for commit in commits:
             # Keep commit if it's not in remote or if it's a PR head commit
             if commit.commit_id not in remote_commits or remote_commits[commit.commit_id]:
@@ -40,7 +39,7 @@ class StackedPR:
 
     def commits_reordered(self, local_commits: List[Commit], pull_requests: List[PullRequest]) -> bool:
         """Check if commits have been reordered."""
-        local_ids = []
+        local_ids: List[str] = []
         for commit in local_commits:
             if not commit.wip:
                 local_ids.append(commit.commit_id)
@@ -67,12 +66,12 @@ class StackedPR:
         print(f"  All PRs: {[(pr.number, pr.commit.commit_id, pr.base_ref) for pr in all_pull_requests]}")
             
         # Map PRs by commit ID
-        pull_request_map = {pr.commit.commit_id: pr for pr in all_pull_requests}
+        pull_request_map: Dict[str, PullRequest] = {pr.commit.commit_id: pr for pr in all_pull_requests}
         
-        pull_requests = []
+        pull_requests: List[PullRequest] = []
         
         # Find top PR in local commits
-        curr_pr = None
+        curr_pr: Optional[PullRequest] = None
         for commit in reversed(local_commits):
             if commit.commit_id in pull_request_map:
                 curr_pr = pull_request_map[commit.commit_id]
@@ -107,14 +106,14 @@ class StackedPR:
     def sort_pull_requests_by_local_commit_order(self, pull_requests: List[PullRequest], 
                                                 local_commits: List[Commit]) -> List[PullRequest]:
         """Sort PRs by local commit order."""
-        pull_request_map = {pr.commit.commit_id: pr for pr in pull_requests}
+        pull_request_map: Dict[str, PullRequest] = {pr.commit.commit_id: pr for pr in pull_requests}
 
         print("DEBUG sort_pull_requests:")
         print(f"  Local commit IDs: {[c.commit_id for c in local_commits]}")
         print(f"  PR commit IDs: {[pr.commit.commit_id for pr in pull_requests]}")
         print(f"  PR map: {list(pull_request_map.keys())}")
 
-        sorted_pull_requests = []
+        sorted_pull_requests: List[PullRequest] = []
         for commit in local_commits:
             if not commit.wip and commit.commit_id in pull_request_map:
                 sorted_pull_requests.append(pull_request_map[commit.commit_id])
@@ -150,21 +149,21 @@ class StackedPR:
             return None
 
         info = self.github.get_info(ctx, self.git_cmd)
-        # Basic branch name validation 
-        branch_name_regex = r"pr_[0-9a-f]{8}"
-        local_branch = info.local_branch if info else None
-        if local_branch and re.search(branch_name_regex, local_branch):
-            print("error: don't run spr in a remote pr branch")
-            print(" this could lead to weird duplicate pull requests getting created")
-            print(" in general there is no need to checkout remote branches used for prs")
-            print(" instead use local branches and run spr update to sync your commit stack")
-            print("  with your pull requests on github")
-            print(f"branch name: {info.local_branch}")
-            return None
+        if info:
+            # Basic branch name validation 
+            branch_name_regex = r"pr_[0-9a-f]{8}"
+            if re.search(branch_name_regex, info.local_branch):
+                print("error: don't run spr in a remote pr branch")
+                print(" this could lead to weird duplicate pull requests getting created")
+                print(" in general there is no need to checkout remote branches used for prs")
+                print(" instead use local branches and run spr update to sync your commit stack")
+                print("  with your pull requests on github")
+                print(f"branch name: {info.local_branch}")
+                return None
 
         return info
 
-    def sync_commit_stack_to_github(self, ctx, commits: List[Commit], 
+    def sync_commit_stack_to_github(self, ctx: StackedPRContextProtocol, commits: List[Commit], 
                                   info: GitHubInfo) -> bool:
         """Sync commits to GitHub."""
         # Check for changes
@@ -183,7 +182,7 @@ class StackedPR:
             self._do_sync_commit_stack(commits, info)
         return True
 
-    def _do_sync_commit_stack(self, commits: List[Commit], info: GitHubInfo):
+    def _do_sync_commit_stack(self, commits: List[Commit], info: GitHubInfo) -> None:
         """Do the sync commit stack work."""
         def commit_updated(c: Commit, info: GitHubInfo) -> bool:
             for pr in info.pull_requests:
@@ -192,19 +191,19 @@ class StackedPR:
             return True
 
         # First filter out WIP and post-WIP commits, exactly like Go version
-        non_wip_commits = []
+        non_wip_commits: List[Commit] = []
         for commit in commits:
             if commit.wip:
                 break
             non_wip_commits.append(commit)
 
         # Then check which need updating
-        updated_commits = []
+        updated_commits: List[Commit] = []
         for commit in non_wip_commits:
             if commit_updated(commit, info):
                 updated_commits.append(commit)
                 
-        ref_names = []
+        ref_names: List[str] = []
         for commit in updated_commits:
             branch_name = branch_name_from_commit(self.config, commit)
             ref_names.append(f"{commit.commit_hash}:refs/heads/{branch_name}")
@@ -239,8 +238,8 @@ class StackedPR:
         )
 
         # Close PRs for deleted commits, but only within the stack
-        valid_pull_requests = []
-        local_commit_map = {commit.commit_id: commit for commit in local_commits}
+        valid_pull_requests: List[PullRequest] = []
+        local_commit_map: Dict[str, Commit] = {commit.commit_id: commit for commit in local_commits}
         for pr in github_info.pull_requests:
             if pr.commit.commit_id not in local_commit_map:
                 print(f"Closing PR #{pr.number} - commit {pr.commit.commit_id} has gone away")
@@ -251,7 +250,7 @@ class StackedPR:
         github_info.pull_requests = valid_pull_requests
 
         # Get non-WIP commits 
-        non_wip_commits = []
+        non_wip_commits: List[Commit] = []
         for commit in local_commits:
             if commit.wip:
                 break
@@ -261,30 +260,37 @@ class StackedPR:
             return
 
         # Update PRs
-        update_queue = []
+        from typing import TypedDict
+
+        class UpdateItem(TypedDict):
+            pr: PullRequest
+            commit: Optional[Commit]
+            prev_commit: Optional[Commit]
+
+        update_queue: List[UpdateItem] = []
         assignable = None
 
         # Process commits in order to rebuild PRs array in correct order
         github_info.pull_requests = []
 
         # Match commits to PRs first by ID if possible
-        for commit_index, c in enumerate(non_wip_commits):
+        for commit_index, commit in enumerate(non_wip_commits):
             if count is not None and commit_index == count:
                 break
                 
-            prev_commit = non_wip_commits[commit_index-1] if commit_index > 0 else None
+            prev_commit: Optional[Commit] = non_wip_commits[commit_index-1] if commit_index > 0 else None
 
             pr_found = False
             for pr in valid_pull_requests:
-                if c.commit_id == pr.commit.commit_id:
+                if commit.commit_id == pr.commit.commit_id:
                     # Found matching PR - update it
                     pr_found = True
                     update_queue.append({
                         'pr': pr, 
-                        'commit': c,
+                        'commit': commit,
                         'prev_commit': prev_commit
                     })
-                    pr.commit = c
+                    pr.commit = commit
                     github_info.pull_requests.append(pr)
                     if reviewers:
                         print(f"warning: not updating reviewers for PR #{pr.number}")
@@ -293,11 +299,11 @@ class StackedPR:
 
             if not pr_found:
                 # If no match by ID, create new PR (matching Go behavior)
-                pr = self.github.create_pull_request(ctx, self.git_cmd, github_info, c, prev_commit)
+                pr = self.github.create_pull_request(ctx, self.git_cmd, github_info, commit, prev_commit)
                 github_info.pull_requests.append(pr)
                 update_queue.append({
                     'pr': pr,
-                    'commit': c,
+                    'commit': commit,
                     'prev_commit': prev_commit
                 })
                 if reviewers:
@@ -305,7 +311,7 @@ class StackedPR:
                     if assignable is None:
                         assignable = self.github.get_assignable_users(ctx)
                     # For PyGithub we need to pass logins, not IDs
-                    user_logins = [] 
+                    user_logins: List[str] = [] 
                     print(f"DEBUG: Trying to add reviewers: {reviewers}")
                     print(f"DEBUG: Assignable users: {assignable}")
                     for r in reviewers:
@@ -319,7 +325,8 @@ class StackedPR:
 
         # Update all PRs to have correct bases
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures = []
+            from concurrent.futures import Future
+            futures: List[Future[None]] = []
             for update in update_queue:
                 futures.append(
                     executor.submit(self.github.update_pull_request,
@@ -336,7 +343,7 @@ class StackedPR:
         from ..pretty import print_header
         github_info = self.github.get_info(ctx, self.git_cmd)
         
-        if not github_info.pull_requests:
+        if not github_info or not github_info.pull_requests:
             print_header("Pull Requests", use_emoji=True)
             print("\npull request stack is empty\n")
         else:
@@ -351,13 +358,16 @@ class StackedPR:
     def merge_pull_requests(self, ctx: StackedPRContextProtocol, count: Optional[int] = None) -> None:
         """Merge all mergeable pull requests."""
         github_info = self.github.get_info(ctx, self.git_cmd)
+        if not github_info:
+            return
 
         # MergeCheck handling
         if self.config.repo.get('merge_check'):
             local_commits = get_local_commit_stack(self.config, self.git_cmd)
             if local_commits:
                 last_commit = local_commits[-1]
-                checked_commit = self.config.state.get('merge_check_commit', {}).get(github_info.key())
+                config_state = getattr(self.config, 'state', {})
+                checked_commit: Optional[str] = config_state.get('merge_check_commit', {}).get(github_info.key()) if config_state else None
                 
                 if not checked_commit:
                     print("Need to run merge check 'spr check' before merging")
@@ -370,11 +380,10 @@ class StackedPR:
             return
 
         # Sort PRs in stack order (bottom to top)
-        prs_in_order = []
-        pr_map = {pr.commit.commit_id: pr for pr in github_info.pull_requests}
+        prs_in_order: List[PullRequest] = []
         
         # Find base PR (the one targeting main)
-        base_pr = None
+        base_pr: Optional[PullRequest] = None
         branch = self.config.repo.get('github_branch', 'main')
         for pr in github_info.pull_requests:
             if pr.base_ref == branch:
@@ -385,7 +394,7 @@ class StackedPR:
             return
 
         # Build stack from bottom up
-        current_pr = base_pr
+        current_pr: Optional[PullRequest] = base_pr
         while current_pr:
             prs_in_order.append(current_pr)
             next_pr = None

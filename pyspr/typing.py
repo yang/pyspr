@@ -1,7 +1,6 @@
 """Common types used across the codebase."""
 
-from typing import Any, Dict, List, Optional, Protocol, Union
-from click import Context
+from typing import Any, Dict, Optional, Protocol 
 
 class StackedPRContextProtocol(Protocol):
     """Protocol for what StackedPR expects from a context."""

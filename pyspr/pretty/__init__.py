@@ -1,10 +1,9 @@
 """Pretty formatting utilities for CLI output."""
 
 import json
-import os
 import shutil
 import sys
-
+from typing import Any, IO, Optional
 
 def get_term_width() -> int:
     """Get terminal width, default to 80 if can't detect."""
@@ -34,7 +33,7 @@ def header(text: str, use_emoji: bool = True) -> str:
     return "\n".join(result)
 
 
-def pretty_json(data: any, prefix: str = "") -> str:
+def pretty_json(data: Any, prefix: str = "") -> str:
     """Format JSON data with optional prefix."""
     raw = json.dumps(data, indent=2)
     if prefix:
@@ -43,14 +42,14 @@ def pretty_json(data: any, prefix: str = "") -> str:
     return raw
 
 
-def print_json(data: any, prefix: str = "", file=None):
+def print_json(data: Any, prefix: str = "", file: Optional[IO[str]] = None) -> None:
     """Print JSON data to file (default stdout)."""
     if file is None:
         file = sys.stdout
     print(pretty_json(data, prefix), file=file)
 
 
-def print_header(text: str, use_emoji: bool = True, file=None):
+def print_header(text: str, use_emoji: bool = True, file: Optional[IO[str]] = None) -> None:
     """Print a header to file (default stdout)."""
     if file is None:
         file = sys.stdout
