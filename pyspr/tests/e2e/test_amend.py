@@ -13,6 +13,10 @@ from pyspr.config import Config
 from pyspr.git import RealGit, Commit
 from pyspr.github import GitHubClient
 
+def run_cmd(cmd: str) -> None:
+    """Run a shell command using subprocess with proper error handling."""
+    subprocess.run(cmd, shell=True, check=True)
+
 @pytest.fixture
 def test_repo():
     """Use yang/teststack repo with a temporary test branch."""
@@ -34,20 +38,20 @@ def test_repo():
         os.chdir("teststack")
 
         # Create and use test branch
-        os.system(f"git checkout -b {test_branch}")
+        run_cmd(f"git checkout -b {test_branch}")
 
         # Configure git
-        os.system("git config user.name 'Test User'")
-        os.system("git config user.email 'test@example.com'")
+        run_cmd("git config user.name 'Test User'")
+        run_cmd("git config user.email 'test@example.com'")
         
         yield repo_name, test_branch
 
         # Cleanup - delete test branch locally and remotely
-        os.system("git checkout main")
-        os.system(f"git branch -D {test_branch}")
+        run_cmd("git checkout main")
+        run_cmd(f"git branch -D {test_branch}")
         try:
-            os.system(f"git push origin --delete {test_branch}")
-        except:
+            run_cmd(f"git push origin --delete {test_branch}")
+        except subprocess.CalledProcessError:
             print(f"Failed to delete remote branch {test_branch}, may not exist")
 
         # Return to original directory
@@ -75,8 +79,8 @@ def test_amend_workflow(test_repo):
     def make_commit(file, line, msg):
         with open(file, "w") as f:
             f.write(f"{file}\n{line}\n")
-        os.system(f"git add {file}")
-        os.system(f'git commit -m "{msg}"')
+        run_cmd(f"git add {file}")
+        run_cmd(f'git commit -m "{msg}"')
         return git_cmd.must_git("rev-parse HEAD").strip()
         
     print("Creating commits...")
@@ -84,7 +88,7 @@ def test_amend_workflow(test_repo):
     c2_hash = make_commit("tb.txt", "line 1", "Second commit")  
     c3_hash = make_commit("tc.txt", "line 1", "Third commit")
     c4_hash = make_commit("td.txt", "line 1", "Fourth commit")
-    os.system(f"git push -u origin {test_branch}")  # Push branch with commits
+    run_cmd(f"git push -u origin {test_branch}")  # Push branch with commits
     
     # Initial update to create PRs
     print("Creating initial PRs...")
@@ -131,9 +135,9 @@ def test_amend_workflow(test_repo):
     c4_msg = git_cmd.must_git(f"show -s --format=%B HEAD").strip()
 
     # Reset and cherry-pick c1, preserving SPR-updated message
-    os.system("git reset --hard HEAD~4")
-    os.system(f"git cherry-pick {c1_hash}")
-    os.system(f'git commit --amend -m "{c1_msg}"')
+    run_cmd("git reset --hard HEAD~4")
+    run_cmd(f"git cherry-pick {c1_hash}")
+    run_cmd(f'git commit --amend -m "{c1_msg}"')
     c1_hash_new = git_cmd.must_git("rev-parse HEAD").strip()
     log1 = git_cmd.must_git(f"show -s --format=%B {c1_hash_new}").strip()
     print(f"Commit 1: old={c1_hash} new={c1_hash_new} id={c1_id}")
@@ -143,11 +147,11 @@ def test_amend_workflow(test_repo):
     print("Skipping c2 - deleting it")
     
     # Cherry-pick and amend c3, preserving SPR-updated message
-    os.system(f"git cherry-pick {c3_hash}")
+    run_cmd(f"git cherry-pick {c3_hash}")
     with open("tc.txt", "a") as f:
         f.write("line 2\n")
-    os.system("git add tc.txt")
-    os.system(f'git commit --amend -m "{c3_msg}"')
+    run_cmd("git add tc.txt")
+    run_cmd(f'git commit --amend -m "{c3_msg}"')
     c3_hash_new = git_cmd.must_git("rev-parse HEAD").strip()
     log3 = git_cmd.must_git(f"show -s --format=%B {c3_hash_new}").strip()
     print(f"Commit 3: old={c3_hash} new={c3_hash_new} id={c3_id}")
@@ -158,8 +162,8 @@ def test_amend_workflow(test_repo):
     new_c35_hash = make_commit("tc5.txt", "line 1", "Commit three point five")
     
     # Cherry-pick c4, preserving SPR-updated message
-    os.system(f"git cherry-pick {c4_hash}")
-    os.system(f'git commit --amend -m "{c4_msg}"')
+    run_cmd(f"git cherry-pick {c4_hash}")
+    run_cmd(f'git commit --amend -m "{c4_msg}"')
     c4_hash_new = git_cmd.must_git("rev-parse HEAD").strip()
     log4 = git_cmd.must_git(f"show -s --format=%B {c4_hash_new}").strip()
     print(f"Commit 4: old={c4_hash} new={c4_hash_new} id={c4_id}")
