@@ -186,12 +186,19 @@ class StackedPR:
                     return pr.commit.commit_hash != c.commit_hash
             return True
 
-        updated_commits = []
+        # First filter out WIP and post-WIP commits, exactly like Go version
+        non_wip_commits = []
         for commit in commits:
             if commit.wip:
                 break
+            non_wip_commits.append(commit)
+
+        # Then check which need updating
+        updated_commits = []
+        for commit in non_wip_commits:
             if commit_updated(commit, info):
                 updated_commits.append(commit)
+                
         ref_names = []
         for commit in updated_commits:
             branch_name = branch_name_from_commit(self.config, commit)

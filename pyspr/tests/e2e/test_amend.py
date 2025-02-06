@@ -1,4 +1,4 @@
-"""End-to-end test for amending commits in stack and PR stack isolation."""
+"""End-to-end test for amending commits in stack and PR stack isolation and WIP behavior."""
 
 import os
 import tempfile
@@ -16,6 +16,86 @@ from pyspr.github import GitHubClient
 def run_cmd(cmd: str) -> None:
     """Run a shell command using subprocess with proper error handling."""
     subprocess.run(cmd, shell=True, check=True)
+
+def test_wip_behavior(test_repo):
+    """Test that WIP commits behave as expected:
+    - Regular commits before WIP are converted to PRs
+    - WIP commits are not converted to PRs
+    - Regular commits after WIP are not converted to PRs
+    """
+    owner, repo_name, test_branch, repo_dir = test_repo
+
+    orig_dir = os.getcwd()
+    os.chdir(repo_dir)
+
+    # Real config using the test repo
+    config = Config({
+        'repo': {
+            'github_remote': 'origin',
+            'github_branch': 'main',
+            'github_repo_owner': owner,
+            'github_repo_name': repo_name,
+        },
+        'user': {}
+    })
+    git_cmd = RealGit(config)
+    github = GitHubClient(None, config)  # Real GitHub client
+    
+    # Create 4 commits: 2 regular, 1 WIP, 1 regular
+    def make_commit(file, msg):
+        with open(file, "w") as f:
+            f.write(f"{file}\n")
+        run_cmd(f"git add {file}")
+        run_cmd(f'git commit -m "{msg}"')
+        return git_cmd.must_git("rev-parse HEAD").strip()
+        
+    print("Creating commits...")
+    c1_hash = make_commit("wip_test1.txt", "First regular commit")
+    c2_hash = make_commit("wip_test2.txt", "Second regular commit")
+    c3_hash = make_commit("wip_test3.txt", "WIP Third commit")
+    c4_hash = make_commit("wip_test4.txt", "Fourth regular commit")
+    run_cmd(f"git push -u origin {test_branch}")  # Push branch with commits
+    
+    # Run update to create PRs
+    print("Creating PRs...")
+    
+    # Go back to project dir to run commands 
+    os.chdir(orig_dir)
+    run_cmd(f"rye run pyspr update -C {repo_dir}")
+    
+    # Go back to repo for verification
+    os.chdir(repo_dir)
+    
+    # Verify only first two PRs were created
+    info = github.get_info(None, git_cmd)
+    assert len(info.pull_requests) == 2, "Should only create 2 PRs before the WIP commit"
+    
+    # Verify PR commit hashes match first two commits
+    prs = sorted(info.pull_requests, key=lambda pr: pr.number)
+    assert len(prs) == 2, "Should have exactly 2 PRs"
+    
+    # Get commit messages to verify WIP detection worked correctly
+    c1_msg = git_cmd.must_git(f"show -s --format=%B {c1_hash}").strip()
+    c2_msg = git_cmd.must_git(f"show -s --format=%B {c2_hash}").strip()
+    c3_msg = git_cmd.must_git(f"show -s --format=%B {c3_hash}").strip() 
+    
+    print("\nVerifying commit messages:")
+    print(f"C1: {c1_msg}")
+    print(f"C2: {c2_msg}")
+    print(f"C3: {c3_msg}")
+    
+    # Verify WIP commit is correctly identified
+    assert not c1_msg.startswith("WIP"), "First commit should not be WIP"
+    assert not c2_msg.startswith("WIP"), "Second commit should not be WIP"
+    assert c3_msg.startswith("WIP"), "Third commit should be WIP"
+    
+    # Check remaining structure
+    pr1, pr2 = prs
+    assert pr1.base_ref == "main", "First PR should target main"
+    assert pr2.base_ref.startswith("spr/main/"), "Second PR should target first PR's branch"
+
+    # Return to original directory
+    os.chdir(orig_dir)
 
 @pytest.fixture
 def test_repo():

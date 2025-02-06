@@ -156,7 +156,7 @@ def parse_local_commit_stack(commit_log: str) -> Tuple[List[Commit], bool]:
             scanned_commit.commit_id = id_match.group(1)
             scanned_commit.body = scanned_commit.body.strip()
             
-            if scanned_commit.subject.startswith("WIP"):
+            if scanned_commit.subject.upper().startswith("WIP"):
                 scanned_commit.wip = True
                 
             # Prepend to keep same order as Go code
