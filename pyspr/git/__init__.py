@@ -2,10 +2,11 @@
 
 import os
 import re
-import subprocess
+import uuid
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Any, Dict, Protocol
 import git
+from git.exc import GitCommandError, InvalidGitRepositoryError
 
 @dataclass 
 class Commit:
@@ -17,17 +18,22 @@ class Commit:
     body: str = ""
     wip: bool = False
 
-class GitInterface:
+class GitInterface(Protocol):
     """Git interface."""
     def run_cmd(self, command: str, output: Optional[str] = None) -> str:
         """Run git command and optionally capture output."""
-        raise NotImplementedError()
+        ...
 
     def must_git(self, command: str, output: Optional[str] = None) -> str:
         """Run git command, failing on error."""
-        raise NotImplementedError()
+        ...
 
-def get_local_commit_stack(config, git_cmd) -> List[Commit]:
+class ConfigProtocol(Protocol):
+    """Protocol for config objects used in git module."""
+    repo: Dict[str, Any]
+    user: Dict[str, Any]
+
+def get_local_commit_stack(config: ConfigProtocol, git_cmd: GitInterface) -> List[Commit]:
     """Get local commit stack. Returns commits ordered with bottom commit first."""
     try:
         remote = config.repo.get('github_remote', 'origin')
@@ -40,11 +46,15 @@ def get_local_commit_stack(config, git_cmd) -> List[Commit]:
         # For tests, fall back to getting all commits
         commit_log = git_cmd.must_git("log --format=medium --no-color")
     
+    commits: List[Commit] = []
+    valid = True
     commits, valid = parse_local_commit_stack(commit_log)
     
     # If not valid, it means commits are missing IDs - add them
     if not valid:
         # Get all commits for test
+        commit_hashes: List[str] = []
+        target = "HEAD"  # Default target
         try:
             remote = config.repo.get('github_remote', 'origin')
             branch = config.repo.get('github_branch', 'main')
@@ -62,8 +72,8 @@ def get_local_commit_stack(config, git_cmd) -> List[Commit]:
         original_head = git_cmd.must_git("rev-parse HEAD").strip()
 
         try:
-            commits = []
-            last_good_hash = target if 'target' in locals() else 'HEAD'
+            commits_new: List[Commit] = []
+            last_good_hash = target
 
             for cid in reversed(commit_hashes):  # Work from newest to oldest
                 if not cid:
@@ -79,15 +89,14 @@ def get_local_commit_stack(config, git_cmd) -> List[Commit]:
                     commit_hash = git_cmd.must_git(f"rev-parse {cid}").strip()
                     subject = git_cmd.must_git(f"show -s --format=%s {cid}").strip()
                     wip = subject.upper().startswith("WIP")
-                    commits.insert(0, Commit(commit_id, commit_hash, subject, body, wip))
+                    commits_new.insert(0, Commit(commit_id, commit_hash, subject, body, wip))
                 else:
                     # Need to add ID
-                    import uuid
-                    commit_id = str(uuid.uuid4())[:8]
+                    new_id = str(uuid.uuid4())[:8]
                     
                     # Get current message
                     subject = git_cmd.must_git(f"show -s --format=%s {cid}").strip()
-                    new_msg = f"{full_msg}\n\ncommit-id:{commit_id}"
+                    new_msg = f"{full_msg}\n\ncommit-id:{new_id}"
                     
                     # Checkout commit
                     git_cmd.must_git(f"checkout {cid}")
@@ -100,16 +109,16 @@ def get_local_commit_stack(config, git_cmd) -> List[Commit]:
                     
                     # Add to list
                     wip = subject.upper().startswith("WIP")
-                    commits.insert(0, Commit(commit_id, new_hash, subject, new_msg, wip))
+                    commits_new.insert(0, Commit(new_id, new_hash, subject, new_msg, wip))
 
             # Now rewrite history with the new commit IDs
             git_cmd.must_git(f"checkout {curr_branch}")
             git_cmd.must_git(f"reset --hard {last_good_hash}")
-            for commit in commits:
+            for commit in commits_new:
                 cherry_pick_cmd = f"cherry-pick {commit.commit_hash}"
                 git_cmd.must_git(cherry_pick_cmd)
                 
-            return commits
+            return commits_new
         except Exception as e:
             # Clean up on error
             git_cmd.must_git(f"checkout {curr_branch}")
@@ -120,7 +129,7 @@ def get_local_commit_stack(config, git_cmd) -> List[Commit]:
 
 def parse_local_commit_stack(commit_log: str) -> Tuple[List[Commit], bool]:
     """Parse commit log into commits. Returns (commits, valid)."""
-    commits = []
+    commits: List[Commit] = []
     
     if not commit_log.strip():
         return [], True
@@ -130,7 +139,7 @@ def parse_local_commit_stack(commit_log: str) -> Tuple[List[Commit], bool]:
     commit_id_regex = re.compile(r'commit-id:([a-f0-9]{8})')
     
     commit_scan_on = False
-    scanned_commit = None
+    scanned_commit: Optional[Commit] = None
     subject_index = 0
     
     lines = commit_log.split('\n')
@@ -152,7 +161,7 @@ def parse_local_commit_stack(commit_log: str) -> Tuple[List[Commit], bool]:
             
         # Match commit ID - last thing in commit
         id_match = commit_id_regex.search(line)
-        if id_match:
+        if id_match and scanned_commit:
             scanned_commit.commit_id = id_match.group(1)
             scanned_commit.body = scanned_commit.body.strip()
             
@@ -164,7 +173,7 @@ def parse_local_commit_stack(commit_log: str) -> Tuple[List[Commit], bool]:
             commit_scan_on = False
             
         # Look for subject and body
-        if commit_scan_on:
+        if commit_scan_on and scanned_commit:
             if index == subject_index:
                 scanned_commit.subject = line.strip()
             elif index > subject_index:
@@ -177,16 +186,16 @@ def parse_local_commit_stack(commit_log: str) -> Tuple[List[Commit], bool]:
         
     return commits, True
 
-def branch_name_from_commit(config, commit: Commit) -> str:
+def branch_name_from_commit(config: ConfigProtocol, commit: Commit) -> str:
     """Get branch name for commit. Matches Go implementation."""
     remote_branch = config.repo.get('github_branch', 'main')
     return f"spr/{remote_branch}/{commit.commit_id}"
 
-class RealGit(GitInterface):
+class RealGit:
     """Real Git implementation."""
-    def __init__(self, config):
+    def __init__(self, config: ConfigProtocol):
         """Initialize with config."""
-        self.config = config
+        self.config: ConfigProtocol = config
 
     def run_cmd(self, command: str, output: Optional[str] = None) -> str:
         """Run git command."""
@@ -202,7 +211,6 @@ class RealGit(GitInterface):
             print(f"git {cmd_str}")
         try:
             # Use GitPython
-            import git
             repo = git.Repo(os.getcwd(), search_parent_directories=True)
             git_cmd = repo.git
             # Convert command to method call
@@ -213,9 +221,9 @@ class RealGit(GitInterface):
             method = getattr(git_cmd, git_command.replace('-', '_'))
             result = method(*git_args)
             return result if isinstance(result, str) else str(result)
-        except git.exc.GitCommandError as e:
-            raise Exception(f"Git command failed: {e.stderr}")
-        except git.exc.InvalidGitRepositoryError:
+        except GitCommandError as e:
+            raise Exception(f"Git command failed: {str(e)}")
+        except InvalidGitRepositoryError:
             raise Exception("Not in a git repository")
         except Exception as e:
             if str(e):
