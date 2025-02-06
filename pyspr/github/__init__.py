@@ -89,11 +89,15 @@ class GitHubClient(GitHubInterface):
         
         pull_requests = []
         if self.repo:
+            spr_branch_pattern = r'^spr/[^/]+/([a-f0-9]{8})'
             open_prs = self.repo.get_pulls(state='open')
             for pr in open_prs:
-                if pr.head.ref.startswith("pr_"):
-                    commit_id = git_cmd.must_git(f"rev-parse {pr.head.sha}").strip()
-                    commit = Commit(commit_id, pr.head.sha, pr.title)
+                branch_match = re.match(spr_branch_pattern, pr.head.ref)
+                if branch_match:
+                    # Extract commit ID from branch name - matches Go behavior
+                    commit_id = branch_match.group(1)
+                    commit_hash = git_cmd.must_git(f"rev-parse {pr.head.sha}").strip()
+                    commit = Commit(commit_id, commit_hash, pr.title)
                     commits = [commit]  # Simplified, no commit history check
                     pull_requests.append(PullRequest(pr.number, commit, commits))
                 
@@ -167,8 +171,6 @@ class GitHubClient(GitHubInterface):
         return [{"login": u.login, "id": u.login} for u in users]
 
     def branch_name_from_commit(self, commit: Commit) -> str:
-        """Generate branch name from commit."""
-        remote = self.config.repo.get('github_remote', 'origin')
-        branch = self.config.repo.get('github_branch', 'main')
-        base = f"{remote}_{branch}" if self.config.repo.get('branch_name_include_target', False) else "pr"
-        return f"{base}_{commit.commit_hash[:8]}"
+        """Generate branch name from commit. Matches Go implementation."""
+        remote_branch = self.config.repo.get('github_branch', 'main')
+        return f"spr/{remote_branch}/{commit.commit_id}"

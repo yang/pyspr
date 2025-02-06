@@ -140,7 +140,6 @@ class StackedPR:
                 break
             if commit_updated(commit, info):
                 updated_commits.append(commit)
-
         ref_names = []
         for commit in updated_commits:
             branch_name = branch_name_from_commit(self.config, commit)
