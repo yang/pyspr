@@ -46,6 +46,9 @@ def test_wip_behavior(test_repo: Tuple[str, str, str, str]) -> None:
     git_cmd = RealGit(config)
     github = GitHubClient(None, config)  # Real GitHub client
     
+    # Get timestamp before we create PRs
+    commit_time = int(git_cmd.must_git("show -s --format=%ct").strip())
+    
     # Create 4 commits: 2 regular, 1 WIP, 1 regular
     def make_commit(file: str, msg: str) -> str:
         with open(file, "w") as f:
@@ -71,6 +74,22 @@ def test_wip_behavior(test_repo: Tuple[str, str, str, str]) -> None:
     # Go back to repo for verification
     os.chdir(repo_dir)
     
+    # Helper to find our test PRs 
+    def get_test_prs() -> list:
+        result = []
+        for pr in github.get_info(None, git_cmd).pull_requests:
+            if pr.from_branch.startswith('spr/main/'):
+                try:
+                    files = git_cmd.must_git(f"show --name-only {pr.commit.commit_hash}")
+                    test_files = ['wip_test1.txt', 'wip_test2.txt', 'wip_test3.txt', 'wip_test4.txt']
+                    if any(f in files for f in test_files):
+                        pr_time = int(git_cmd.must_git(f"show -s --format=%ct {pr.commit.commit_hash}").strip())
+                        if pr_time >= commit_time:
+                            result.append(pr)
+                except:  # Skip failures since we're just filtering
+                    pass
+        return result
+    
     # Verify only first two PRs were created
     info = github.get_info(None, git_cmd)
     assert info is not None, "GitHub info should not be None"
@@ -80,19 +99,23 @@ def test_wip_behavior(test_repo: Tuple[str, str, str, str]) -> None:
     print(f"C2: {c2_hash}")
     print(f"C3: {c3_hash}")
     
+    # Get our test PRs
+    test_prs = get_test_prs()
+    
     # Print all PR commit hashes for debugging
-    print("\nAll PR commit hashes:")
-    for pr in info.pull_requests:
+    print("\nTest PR commit hashes:")
+    for pr in test_prs:
         print(f"PR #{pr.number}: {pr.title} - {pr.commit.commit_hash}")
     
     # Sort PRs by number (most recent first) and take first 2 matching our titles
-    sorted_prs = sorted(info.pull_requests, key=lambda pr: pr.number, reverse=True)
-    test_prs = []
-    for pr in sorted_prs:
+    test_prs = sorted(test_prs, key=lambda pr: pr.number, reverse=True)
+    prs_with_titles = []
+    for pr in test_prs:
         if "First regular commit" in pr.title or "Second regular commit" in pr.title:
-            test_prs.append(pr)
-        if len(test_prs) == 2:
+            prs_with_titles.append(pr)
+        if len(prs_with_titles) == 2:
             break
+    test_prs = prs_with_titles
             
     print("\nMost recent matching PRs:")
     for pr in test_prs:
@@ -204,6 +227,9 @@ def test_reviewer_functionality_yang(test_reviewer_repo: Tuple[str, str, str, st
         run_cmd(f'git commit -m "{msg}"')
         return git_cmd.must_git("rev-parse HEAD").strip()
         
+    # Get timestamp before we create PRs
+    commit_time = int(git_cmd.must_git("show -s --format=%ct").strip())
+        
     print("Creating first commit without reviewer...")
     make_commit("r_test1.txt", "First commit")
     run_cmd(f"git push -u origin {test_branch}")
@@ -213,11 +239,27 @@ def test_reviewer_functionality_yang(test_reviewer_repo: Tuple[str, str, str, st
     subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
     os.chdir(repo_dir)
 
+    # Helper to find our test PRs 
+    def get_test_prs() -> list:
+        result = []
+        for pr in github.get_info(None, git_cmd).pull_requests:
+            if pr.from_branch.startswith('spr/main/'):
+                try:
+                    files = git_cmd.must_git(f"show --name-only {pr.commit.commit_hash}")
+                    if 'r_test1.txt' in files:
+                        pr_time = int(git_cmd.must_git(f"show -s --format=%ct {pr.commit.commit_hash}").strip())
+                        if pr_time >= commit_time:
+                            result.append(pr)
+                except:  # Skip failures since we're just filtering
+                    pass
+        return result
+
     # Verify first PR exists with no reviewer
     info = github.get_info(None, git_cmd)
     assert info is not None, "GitHub info should not be None"
-    assert len(info.pull_requests) == 1, f"Should have 1 PR, found {len(info.pull_requests)}"
-    pr1 = info.pull_requests[0]
+    our_prs = get_test_prs()
+    assert len(our_prs) == 1, f"Should have 1 PR for our test, found {len(our_prs)}"
+    pr1 = our_prs[0]
     assert github.repo is not None, "GitHub repo should be available"
     gh_pr1 = github.repo.get_pull(pr1.number)
     
@@ -251,8 +293,9 @@ def test_reviewer_functionality_yang(test_reviewer_repo: Tuple[str, str, str, st
     # - Second PR also has no reviewer (because we can't review our own PRs)
     info = github.get_info(None, git_cmd)
     assert info is not None, "GitHub info should not be None"
-    assert len(info.pull_requests) == 2, f"Should have 2 PRs, found {len(info.pull_requests)}"
-    prs_by_num = {pr.number: pr for pr in info.pull_requests}
+    our_prs = get_test_prs()
+    assert len(our_prs) == 2, f"Should have 2 PRs for our test, found {len(our_prs)}"
+    prs_by_num = {pr.number: pr for pr in our_prs}
     assert pr1.number in prs_by_num, "First PR should still exist"
     
     # Debug first PR reviews - verify still no reviewer
@@ -472,6 +515,9 @@ def test_amend_workflow(test_repo: Tuple[str, str, str, str]) -> None:
     git_cmd = RealGit(config)
     github = GitHubClient(None, config)  # Real GitHub client
     
+    # Get timestamp before we create PRs
+    commit_time = int(git_cmd.must_git("show -s --format=%ct").strip())
+    
     # Create 3 commits
     def make_commit(file: str, line: str, msg: str) -> str:
         with open(file, "w") as f:
@@ -491,11 +537,28 @@ def test_amend_workflow(test_repo: Tuple[str, str, str, str]) -> None:
     print("Creating initial PRs...")
     subprocess.run(["rye", "run", "pyspr", "update"], check=True)
     
+    # Helper to find our test PRs 
+    def get_test_prs() -> list:
+        result = []
+        for pr in github.get_info(None, git_cmd).pull_requests:
+            if pr.from_branch.startswith('spr/main/'):
+                try:
+                    files = git_cmd.must_git(f"show --name-only {pr.commit.commit_hash}")
+                    test_files = ['ta.txt', 'tb.txt', 'tc.txt', 'td.txt', 'tc5.txt']
+                    if any(f in files for f in test_files):
+                        pr_time = int(git_cmd.must_git(f"show -s --format=%ct {pr.commit.commit_hash}").strip())
+                        if pr_time >= commit_time:
+                            result.append(pr)
+                except:  # Skip failures since we're just filtering
+                    pass
+        return result
+    
     # Verify PRs created
     info = github.get_info(None, git_cmd)
     assert info is not None, "GitHub info should not be None"
-    assert len(info.pull_requests) == 4
-    pr1, pr2, pr3, pr4 = sorted(info.pull_requests, key=lambda pr: pr.number)
+    test_prs = get_test_prs()
+    assert len(test_prs) == 4, f"Should have 4 PRs for our test, found {len(test_prs)}"
+    pr1, pr2, pr3, pr4 = sorted(test_prs, key=lambda pr: pr.number)
     print(f"Created PRs: #{pr1.number}, #{pr2.number}, #{pr3.number}, #{pr4.number}")
     
     # Save PR numbers and commit IDs and hashes
@@ -575,12 +638,13 @@ def test_amend_workflow(test_repo: Tuple[str, str, str, str]) -> None:
     # Verify PRs updated properly
     info = github.get_info(None, git_cmd)
     assert info is not None, "GitHub info should not be None"
-    assert len(info.pull_requests) == 4
-    prs_by_num = {pr.number: pr for pr in info.pull_requests}
+    test_prs = get_test_prs()
+    assert len(test_prs) == 4, f"Should have 4 PRs for our test after amend, found {len(test_prs)}"
+    prs_by_num = {pr.number: pr for pr in test_prs}
     pr1 = prs_by_num.get(pr1_num)
     pr3 = prs_by_num.get(pr3_num)
     pr4 = prs_by_num.get(pr4_num)
-    new_pr = next((pr for pr in info.pull_requests if pr.number not in [pr1_num, pr2_num, pr3_num, pr4_num]), None)
+    new_pr = next((pr for pr in test_prs if pr.number not in [pr1_num, pr2_num, pr3_num, pr4_num]), None)
     
     # Verify PR1 and PR4 remain, PR2 deleted, PR3 updated, and new PR added
     assert pr1 is not None, "PR1 should still exist"
@@ -652,6 +716,9 @@ def _run_merge_test(
     })
     git_cmd = RealGit(config)
     github = GitHubClient(None, config)  # Real GitHub client
+
+    # Get timestamp before we create PRs
+    commit_time = int(git_cmd.must_git("show -s --format=%ct").strip())
     
     # Create commits
     def make_commit(file: str, line: str, msg: str) -> str:
@@ -685,9 +752,12 @@ def _run_merge_test(
         # Use static filenames but unique content
         unique = str(uuid.uuid4())[:8]
         commit_hashes: List[str] = []
+        test_files: List[str] = []
         for i in range(num_commits):
             prefix = "test_merge" if not use_merge_queue else "mq_test"
-            c_hash = make_commit(f"{prefix}{i+1}.txt", f"line 1 - {unique}", 
+            filename = f"{prefix}{i+1}.txt"
+            test_files.append(filename)
+            c_hash = make_commit(filename, f"line 1 - {unique}", 
                                f"Test {'merge queue' if use_merge_queue else 'multi'} commit {i+1}")
             commit_hashes.append(c_hash)
         run_cmd(f"git push -u origin {test_branch}")  # Push branch with commits
@@ -704,11 +774,28 @@ def _run_merge_test(
     subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
     
     os.chdir(repo_dir)
+
+    # Helper to find our test PRs 
+    def get_test_prs() -> list:
+        result = []
+        for pr in github.get_info(None, git_cmd).pull_requests:
+            if pr.from_branch.startswith('spr/main/'):
+                try:
+                    files = git_cmd.must_git(f"show --name-only {pr.commit.commit_hash}")
+                    if any(f in files for f in test_files):
+                        pr_time = int(git_cmd.must_git(f"show -s --format=%ct {pr.commit.commit_hash}").strip())
+                        if pr_time >= commit_time:
+                            result.append(pr)
+                except:  # Skip failures since we're just filtering
+                    pass
+        return result
+
     # Verify PRs created
     info = github.get_info(None, git_cmd)
     assert info is not None, "GitHub info should not be None"
-    assert len(info.pull_requests) == num_commits, f"Should have created {num_commits} PRs"
-    prs = sorted(info.pull_requests, key=lambda pr: pr.number)
+    prs = get_test_prs()
+    assert len(prs) == num_commits, f"Should have created {num_commits} PRs for our test, found {len(prs)}"
+    prs = sorted(prs, key=lambda pr: pr.number)
     pr_nums = [pr.number for pr in prs]
     print(f"Created PRs: {', '.join(f'#{num}' for num in pr_nums)}")
 
@@ -773,12 +860,15 @@ def _run_merge_test(
     os.chdir(repo_dir)
     info = github.get_info(None, git_cmd)
     assert info is not None, "GitHub info should not be None"
+    
+    # Get the current test PRs 
+    current_prs = get_test_prs()
+    prs_by_num = {pr.number: pr for pr in current_prs}
 
     if use_merge_queue:
         # For merge queue: top merged PR open, some closed, some remain
         expected_open = 1 + len(to_remain)  # Top merged PR + remaining PRs
-        assert len(info.pull_requests) == expected_open, f"{expected_open} PRs should remain open"
-        prs_by_num = {pr.number: pr for pr in info.pull_requests}
+        assert len(current_prs) == expected_open, f"{expected_open} test PRs should remain open, found {len(current_prs)}"
         
         if to_merge:
             assert 'top_pr_num' in locals(), "top_pr_num should be defined"
@@ -797,7 +887,7 @@ def _run_merge_test(
     else:
         # For regular merge: merged PRs closed, others remain
         expected_open = len(to_remain)
-        assert len(info.pull_requests) == expected_open, f"{expected_open} PRs should remain open"
+        assert len(current_prs) == expected_open, f"{expected_open} test PRs should remain open, found {len(current_prs)}"
         if to_merge:
             # Get the merge commit
             run_cmd("git fetch origin main")
@@ -807,17 +897,15 @@ def _run_merge_test(
             assert f"#{top_pr_num}" in merge_msg, f"Merge commit should reference PR #{top_pr_num}"
             # Verify merge commit contains only merged files
             merge_files = git_cmd.must_git(f"show --name-only {merge_sha}").splitlines()
-            prefix = "test_merge" if not use_merge_queue else "mq_test"
             for i, pr in enumerate(to_merge):
-                filename = f"{prefix}{i+1}.txt"
+                filename = test_files[i] 
                 assert filename in merge_files, f"Merge should include {filename}"
             # Verify unmerged files are not in merge commit
             for i in range(len(to_merge), num_commits):
-                filename = f"{prefix}{i+1}.txt"
+                filename = test_files[i]
                 assert filename not in merge_files, f"Merge should not include {filename}"
 
         # Verify remaining PRs stay open
-        prs_by_num = {pr.number: pr for pr in info.pull_requests}
         for pr in to_remain:
             assert pr.number in prs_by_num, f"PR #{pr.number} should remain open"
 
@@ -912,6 +1000,9 @@ def test_replace_commit(test_repo: Tuple[str, str, str, str]) -> None:
     git_cmd = RealGit(config)
     github = GitHubClient(None, config)
 
+    # Get timestamp before we create PRs
+    commit_time = int(git_cmd.must_git("show -s --format=%ct").strip())
+
     def make_commit(file: str, line: str, msg: str) -> Tuple[str, str]:
         commit_id = uuid.uuid4().hex[:8]
         full_msg = f"{msg}\n\ncommit-id:{commit_id}"
@@ -929,11 +1020,28 @@ def test_replace_commit(test_repo: Tuple[str, str, str, str]) -> None:
         branch = f"test-replace-{uuid.uuid4().hex[:7]}"
         run_cmd(f"git checkout -b {branch}")
 
+        test_files = ["file1.txt", "file2.txt", "file3.txt", "file2_new.txt"]
+
         # 1. Create stack with commits A -> B -> C
         c1_hash, c1_id = make_commit("file1.txt", "line 1", "Commit A")
         c2_hash, c2_id = make_commit("file2.txt", "line 1", "Commit B")
         c3_hash, c3_id = make_commit("file3.txt", "line 1", "Commit C")
         run_cmd(f"git push -u origin {branch}")
+
+        # Helper to find our test PRs 
+        def get_test_prs() -> list:
+            result = []
+            for pr in github.get_info(None, git_cmd).pull_requests:
+                if pr.from_branch.startswith('spr/main/'):
+                    try:
+                        files = git_cmd.must_git(f"show --name-only {pr.commit.commit_hash}")
+                        if any(f in files for f in test_files):
+                            pr_time = int(git_cmd.must_git(f"show -s --format=%ct {pr.commit.commit_hash}").strip())
+                            if pr_time >= commit_time:
+                                result.append(pr)
+                    except:  # Skip failures since we're just filtering
+                        pass
+            return result
 
         print("Creating initial PRs...")
         os.chdir(orig_dir)
@@ -941,12 +1049,7 @@ def test_replace_commit(test_repo: Tuple[str, str, str, str]) -> None:
         os.chdir(repo_dir)
 
         # Get initial PR info and filter to our newly created PRs
-        info = github.get_info(None, git_cmd)
-        assert info is not None, "GitHub info should not be None"
-        # Find PRs matching our commit IDs 
-        commit_prs = [pr for pr in info.pull_requests 
-                    if pr.commit.commit_id in [c1_id, c2_id, c3_id] and
-                    pr.from_branch is not None and pr.from_branch.startswith('spr/main/')]
+        commit_prs = get_test_prs()
         commit_prs = sorted(commit_prs, key=lambda pr: pr.number)
         assert len(commit_prs) == 3, f"Should find 3 PRs for our commits, found {len(commit_prs)}"
         
@@ -980,16 +1083,15 @@ def test_replace_commit(test_repo: Tuple[str, str, str, str]) -> None:
 
         # 4. Verify:
         print("\nVerifying PR handling after replace...")
-        info = github.get_info(None, git_cmd)
-        assert info is not None, "GitHub info should not be None"
-        # Get relevant PRs: those with our commit IDs + B's PR if it's still open
-        pr_nums_to_check: Set[int] = set()  # Track all numbers we care about
-        relevant_prs: List[PullRequest] = []
-        for pr in info.pull_requests:
-            if (pr.commit.commit_id in [c1_id, new_c2_id, c3_id] or
-                pr.number == pr2_num):
-                relevant_prs.append(pr)
-                pr_nums_to_check.add(pr.number)
+        relevant_prs = get_test_prs()
+        pr_nums_to_check: Set[int] = set(pr.number for pr in relevant_prs)
+        if pr2_num not in pr_nums_to_check:
+            # Also check if B's old PR is still open but no longer has our commits
+            for pr in github.get_info(None, git_cmd).pull_requests:
+                if pr.number == pr2_num:
+                    relevant_prs.append(pr)
+                    pr_nums_to_check.add(pr.number)
+                    break
         
         # Map of commit IDs to PRs
         active_pr_ids: Dict[str, PullRequest] = {pr.commit.commit_id: pr for pr in relevant_prs}
@@ -1219,6 +1321,9 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
     git_cmd = RealGit(config)
     github = GitHubClient(None, config)  # Real GitHub client
 
+    # Get timestamp before we create PRs
+    commit_time = int(git_cmd.must_git("show -s --format=%ct").strip())
+
     # Helper to make commit with unique commit-id
     def make_commit(file: str, line: str, msg: str) -> Tuple[str, str]:
         commit_id = uuid.uuid4().hex[:8]
@@ -1234,6 +1339,8 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
         # Initialize branch names 
         branch1: str = ""
         branch2: str = ""
+
+        test_files = ["stack1a.txt", "stack1b.txt", "stack2a.txt", "stack2b.txt"]
 
         # 1. Create branch1 with 2 connected PRs
         print("\nCreating branch1 with 2-PR stack...")
@@ -1272,13 +1379,27 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
         subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
         os.chdir(repo_dir)
 
+        # Helper to find our test PRs 
+        def get_test_prs() -> list:
+            result = []
+            for pr in github.get_info(None, git_cmd).pull_requests:
+                if pr.from_branch.startswith('spr/main/'):
+                    try:
+                        files = git_cmd.must_git(f"show --name-only {pr.commit.commit_hash}")
+                        if any(f in files for f in test_files):
+                            pr_time = int(git_cmd.must_git(f"show -s --format=%ct {pr.commit.commit_hash}").strip())
+                            if pr_time >= commit_time:
+                                result.append(pr)
+                    except:  # Skip failures since we're just filtering
+                        pass
+            return result
+
         # Verify all 4 PRs exist with correct connections
         print("\nVerifying initial state of PRs...")
-        info = github.get_info(None, git_cmd)
-        assert info is not None, "GitHub info should not be None"
-        # Find PRs by commit ID
+        # Find our test PRs
+        test_prs = get_test_prs()
         all_prs = {}
-        for pr in info.pull_requests:
+        for pr in test_prs:
             for cid in [c1a_id, c1b_id, c2a_id, c2b_id]:
                 if pr.commit.commit_id == cid:
                     all_prs[cid] = pr
@@ -1316,12 +1437,9 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
 
         # 4. Verify PR1A is closed, PR1B retargeted to main, while PR2A and PR2B remain untouched
         print("\nVerifying PR state after updates...")
-        info = github.get_info(None, git_cmd)
-        assert info is not None, "GitHub info should not be None"
-        
-        # Get remaining PRs and their targets
+        test_prs = get_test_prs()
         remaining_prs = {}
-        for pr in info.pull_requests:
+        for pr in test_prs:
             remaining_prs[pr.number] = pr.base_ref
         
         # Stack 1: PR1A should be closed, PR1B retargeted to main
