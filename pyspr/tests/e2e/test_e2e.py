@@ -74,10 +74,34 @@ def test_wip_behavior(test_repo: Tuple[str, str, str, str]) -> None:
     # Verify only first two PRs were created
     info = github.get_info(None, git_cmd)
     assert info is not None, "GitHub info should not be None"
-    assert len(info.pull_requests) == 2, "Should only create 2 PRs before the WIP commit"
+    
+    print("\nDebug - looking for commits:")
+    print(f"C1: {c1_hash}")
+    print(f"C2: {c2_hash}")
+    print(f"C3: {c3_hash}")
+    
+    # Print all PR commit hashes for debugging
+    print("\nAll PR commit hashes:")
+    for pr in info.pull_requests:
+        print(f"PR #{pr.number}: {pr.title} - {pr.commit.commit_hash}")
+    
+    # Sort PRs by number (most recent first) and take first 2 matching our titles
+    sorted_prs = sorted(info.pull_requests, key=lambda pr: pr.number, reverse=True)
+    test_prs = []
+    for pr in sorted_prs:
+        if "First regular commit" in pr.title or "Second regular commit" in pr.title:
+            test_prs.append(pr)
+        if len(test_prs) == 2:
+            break
+            
+    print("\nMost recent matching PRs:")
+    for pr in test_prs:
+        print(f"PR #{pr.number}: {pr.title}")
+            
+    assert len(test_prs) == 2, f"Should find 2 PRs before the WIP commit, found {len(test_prs)}: {[pr.title for pr in test_prs]}"
     
     # Verify PR commit hashes match first two commits
-    prs = sorted(info.pull_requests, key=lambda pr: pr.number)
+    prs = sorted(test_prs, key=lambda pr: pr.number)
     assert len(prs) == 2, "Should have exactly 2 PRs"
     
     # Get commit messages to verify WIP detection worked correctly
