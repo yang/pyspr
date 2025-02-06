@@ -12,7 +12,6 @@ import shutil
 from pyspr.config import Config
 from pyspr.git import RealGit, Commit
 from pyspr.github import GitHubClient
-from pyspr.spr import StackedPR
 
 @pytest.fixture
 def test_repo():
@@ -71,7 +70,6 @@ def test_amend_workflow(test_repo):
     })
     git_cmd = RealGit(config)
     github = GitHubClient(None, config)  # Real GitHub client
-    spr = StackedPR(config, github, git_cmd)
     
     # Create 3 commits
     def make_commit(file, line, msg):
@@ -90,7 +88,7 @@ def test_amend_workflow(test_repo):
     
     # Initial update to create PRs
     print("Creating initial PRs...")
-    spr.update_pull_requests(None)
+    subprocess.run(["rye", "run", "pyspr", "update"], check=True)
     
     # Verify PRs created
     info = github.get_info(None, git_cmd)
@@ -169,7 +167,7 @@ def test_amend_workflow(test_repo):
     
     print("Updating PRs after amend...")
     # Run update with amended commits
-    spr.update_pull_requests(None)
+    subprocess.run(["rye", "run", "pyspr", "update"], check=True)
     
     # Verify PRs updated properly
     info = github.get_info(None, git_cmd)
