@@ -14,6 +14,7 @@ def parse_config(git_cmd) -> Dict:
             'require_checks': True,
             'require_approval': True,
             'github_host': 'github.com',
+            'show_pr_titles_in_stack': False,
         },
         'user': {
             'log_git_commands': True,
