@@ -4,20 +4,18 @@ import os
 import tempfile
 import uuid
 import subprocess
-import time
-from pathlib import Path
+from typing import Generator, List, Optional, Tuple, Union
 import pytest
-import shutil
 
 from pyspr.config import Config
-from pyspr.git import RealGit, Commit
+from pyspr.git import RealGit
 from pyspr.github import GitHubClient
 
 def run_cmd(cmd: str) -> None:
     """Run a shell command using subprocess with proper error handling."""
     subprocess.run(cmd, shell=True, check=True)
 
-def test_wip_behavior(test_repo):
+def test_wip_behavior(test_repo: Tuple[str, str, str, str]) -> None:
     """Test that WIP commits behave as expected:
     - Regular commits before WIP are converted to PRs
     - WIP commits are not converted to PRs
@@ -42,7 +40,7 @@ def test_wip_behavior(test_repo):
     github = GitHubClient(None, config)  # Real GitHub client
     
     # Create 4 commits: 2 regular, 1 WIP, 1 regular
-    def make_commit(file, msg):
+    def make_commit(file: str, msg: str) -> str:
         with open(file, "w") as f:
             f.write(f"{file}\n")
         run_cmd(f"git add {file}")
@@ -53,7 +51,7 @@ def test_wip_behavior(test_repo):
     c1_hash = make_commit("wip_test1.txt", "First regular commit")
     c2_hash = make_commit("wip_test2.txt", "Second regular commit")
     c3_hash = make_commit("wip_test3.txt", "WIP Third commit")
-    c4_hash = make_commit("wip_test4.txt", "Fourth regular commit")
+    _ = make_commit("wip_test4.txt", "Fourth regular commit")  # Not used but kept for completeness
     run_cmd(f"git push -u origin {test_branch}")  # Push branch with commits
     
     # Run update to create PRs
@@ -68,6 +66,7 @@ def test_wip_behavior(test_repo):
     
     # Verify only first two PRs were created
     info = github.get_info(None, git_cmd)
+    assert info is not None, "GitHub info should not be None"
     assert len(info.pull_requests) == 2, "Should only create 2 PRs before the WIP commit"
     
     # Verify PR commit hashes match first two commits
@@ -85,6 +84,9 @@ def test_wip_behavior(test_repo):
     print(f"C3: {c3_msg}")
     
     # Verify WIP commit is correctly identified
+    assert c1_msg is not None, "First commit message should not be None"
+    assert c2_msg is not None, "Second commit message should not be None"
+    assert c3_msg is not None, "Third commit message should not be None"
     assert not c1_msg.startswith("WIP"), "First commit should not be WIP"
     assert not c2_msg.startswith("WIP"), "Second commit should not be WIP"
     assert c3_msg.startswith("WIP"), "Third commit should be WIP"
@@ -98,7 +100,7 @@ def test_wip_behavior(test_repo):
     os.chdir(orig_dir)
 
 @pytest.fixture
-def test_repo():
+def test_repo() -> Generator[Tuple[str, str, str, str], None, None]:
     """Use yang/teststack repo with a temporary test branch."""
     orig_dir = os.getcwd()
     owner = "yang"
@@ -143,7 +145,7 @@ def test_repo():
         # Return to original directory
         os.chdir(orig_dir)
 
-def test_amend_workflow(test_repo):
+def test_amend_workflow(test_repo: Tuple[str, str, str, str]) -> None:
     """Test full amend workflow with real PRs."""
     owner, repo_name, test_branch = test_repo[:3]
 
@@ -161,7 +163,7 @@ def test_amend_workflow(test_repo):
     github = GitHubClient(None, config)  # Real GitHub client
     
     # Create 3 commits
-    def make_commit(file, line, msg):
+    def make_commit(file: str, line: str, msg: str) -> str:
         with open(file, "w") as f:
             f.write(f"{file}\n{line}\n")
         run_cmd(f"git add {file}")
@@ -181,6 +183,7 @@ def test_amend_workflow(test_repo):
     
     # Verify PRs created
     info = github.get_info(None, git_cmd)
+    assert info is not None, "GitHub info should not be None"
     assert len(info.pull_requests) == 4
     pr1, pr2, pr3, pr4 = sorted(info.pull_requests, key=lambda pr: pr.number)
     print(f"Created PRs: #{pr1.number}, #{pr2.number}, #{pr3.number}, #{pr4.number}")
@@ -196,10 +199,11 @@ def test_amend_workflow(test_repo):
     c3_id = pr3.commit.commit_id
     c4_id = pr4.commit.commit_id
 
-    c1_hash_post = pr1.commit.commit_hash
-    c2_hash_post = pr2.commit.commit_hash
-    c3_hash_post = pr3.commit.commit_hash
-    c4_hash_post = pr4.commit.commit_hash
+    # Store but don't actually use these variables 
+    _ = pr1.commit.commit_hash
+    _ = pr2.commit.commit_hash
+    _ = pr3.commit.commit_hash
+    _ = pr4.commit.commit_hash
 
     # Debug: Check if commit messages have IDs after first update
     print("\nChecking commit messages after first update:")
@@ -260,6 +264,7 @@ def test_amend_workflow(test_repo):
     
     # Verify PRs updated properly
     info = github.get_info(None, git_cmd)
+    assert info is not None, "GitHub info should not be None"
     assert len(info.pull_requests) == 4
     prs_by_num = {pr.number: pr for pr in info.pull_requests}
     pr1 = prs_by_num.get(pr1_num)
@@ -302,7 +307,10 @@ def test_amend_workflow(test_repo):
         print(f"PR #{pr.number} message:\n{message}\n")
         assert f"commit-id:{pr.commit.commit_id}" in message, f"PR #{pr.number} should have correct commit ID in message"
 
-def _run_merge_test(repo_fixture, owner: str, use_merge_queue: bool, num_commits: int, count: int = None):
+def _run_merge_test(
+        repo_fixture: Union[Tuple[str, str, str], Tuple[str, str, str, str]], 
+        owner: str, use_merge_queue: bool, num_commits: int, 
+        count: Optional[int] = None) -> None:
     """Common test logic for merge workflows.
     
     Args:
@@ -336,7 +344,7 @@ def _run_merge_test(repo_fixture, owner: str, use_merge_queue: bool, num_commits
     github = GitHubClient(None, config)  # Real GitHub client
     
     # Create commits
-    def make_commit(file, line, msg):
+    def make_commit(file: str, line: str, msg: str) -> str:
         with open(file, "w") as f:
             f.write(f"{file}\n{line}\n")
         try:
@@ -358,13 +366,15 @@ def _run_merge_test(repo_fixture, owner: str, use_merge_queue: bool, num_commits
         except subprocess.CalledProcessError as e:
             print(f"Failed to commit: {e}")
             raise
-        return git_cmd.must_git("rev-parse HEAD").strip()
+        result = git_cmd.must_git("rev-parse HEAD").strip()
+        assert result is not None, "Commit hash should not be None"
+        return result
         
     print("Creating commits...")
     try:
         # Use static filenames but unique content
         unique = str(uuid.uuid4())[:8]
-        commit_hashes = []
+        commit_hashes: List[str] = []
         for i in range(num_commits):
             prefix = "test_merge" if not use_merge_queue else "mq_test"
             c_hash = make_commit(f"{prefix}{i+1}.txt", f"line 1 - {unique}", 
@@ -386,6 +396,7 @@ def _run_merge_test(repo_fixture, owner: str, use_merge_queue: bool, num_commits
     os.chdir(repo_dir)
     # Verify PRs created
     info = github.get_info(None, git_cmd)
+    assert info is not None, "GitHub info should not be None"
     assert len(info.pull_requests) == num_commits, f"Should have created {num_commits} PRs"
     prs = sorted(info.pull_requests, key=lambda pr: pr.number)
     pr_nums = [pr.number for pr in prs]
@@ -416,6 +427,7 @@ def _run_merge_test(repo_fixture, owner: str, use_merge_queue: bool, num_commits
         # Get final PR state to help debug failure
         os.chdir(repo_dir)
         info = github.get_info(None, git_cmd)
+        assert info is not None, "GitHub info should not be None"
         print("\nFinal PR state after merge attempt:")
         for pr in sorted(info.pull_requests, key=lambda pr: pr.number):
             gh_pr = github.repo.get_pull(pr.number)
@@ -447,6 +459,7 @@ def _run_merge_test(repo_fixture, owner: str, use_merge_queue: bool, num_commits
     # Go back to repo to verify final state 
     os.chdir(repo_dir)
     info = github.get_info(None, git_cmd)
+    assert info is not None, "GitHub info should not be None"
 
     if use_merge_queue:
         # For merge queue: top merged PR open, some closed, some remain
@@ -496,13 +509,13 @@ def _run_merge_test(repo_fixture, owner: str, use_merge_queue: bool, num_commits
     # Return to project dir
     os.chdir(orig_dir)
 
-def test_merge_workflow(test_repo):
+def test_merge_workflow(test_repo: Tuple[str, str, str, str]) -> None:
     """Test full merge workflow with real PRs."""
     owner, name, test_branch, repo_dir = test_repo
     _run_merge_test(test_repo, owner, False, 3)
 
 @pytest.fixture
-def test_mq_repo():
+def test_mq_repo() -> Generator[Tuple[str, str, str, str], None, None]:
     """Use yangenttest1/teststack repo with a temporary test branch."""
     orig_dir = os.getcwd()
     repo_name = "yangenttest1/teststack"
@@ -545,20 +558,20 @@ def test_mq_repo():
         # Return to original directory
         os.chdir(orig_dir)
 
-def test_merge_queue_workflow(test_mq_repo):
+def test_merge_queue_workflow(test_mq_repo: Tuple[str, str, str, str]) -> None:
     """Test merge queue workflow with real PRs."""
     _run_merge_test(test_mq_repo, "yangenttest1", True, 2)
 
-def test_partial_merge_workflow(test_repo):
+def test_partial_merge_workflow(test_repo: Tuple[str, str, str, str]) -> None:
     """Test partial merge workflow, merging only 2 of 3 PRs."""
     owner, name, test_branch, repo_dir = test_repo
     _run_merge_test(test_repo, owner, False, 3, count=2)
 
-def test_partial_merge_queue_workflow(test_mq_repo):
+def test_partial_merge_queue_workflow(test_mq_repo: Tuple[str, str, str, str]) -> None:
     """Test partial merge queue workflow, merging only 2 of 3 PRs to queue."""
     _run_merge_test(test_mq_repo, "yangenttest1", True, 3, count=2)
 
-def test_replace_commit(test_repo):
+def test_replace_commit(test_repo: Tuple[str, str, str, str]) -> None:
     """Test replacing a commit in the middle of stack with new commit.
     
     This verifies that when a commit is replaced with an entirely new commit:
@@ -584,7 +597,7 @@ def test_replace_commit(test_repo):
     git_cmd = RealGit(config)
     github = GitHubClient(None, config)
 
-    def make_commit(file, line, msg):
+    def make_commit(file: str, line: str, msg: str) -> Tuple[str, str]:
         commit_id = uuid.uuid4().hex[:8]
         full_msg = f"{msg}\n\ncommit-id:{commit_id}"
         with open(file, "w") as f:
@@ -614,6 +627,7 @@ def test_replace_commit(test_repo):
 
         # Get initial PR info and filter to our newly created PRs
         info = github.get_info(None, git_cmd)
+        assert info is not None, "GitHub info should not be None"
         # Find PRs matching our commit IDs 
         commit_prs = [pr for pr in info.pull_requests 
                     if pr.commit.commit_id in [c1_id, c2_id, c3_id] and
@@ -652,6 +666,7 @@ def test_replace_commit(test_repo):
         # 4. Verify:
         print("\nVerifying PR handling after replace...")
         info = github.get_info(None, git_cmd)
+        assert info is not None, "GitHub info should not be None"
         # Get relevant PRs: those with our commit IDs + B's PR if it's still open
         pr_nums_to_check = set()  # Track all numbers we care about
         relevant_prs = []
@@ -712,7 +727,7 @@ def test_replace_commit(test_repo):
         run_cmd(f"git push origin --delete {branch} || true")
         os.chdir(orig_dir)
 
-def test_stack_isolation(test_repo):
+def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
     """Test that PRs from different stacks don't interfere with each other.
     
     This verifies that removing commits from one stack doesn't close PRs from another stack.
@@ -741,7 +756,7 @@ def test_stack_isolation(test_repo):
     github = GitHubClient(None, config)  # Real GitHub client
 
     # Helper to make commit with unique commit-id
-    def make_commit(file, line, msg):
+    def make_commit(file: str, line: str, msg: str) -> Tuple[str, str]:
         commit_id = uuid.uuid4().hex[:8]
         full_msg = f"{msg}\n\ncommit-id:{commit_id}"
         with open(file, "w") as f:
@@ -792,6 +807,7 @@ def test_stack_isolation(test_repo):
         # Verify all 4 PRs exist with correct connections
         print("\nVerifying initial state of PRs...")
         info = github.get_info(None, git_cmd)
+        assert info is not None, "GitHub info should not be None"
         # Find PRs by commit ID
         all_prs = {}
         for pr in info.pull_requests:
@@ -833,6 +849,7 @@ def test_stack_isolation(test_repo):
         # 4. Verify PR1A is closed, PR1B retargeted to main, while PR2A and PR2B remain untouched
         print("\nVerifying PR state after updates...")
         info = github.get_info(None, git_cmd)
+        assert info is not None, "GitHub info should not be None"
         
         # Get remaining PRs and their targets
         remaining_prs = {}
