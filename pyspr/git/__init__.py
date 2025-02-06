@@ -63,7 +63,8 @@ def get_local_commit_stack(config, git_cmd) -> List[Commit]:
                     continue
                 # Check for commit-id in message
                 body = git_cmd.must_git(f"show -s --format=%b {cid}").strip()
-                commit_id_match = re.search(r'commit-id:([a-f0-9]{8})', body)
+                full_msg = git_cmd.must_git(f"log -1 --format=%B {cid}").strip()
+                commit_id_match = re.search(r'commit-id:([a-f0-9]{8})', full_msg)
                 
                 if commit_id_match:
                     # Has ID already - just prepend to list
@@ -78,7 +79,6 @@ def get_local_commit_stack(config, git_cmd) -> List[Commit]:
                     commit_id = str(uuid.uuid4())[:8]
                     
                     # Get current message
-                    full_msg = git_cmd.must_git(f"log -1 --format=%B {cid}").strip()
                     subject = git_cmd.must_git(f"show -s --format=%s {cid}").strip()
                     new_msg = f"{full_msg}\n\ncommit-id:{commit_id}"
                     

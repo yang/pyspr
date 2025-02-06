@@ -206,6 +206,7 @@ class StackedPR:
             pr_found = False
             for pr in valid_pull_requests:
                 if c.commit_id == pr.commit.commit_id:
+                    # Found matching PR - update it
                     pr_found = True
                     update_queue.append({
                         'pr': pr, 
@@ -216,6 +217,7 @@ class StackedPR:
                     github_info.pull_requests.append(pr)
                     if reviewers:
                         print(f"warning: not updating reviewers for PR #{pr.number}")
+                    valid_pull_requests.remove(pr)  # Remove to avoid matching again
                     break
 
             if not pr_found:
