@@ -222,8 +222,16 @@ def test_amend_workflow(test_repo):
         print(f"PR #{pr.number} message:\n{message}\n")
         assert f"commit-id:{pr.commit.commit_id}" in message, f"PR #{pr.number} should have correct commit ID in message"
 
-def _run_merge_test(repo_fixture, owner: str, use_merge_queue: bool, num_commits: int):
-    """Common test logic for merge workflows."""
+def _run_merge_test(repo_fixture, owner: str, use_merge_queue: bool, num_commits: int, count: int = None):
+    """Common test logic for merge workflows.
+    
+    Args:
+        repo_fixture: Test repo fixture
+        owner: GitHub repo owner
+        use_merge_queue: Whether to use merge queue or not
+        num_commits: Number of commits to create in test
+        count: If set, merge only this many PRs from the bottom of stack (-c flag)
+    """
     if len(repo_fixture) == 3:
         repo_name, test_branch, repo_dir = repo_fixture
     else:
@@ -312,11 +320,14 @@ def _run_merge_test(repo_fixture, owner: str, use_merge_queue: bool, num_commits
     # Go back to project dir to run merge
     os.chdir(orig_dir)
 
-    # Run merge for all PRs
-    print(f"\nMerging {'to queue' if use_merge_queue else 'all'} PRs...")
+    # Run merge for all or some PRs
+    merge_cmd = ["rye", "run", "pyspr", "merge", "-C", repo_dir]
+    if count is not None:
+        merge_cmd.extend(["-c", str(count)])
+    print(f"\nMerging {'to queue' if use_merge_queue else 'all'} PRs{' (partial)' if count else ''}...")
     try:
         merge_output = subprocess.check_output(
-            ["rye", "run", "pyspr", "merge", "-C", repo_dir],
+            merge_cmd,
             stderr=subprocess.STDOUT,
             universal_newlines=True
         )
@@ -340,43 +351,67 @@ def _run_merge_test(repo_fixture, owner: str, use_merge_queue: bool, num_commits
         print(f"Merge failed with output:\n{e.output}")
         raise
 
-    # Verify merge output
-    top_pr_num = pr_nums[-1]
-    assert f"Merging PR #{top_pr_num} to main" in merge_output, "Should merge top PR"
-    assert f"This will merge {num_commits} PRs" in merge_output, f"Should merge {num_commits} PRs"
-    if use_merge_queue:
-        assert "added to merge queue" in merge_output, "PR should be added to merge queue"
+    # For partial merges, find the top PR number differently based on count
+    to_merge = prs[:count] if count is not None else prs
+    to_remain = prs[count:] if count is not None else []
+    if to_merge:
+        top_merge_pr = to_merge[-1]
+        top_pr_num = top_merge_pr.number
+
+        # Verify merge output
+        assert f"Merging PR #{top_pr_num} to main" in merge_output, f"Should merge PR #{top_pr_num}"
+        assert f"This will merge {len(to_merge)} PRs" in merge_output, f"Should merge {len(to_merge)} PRs"
+        if use_merge_queue:
+            assert "added to merge queue" in merge_output, "PR should be added to merge queue"
 
     # Go back to repo to verify final state 
     os.chdir(repo_dir)
     info = github.get_info(None, git_cmd)
 
     if use_merge_queue:
-        # For merge queue: top PR open, others closed
-        assert len(info.pull_requests) == 1, "Only top PR should remain open while in merge queue"
+        # For merge queue: top merged PR open, some closed, some remain
+        expected_open = 1 + len(to_remain)  # Top merged PR + remaining PRs
+        assert len(info.pull_requests) == expected_open, f"{expected_open} PRs should remain open"
         prs_by_num = {pr.number: pr for pr in info.pull_requests}
-        assert top_pr_num in prs_by_num, f"Top PR #{top_pr_num} should remain open"
-        for num in pr_nums[:-1]:
-            assert num not in prs_by_num, f"PR #{num} should be closed" 
-        top_pr = prs_by_num[top_pr_num]
-        gh_pr = github.repo.get_pull(top_pr.number)  # Get raw GitHub PR
-        assert gh_pr.base.ref == "main", "Top PR should target main for merge queue"
-        assert gh_pr.state == "open", "Top PR should remain open while in merge queue"
+        
+        if to_merge:
+            assert top_pr_num in prs_by_num, f"Top PR #{top_pr_num} should remain open in queue"
+            for pr in to_merge[:-1]:
+                assert pr.number not in prs_by_num, f"PR #{pr.number} should be closed"
+            top_pr = prs_by_num[top_pr_num]
+            gh_pr = github.repo.get_pull(top_pr.number)  # Get raw GitHub PR
+            assert gh_pr.base.ref == "main", "Top merged PR should target main for merge queue"
+            assert gh_pr.state == "open", "Top merged PR should remain open while in queue"
+
+        # Verify remaining PRs stay open
+        for pr in to_remain:
+            assert pr.number in prs_by_num, f"PR #{pr.number} should remain open"
     else:
-        # For regular merge: all PRs closed, verify merge commit
-        assert len(info.pull_requests) == 0, "All PRs should be merged and closed"
-        # Get the merge commit
-        run_cmd("git fetch origin main")
-        merge_sha = git_cmd.must_git("rev-parse origin/main").strip()
-        merge_msg = git_cmd.must_git(f"show -s --format=%B {merge_sha}").strip()
-        # Verify merge commit contains the right PR number
-        assert f"#{top_pr_num}" in merge_msg, f"Merge commit should reference PR #{top_pr_num}"
-        # Verify merge commit contains all commits
-        merge_files = git_cmd.must_git(f"show --name-only {merge_sha}").splitlines()
-        prefix = "test_merge" if not use_merge_queue else "mq_test"
-        for i in range(num_commits):
-            filename = f"{prefix}{i+1}.txt"
-            assert filename in merge_files, f"Merge should include {filename}"
+        # For regular merge: merged PRs closed, others remain
+        expected_open = len(to_remain)
+        assert len(info.pull_requests) == expected_open, f"{expected_open} PRs should remain open"
+        if to_merge:
+            # Get the merge commit
+            run_cmd("git fetch origin main")
+            merge_sha = git_cmd.must_git("rev-parse origin/main").strip()
+            merge_msg = git_cmd.must_git(f"show -s --format=%B {merge_sha}").strip()
+            # Verify merge commit contains the right PR number
+            assert f"#{top_pr_num}" in merge_msg, f"Merge commit should reference PR #{top_pr_num}"
+            # Verify merge commit contains only merged files
+            merge_files = git_cmd.must_git(f"show --name-only {merge_sha}").splitlines()
+            prefix = "test_merge" if not use_merge_queue else "mq_test"
+            for i, pr in enumerate(to_merge):
+                filename = f"{prefix}{i+1}.txt"
+                assert filename in merge_files, f"Merge should include {filename}"
+            # Verify unmerged files are not in merge commit
+            for i in range(len(to_merge), num_commits):
+                filename = f"{prefix}{i+1}.txt"
+                assert filename not in merge_files, f"Merge should not include {filename}"
+
+        # Verify remaining PRs stay open
+        prs_by_num = {pr.number: pr for pr in info.pull_requests}
+        for pr in to_remain:
+            assert pr.number in prs_by_num, f"PR #{pr.number} should remain open"
 
     # Return to project dir
     os.chdir(orig_dir)
@@ -433,3 +468,12 @@ def test_mq_repo():
 def test_merge_queue_workflow(test_mq_repo):
     """Test merge queue workflow with real PRs."""
     _run_merge_test(test_mq_repo, "yangenttest1", True, 2)
+
+def test_partial_merge_workflow(test_repo):
+    """Test partial merge workflow, merging only 2 of 3 PRs."""
+    owner, name, test_branch, repo_dir = test_repo
+    _run_merge_test(test_repo, owner, False, 3, count=2)
+
+def test_partial_merge_queue_workflow(test_mq_repo):
+    """Test partial merge queue workflow, merging only 2 of 3 PRs to queue."""
+    _run_merge_test(test_mq_repo, "yangenttest1", True, 3, count=2)
