@@ -101,6 +101,8 @@ class GitHubClient(GitHubInterface):
 
     def create_pull_request(self, ctx, git_cmd, info, commit: Commit, prev_commit: Optional[Commit]) -> PullRequest:
         """Create pull request."""
+        if not self.repo:
+            raise Exception("GitHub repo not initialized - check token and repo owner/name config")
         branch_name = self.branch_name_from_commit(commit)
         base = self.config.repo.get('github_branch', 'main')
         

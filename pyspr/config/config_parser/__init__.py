@@ -23,15 +23,23 @@ def parse_config(git_cmd) -> Dict:
     
     # Try to extract repo owner/name from git remote
     try:
-        remote_url = git_cmd.run_cmd("git remote get-url origin")
-        # Very basic parsing just to support update
-        if "github.com" in remote_url:
-            parts = remote_url.split("github.com/")[1].split(".git")[0].split("/")
-            if len(parts) >= 2:
-                config['repo']['github_repo_owner'] = parts[0]
-                config['repo']['github_repo_name'] = parts[1]
-    except:
-        pass
+        remote_url = git_cmd.run_cmd("remote get-url origin")
+        # Handle SSH and HTTPS urls
+        if "@" in remote_url:
+            # SSH format: git@github.com:owner/repo.git
+            repo_part = remote_url.split(":")[-1]
+        else:
+            # HTTPS format: https://github.com/owner/repo.git
+            repo_part = remote_url.split("github.com/")[-1]
+        
+        # Clean up the repo part
+        repo_part = repo_part.replace(".git", "").strip()
+        parts = repo_part.split("/")
+        if len(parts) >= 2:
+            config['repo']['github_repo_owner'] = parts[0]
+            config['repo']['github_repo_name'] = parts[1]
+    except Exception as e:
+        print(f"Failed to parse git remote: {e}")
 
     return config
 

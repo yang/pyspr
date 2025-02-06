@@ -54,12 +54,27 @@ class StackedPR:
 
     def fetch_and_get_github_info(self, ctx) -> Optional[GitHubInfo]:
         """Fetch from remote and get GitHub info."""
-        # Basic fetch
-        self.git_cmd.must_git("fetch")
-        # Simple rebase
+        # Basic fetch and validation
         remote = self.config.repo.get('github_remote', 'origin')
         branch = self.config.repo.get('github_branch', 'main')
+
         try:
+            # Check if remote exists
+            remotes = self.git_cmd.must_git("remote").split()
+            if remote not in remotes:
+                print(f"Remote '{remote}' not found. Available remotes: {', '.join(remotes)}")
+                return None
+
+            self.git_cmd.must_git("fetch")
+
+            # Check if remote branch exists
+            try:
+                self.git_cmd.must_git(f"rev-parse --verify {remote}/{branch}")
+            except Exception:
+                print(f"Branch '{branch}' not found on remote '{remote}'. First push to the remote.")
+                return None
+
+            # Simple rebase
             self.git_cmd.must_git(f"rebase {remote}/{branch} --autostash")
         except Exception as e:
             print(f"Rebase failed: {e}")

@@ -24,7 +24,9 @@ def cli(ctx):
     # Check git dir
     git_cmd = RealGit(default_config())
     try:
-        git_cmd.run_cmd("status --porcelain")
+        output = git_cmd.run_cmd("rev-parse --git-dir")
+        if not output or 'not a git repository' in output.lower():
+            raise Exception("Not in a git repository")
     except Exception as e:
         check(e)
         sys.exit(2)

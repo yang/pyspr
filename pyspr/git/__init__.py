@@ -5,6 +5,7 @@ import re
 import subprocess
 from dataclasses import dataclass
 from typing import List, Optional
+import git
 
 @dataclass 
 class Commit:
@@ -63,16 +64,30 @@ class RealGit(GitInterface):
 
     def run_cmd(self, command: str, output: Optional[str] = None) -> str:
         """Run git command."""
+        cmd_str = command.strip()
         if self.config.user.get('log_git_commands', False):
-            print(f"git {command}")
+            print(f"git {cmd_str}")
         try:
-            # Split command properly handling quotes 
+            # Use GitPython
+            import git
+            repo = git.Repo(os.getcwd(), search_parent_directories=True)
+            git_cmd = repo.git
+            # Convert command to method call
             import shlex
-            cmd_parts = ["git"] + shlex.split(command)
-            result = subprocess.run(cmd_parts, capture_output=True, text=True, check=False)
-            if result.returncode != 0:
-                raise Exception(f"Git command failed: {result.stderr}")
-            return result.stdout
+            cmd_parts = shlex.split(cmd_str)
+            git_command = cmd_parts[0]
+            git_args = cmd_parts[1:]
+            method = getattr(git_cmd, git_command.replace('-', '_'))
+            result = method(*git_args)
+            return result if isinstance(result, str) else str(result)
+        except git.exc.GitCommandError as e:
+            raise Exception(f"Git command failed: {e.stderr}")
+        except git.exc.InvalidGitRepositoryError:
+            raise Exception("Not in a git repository")
+        except Exception as e:
+            if str(e):
+                print(f"Git error: {e}")
+            raise
         except Exception as e:
             if str(e):
                 print(f"Git error: {e}")
