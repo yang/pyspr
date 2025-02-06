@@ -26,7 +26,8 @@ class PullRequest:
 
     def __str__(self) -> str:
         """Convert to string."""
-        return f"PR #{self.number} - {self.commit.subject}"
+        queue_status = "⏳ in merge queue" if self.in_queue else ""
+        return f"PR #{self.number} - {self.commit.subject} {queue_status}"
 
 @dataclass
 class GitHubInfo:

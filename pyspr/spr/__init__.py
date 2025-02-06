@@ -321,12 +321,20 @@ class StackedPR:
 
     def status_pull_requests(self, ctx):
         """Show status of pull requests."""
+        from ..pretty import print_header
         github_info = self.github.get_info(ctx, self.git_cmd)
+        
         if not github_info.pull_requests:
-            print("pull request stack is empty")
+            print_header("Pull Requests", use_emoji=True)
+            print("\npull request stack is empty\n")
         else:
+            print_header("Pull Requests", use_emoji=True)
+            print("")  # Empty line after header
             for pr in reversed(github_info.pull_requests):
-                print(str(pr))
+                status = "✅ merged" if getattr(pr, 'merged', False) else ""
+                # Space padding to match Go version
+                print(f"   {str(pr)} {status}")
+            print("")  # Empty line after list
 
     def merge_pull_requests(self, ctx, count: Optional[int] = None):
         """Merge all mergeable pull requests."""
@@ -394,9 +402,14 @@ class StackedPR:
 
         # Update base of merging PR to target branch
         main_branch = self.config.repo.get('github_branch', 'main')
-        # Debug prints
-        print(f"Merging PR #{pr_to_merge.number} to {main_branch}")
-        print(f"This will merge {pr_index + 1} PRs")
+        from ..pretty import print_header
+        
+        # Nice header and status for merge
+        print_header("Merging Pull Requests", use_emoji=True)
+        print("")  # Empty line after header
+        print(f"   Merging PR #{pr_to_merge.number} to {main_branch}")
+        print(f"   This will merge {pr_index + 1} PR{'s' if pr_index > 0 else ''}")
+        print("")  # Empty line after status
 
         # Update the base of the PR to merge to main branch
         self.github.update_pull_request(ctx, self.git_cmd, github_info.pull_requests, 
