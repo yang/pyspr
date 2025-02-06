@@ -36,8 +36,18 @@ class StackedPR:
 
     def commits_reordered(self, local_commits: List[Commit], pull_requests: List[PullRequest]) -> bool:
         """Check if commits have been reordered."""
-        for i in range(min(len(local_commits), len(pull_requests))):
-            if local_commits[i].commit_id != pull_requests[i].commit.commit_id:
+        local_ids = []
+        for commit in local_commits:
+            if not commit.wip:
+                local_ids.append(commit.commit_id)
+                
+        pr_ids = [pr.commit.commit_id for pr in pull_requests]
+        
+        if len(local_ids) != len(pr_ids):
+            return True
+            
+        for local_id, pr_id in zip(local_ids, pr_ids):
+            if local_id != pr_id:
                 return True
         return False
 
@@ -164,18 +174,16 @@ class StackedPR:
                 valid_pull_requests.append(pr)
         github_info.pull_requests = valid_pull_requests
 
-        # Handle reordering
-        if self.commits_reordered(local_commits, github_info.pull_requests):
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                futures = []
-                for pr in github_info.pull_requests:
-                    futures.append(
-                        executor.submit(self.github.update_pull_request, 
-                                       ctx, self.git_cmd, github_info.pull_requests,
-                                       pr, pr.commit, None)
-                    )
-                concurrent.futures.wait(futures)
+        # Get non-WIP commits 
+        non_wip_commits = []
+        for commit in local_commits:
+            if commit.wip:
+                break
+            non_wip_commits.append(commit)
 
+        # First sort the PRs to match commit order
+        github_info.pull_requests = self.sort_pull_requests_by_local_commit_order(
+            github_info.pull_requests, non_wip_commits)
         if not self.sync_commit_stack_to_github(ctx, local_commits, github_info):
             return
 
@@ -183,13 +191,17 @@ class StackedPR:
         update_queue = []
         assignable = None
 
-        prev_commit = None
-        for commit_index, c in enumerate(local_commits):
-            if c.wip:
+        # Process commits in order to rebuild PRs array in correct order
+        github_info.pull_requests = []
+
+        for commit_index, c in enumerate(non_wip_commits):
+            if count is not None and commit_index == count:
                 break
+                
+            prev_commit = non_wip_commits[commit_index-1] if commit_index > 0 else None
 
             pr_found = False
-            for pr in github_info.pull_requests:
+            for pr in valid_pull_requests:
                 if c.commit_id == pr.commit.commit_id:
                     pr_found = True
                     update_queue.append({
@@ -198,9 +210,9 @@ class StackedPR:
                         'prev_commit': prev_commit
                     })
                     pr.commit = c
+                    github_info.pull_requests.append(pr)
                     if reviewers:
                         print(f"warning: not updating reviewers for PR #{pr.number}")
-                    prev_commit = local_commits[commit_index]
                     break
 
             if not pr_found:
@@ -222,21 +234,14 @@ class StackedPR:
                                 break
                     if user_ids:
                         self.github.add_reviewers(ctx, pr, user_ids)
-                prev_commit = local_commits[commit_index]
 
-            if count is not None and (commit_index + 1) == count:
-                break
-
-        # Sort PRs by local commit order
-        sorted_pull_requests = self.sort_pull_requests_by_local_commit_order(
-            github_info.pull_requests, local_commits)
-
+        # Update all PRs to have correct bases
         with concurrent.futures.ThreadPoolExecutor() as executor:
             futures = []
             for update in update_queue:
                 futures.append(
                     executor.submit(self.github.update_pull_request,
-                                   ctx, self.git_cmd, sorted_pull_requests,
+                                   ctx, self.git_cmd, github_info.pull_requests,
                                    update['pr'], update['commit'], update['prev_commit'])
                 )
             concurrent.futures.wait(futures)

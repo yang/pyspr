@@ -104,7 +104,12 @@ class GitHubClient(GitHubInterface):
         if not self.repo:
             raise Exception("GitHub repo not initialized - check token and repo owner/name config")
         branch_name = self.branch_name_from_commit(commit)
-        base = self.config.repo.get('github_branch', 'main')
+        
+        # Find base branch - use prev_commit's branch if exists
+        if prev_commit:
+            base = self.branch_name_from_commit(prev_commit) 
+        else:
+            base = self.config.repo.get('github_branch', 'main')
         
         title = commit.subject
         body = git_cmd.must_git(f"show -s --format=%b {commit.commit_hash}").strip()
@@ -115,10 +120,31 @@ class GitHubClient(GitHubInterface):
     def update_pull_request(self, ctx, git_cmd, prs: List[PullRequest], 
                            pr: PullRequest, commit: Commit, prev_commit: Optional[Commit]):
         """Update pull request."""
-        # Simplified - just comment
         gh_pr = self.repo.get_pull(pr.number)
-        if gh_pr.body != commit.subject:
+        
+        # Debug print
+        print(f"Debug PR #{pr.number}:")
+        print(f"  Title: {gh_pr.title}")
+        print(f"  Current base: {gh_pr.base.ref}")
+        
+        # Update title if needed
+        if gh_pr.title != commit.subject:
             gh_pr.edit(title=commit.subject)
+
+        # Update base branch to maintain stack
+        current_base = gh_pr.base.ref
+        desired_base = None
+        
+        if prev_commit:
+            desired_base = self.branch_name_from_commit(prev_commit)
+            print(f"  Should target: {desired_base} (prev commit: {prev_commit.commit_hash[:8]})")
+        else:
+            desired_base = self.config.repo.get('github_branch', 'main')
+            print("  Should target: main (no prev commit)")
+            
+        if current_base != desired_base:
+            print(f"  Updating base from {current_base} to {desired_base}")
+            gh_pr.edit(base=desired_base)
 
     def add_reviewers(self, ctx, pr: PullRequest, user_ids: List[str]):
         """Add reviewers to pull request."""
