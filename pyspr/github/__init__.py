@@ -340,6 +340,7 @@ class GitHubClient(GitHubInterface):
         """Add reviewers to pull request."""
         gh_pr = self.repo.get_pull(pr.number)
         gh_pr.create_review_request(reviewers=user_ids)
+        print(f"DEBUG: Called add_reviewers for PR #{pr.number} with IDs: {user_ids}")
 
     def comment_pull_request(self, ctx, pr: PullRequest, comment: str):
         """Comment on pull request."""

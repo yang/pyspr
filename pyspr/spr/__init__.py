@@ -294,16 +294,21 @@ class StackedPR:
                     'prev_commit': prev_commit
                 })
                 if reviewers:
+                    # Get list of assignable users for matching
                     if assignable is None:
                         assignable = self.github.get_assignable_users(ctx)
-                    user_ids = []
+                    # For PyGithub we need to pass logins, not IDs
+                    user_logins = [] 
+                    print(f"DEBUG: Trying to add reviewers: {reviewers}")
+                    print(f"DEBUG: Assignable users: {assignable}")
                     for r in reviewers:
                         for u in assignable:
                             if r.lower() == u['login'].lower():
-                                user_ids.append(u['id'])
+                                user_logins.append(r)  # Use original login for case preservation
                                 break
-                    if user_ids:
-                        self.github.add_reviewers(ctx, pr, user_ids)
+                    if user_logins:
+                        print(f"DEBUG: Adding reviewers {user_logins} to PR #{pr.number}")
+                        self.github.add_reviewers(ctx, pr, user_logins)
 
         # Update all PRs to have correct bases
         with concurrent.futures.ThreadPoolExecutor() as executor:
