@@ -211,6 +211,9 @@ class GitHubClient:
         """
         
         spr_branch_pattern = r'^spr/[^/]+/([a-f0-9]{8})'
+        
+        logger.info(f"> github fetch pull requests")
+            
         try:
             # Execute GraphQL query directly like Go version does
             owner = self.config.repo.get('github_repo_owner')
@@ -336,6 +339,8 @@ class GitHubClient:
             base = self.branch_name_from_commit(prev_commit) 
         else:
             base = self.config.repo.get('github_branch', 'main')
+            
+        logger.info(f"> github create #{info.pull_requests[-1].number + 1 if info.pull_requests else 1} : {commit.subject}")
         
         title = commit.subject
         commit.body = git_cmd.must_git(f"show -s --format=%b {commit.commit_hash}").strip()
@@ -367,6 +372,8 @@ class GitHubClient:
         """Update pull request."""
         if not self.repo:
             return
+            
+        logger.info(f"> github update #{pr.number} : {pr.title}")
             
         gh_pr = self.repo.get_pull(pr.number)
         
@@ -418,6 +425,9 @@ class GitHubClient:
         """Add reviewers to pull request."""
         if not self.repo:
             return
+            
+        logger.info(f"> github add reviewers #{pr.number} : {pr.title} - {user_ids}")
+            
         gh_pr = self.repo.get_pull(pr.number)
         # PyGithub typing is wrong; it actually accepts a list of strings
         gh_pr.create_review_request(reviewers=user_ids)  # type: ignore
@@ -427,6 +437,9 @@ class GitHubClient:
         """Comment on pull request."""
         if not self.repo:
             return
+            
+        logger.info(f"> github add comment #{pr.number} : {pr.title}")
+            
         gh_pr = self.repo.get_pull(pr.number)
         gh_pr.create_issue_comment(comment)
 
@@ -434,6 +447,9 @@ class GitHubClient:
         """Close pull request."""
         if not self.repo:
             return
+            
+        logger.info(f"> github close #{pr.number} : {pr.title}")
+            
         gh_pr = self.repo.get_pull(pr.number)
         gh_pr.edit(state="closed")  # type: ignore  # PyGithub typing wrong; state is valid
 
@@ -441,6 +457,9 @@ class GitHubClient:
         """Get assignable users."""
         if not self.repo:
             return []
+            
+        logger.info(f"> github get assignable users")
+            
         users = self.repo.get_assignees()
         return [{"login": u.login, "id": u.login} for u in users]
 
