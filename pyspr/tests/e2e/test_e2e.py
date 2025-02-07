@@ -1484,6 +1484,111 @@ def test_no_rebase_functionality(test_repo: Tuple[str, str, str, str]) -> None:
         # Return to original directory
         os.chdir(orig_dir)
 
+def test_no_rebase_pr_stacking(test_repo: Tuple[str, str, str, str]) -> None:
+    """Test stacking new PRs on top without changing earlier PRs using --no-rebase.
+    
+    1. Create first PR and update normally 
+    2. Create second PR and update with --no-rebase
+    3. Verify earlier PR commit hash is preserved
+    4. Verify stack links updated properly
+    5. Verify CI not re-triggered (via commit hash check)
+    """
+    owner, repo_name, test_branch, repo_dir = test_repo
+    orig_dir = os.getcwd()
+    os.chdir(repo_dir)
+
+    config = Config({
+        'repo': {
+            'github_remote': 'origin',
+            'github_branch': 'main',
+            'github_repo_owner': owner,
+            'github_repo_name': repo_name,
+        },
+        'user': {}
+    })
+    git_cmd = RealGit(config)
+    github = GitHubClient(None, config)
+
+    def make_commit(file: str, msg: str) -> str:
+        with open(file, "w") as f:
+            f.write(f"{file}\n{msg}\n")
+        run_cmd(f"git add {file}")
+        run_cmd(f'git commit -m "{msg}"')
+        return git_cmd.must_git("rev-parse HEAD").strip()
+
+    try:
+        print("\nCreating first commit...")
+        c1_hash = make_commit("nr_test1.txt", "First commit")
+        run_cmd(f"git push -u origin {test_branch}")
+
+        # Create first PR 
+        print("\nCreating first PR...")
+        os.chdir(orig_dir)
+        subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
+        os.chdir(repo_dir)
+
+        # Get first PR info
+        info = github.get_info(None, git_cmd)
+        assert info is not None, "GitHub info should not be None"
+        prs = [pr for pr in info.pull_requests if pr.from_branch.startswith('spr/main/')]
+        assert len(prs) == 1, f"Should have 1 PR, found {len(prs)}"
+        pr1 = prs[0]
+        pr1_number = pr1.number
+        pr1_hash = pr1.commit.commit_hash
+        assert pr1_hash is not None, "PR1 commit hash should not be None"
+        print(f"Created PR #{pr1_number} with commit {pr1_hash[:8]}")
+
+        # Create second commit
+        print("\nCreating second commit...")
+        c2_hash = make_commit("nr_test2.txt", "Second commit")
+        run_cmd("git push")
+
+        # Update with --no-rebase
+        print("\nUpdating with --no-rebase...")
+        os.chdir(orig_dir)
+        subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir, "-nr"], check=True)
+        os.chdir(repo_dir)
+
+        # Check PR state after no-rebase update
+        info = github.get_info(None, git_cmd)
+        assert info is not None, "GitHub info should not be None"
+        prs = sorted([pr for pr in info.pull_requests if pr.from_branch.startswith('spr/main/')], 
+                    key=lambda pr: pr.number)
+        assert len(prs) == 2, f"Should have 2 PRs, found {len(prs)}"
+        
+        # Verify PR1 still exists with same commit hash
+        pr1_after = next((pr for pr in prs if pr.number == pr1_number), None)
+        assert pr1_after is not None, f"PR #{pr1_number} should still exist"
+        assert pr1_after.commit.commit_hash == pr1_hash, \
+            f"PR1 commit hash changed: {pr1_hash[:8]} -> {pr1_after.commit.commit_hash[:8]}"
+        print(f"Verified PR #{pr1_number} commit unchanged: {pr1_hash[:8]}")
+
+        # Verify new PR created for second commit
+        pr2 = next((pr for pr in prs if pr.number != pr1_number), None)
+        assert pr2 is not None, "Second PR should exist"
+        assert pr2.commit.commit_hash == c2_hash, \
+            f"PR2 commit hash wrong: {pr2.commit.commit_hash[:8]} vs {c2_hash[:8]}"
+        print(f"Verified PR #{pr2.number} created with commit {c2_hash[:8]}")
+
+        # Verify stack links updated 
+        assert pr1_after.base_ref == "main", f"PR1 should target main, got {pr1_after.base_ref}"
+        assert pr2.base_ref is not None and pr2.base_ref.startswith('spr/main/'), \
+            f"PR2 should target PR1's branch, got {pr2.base_ref}"
+        assert pr1_after.commit.commit_id in pr2.base_ref, \
+            f"PR2 base {pr2.base_ref} should contain PR1 commit ID {pr1_after.commit.commit_id}"
+
+        # Verify PR bodies have correct stack links
+        assert github.repo is not None, "GitHub repo should be available"
+        gh_pr1 = github.repo.get_pull(pr1_number)
+        gh_pr2 = github.repo.get_pull(pr2.number)
+        assert f"#{pr2.number}" in gh_pr1.body, f"PR1 body should link to PR #{pr2.number}"
+        assert f"#{pr1_number}" in gh_pr2.body, f"PR2 body should link to PR #{pr1_number}"
+
+        print(f"Successfully verified no-rebase PR stacking: #{pr1_number} <- #{pr2.number}")
+
+    finally:
+        os.chdir(orig_dir)
+
 def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
     """Test that PRs from different stacks don't interfere with each other.
     
