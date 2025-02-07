@@ -14,9 +14,37 @@ import io
 import time
 import datetime
 import logging
+import yaml
+from pathlib import Path
 from contextlib import redirect_stdout
 from typing import Dict, Generator, List, Optional, Set, Tuple, Union
 import pytest
+
+def get_gh_token() -> str:
+    """Get GitHub token from gh CLI config."""
+    # First try using gh auth token
+    try:
+        result = subprocess.run(['gh', 'auth', 'token'], check=True, capture_output=True, text=True)
+        token = result.stdout.strip()
+        if token:
+            return token
+    except subprocess.CalledProcessError:
+        pass
+
+    # Fallback to reading gh config file
+    try:
+        gh_config_path = Path.home() / ".config" / "gh" / "hosts.yml"
+        if gh_config_path.exists():
+            with open(gh_config_path) as f:
+                config = yaml.safe_load(f)
+                if config and "github.com" in config:
+                    github_config = config["github.com"]
+                    if "oauth_token" in github_config:
+                        return github_config["oauth_token"]
+    except Exception as e:
+        print(f"Error reading gh config: {e}")
+
+    raise Exception("Could not get GitHub token from gh CLI")
 
 from pyspr.config import Config
 from pyspr.git import RealGit, Commit 
@@ -98,8 +126,19 @@ def test_wip_behavior(test_repo: Tuple[str, str, str, str], caplog: pytest.LogCa
     run_cmd(f"rye run pyspr update -C {repo_dir}")
     print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} pyspr update complete")
     
+    # Let GitHub process the PRs
+    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Waiting for PRs to be available in GitHub...")
+    time.sleep(5)
+    
     # Go back to repo for verification
     os.chdir(repo_dir)
+    
+    # Debug: Check what branches actually exist
+    print("Checking remote branches:")
+    remote_branches = git_cmd.must_git("ls-remote --heads origin").split("\n")
+    for branch in remote_branches:
+        if branch:
+            print(f"  {branch}")
     
     # Helper to find our test PRs 
     def get_test_prs() -> list:
@@ -118,16 +157,20 @@ def test_wip_behavior(test_repo: Tuple[str, str, str, str], caplog: pytest.LogCa
         result = []
         try:
             for pr in prs:
-                if pr.from_branch.startswith('spr/main/'):
-                    try:
+                try:
+                    # Debug each PR being checked
+                    print(f"Checking PR #{pr.number} - branch {pr.from_branch}")
+                    if pr.from_branch is not None and pr.from_branch.startswith('spr/main/') and pr.commit is not None:
                         files = git_cmd.must_git(f"show --name-only {pr.commit.commit_hash}")
                         test_files = ['wip_test1.txt', 'wip_test2.txt', 'wip_test3.txt', 'wip_test4.txt']
                         if any(f in files for f in test_files):
                             pr_time = int(git_cmd.must_git(f"show -s --format=%ct {pr.commit.commit_hash}").strip())
                             if pr_time >= commit_time:
+                                print(f"Found matching PR #{pr.number}")
                                 result.append(pr)
-                    except:  # Skip failures since we're just filtering
-                        pass
+                except Exception as e:  # Log any failures
+                    print(f"Error checking PR #{getattr(pr, 'number', 'unknown')}: {e}")
+                    pass
         finally:
             filter_end = time.time()
             print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} PR filtering took {filter_end - filter_start:.2f} seconds")
@@ -210,10 +253,9 @@ def test_reviewer_repo() -> Generator[Tuple[str, str, str, str, str], None, None
     test_branch = f"test-spr-reviewers-{uuid.uuid4().hex[:7]}"
     print(f"Using test branch {test_branch} in {owner}/{repo_name}")
     
-    # Read GitHub token - this is yang's token 
-    with open("/home/ubuntu/code/pyspr/token") as f:
-        token = f.read().strip()
-        os.environ["GITHUB_TOKEN"] = token
+    # Use gh CLI token
+    token = get_gh_token()
+    os.environ["GITHUB_TOKEN"] = token
 
     with tempfile.TemporaryDirectory() as tmpdir:
         os.chdir(tmpdir)
@@ -510,10 +552,9 @@ def test_repo() -> Generator[Tuple[str, str, str, str], None, None]:
     test_branch = f"test-spr-amend-{uuid.uuid4().hex[:7]}"
     print(f"Using test branch {test_branch} in {repo_name}")
     
-    # Read GitHub token
-    with open("/home/ubuntu/code/pyspr/token") as f:
-        token = f.read().strip()
-        os.environ["GITHUB_TOKEN"] = token
+    # Use gh CLI token
+    token = get_gh_token()
+    os.environ["GITHUB_TOKEN"] = token
 
     with tempfile.TemporaryDirectory() as tmpdir:
         os.chdir(tmpdir)
@@ -973,10 +1014,9 @@ def test_mq_repo() -> Generator[Tuple[str, str, str, str], None, None]:
     test_branch = f"test-spr-mq-{uuid.uuid4().hex[:7]}"
     print(f"Using test branch {test_branch} in {repo_name}")
     
-    # Read GitHub token
-    with open("/home/ubuntu/code/pyspr/token") as f:
-        token = f.read().strip()
-        os.environ["GITHUB_TOKEN"] = token
+    # Use gh CLI token
+    token = get_gh_token()
+    os.environ["GITHUB_TOKEN"] = token
 
     with tempfile.TemporaryDirectory() as tmpdir:
         os.chdir(tmpdir)

@@ -177,9 +177,11 @@ class GitHubClient:
             
         # Use GraphQL to efficiently get all data in one query, matching Go behavior
         query = """
-        query {
+        query($owner: String!, $name: String!) {
           viewer {
             login
+          }
+          repository(owner: $owner, name: $name) {
             pullRequests(first:100, states:[OPEN]) {
               nodes {
                 id
@@ -206,15 +208,42 @@ class GitHubClient:
         
         spr_branch_pattern = r'^spr/[^/]+/([a-f0-9]{8})'
         try:
-            # Execute GraphQL query through raw requester
-            _, response = self.client._Github__requester.requestJsonAndCheck(
-                "POST", "https://api.github.com/graphql", input={"query": query}
+            # Execute GraphQL query directly like Go version does
+            owner = self.config.repo.get('github_repo_owner')
+            name = self.config.repo.get('github_repo_name')
+            result = self.client._Github__requester.requestJsonAndCheck(
+                "POST",
+                "https://api.github.com/graphql",
+                input={
+                    "query": query, 
+                    "variables": {
+                        "owner": owner,
+                        "name": name
+                    }
+                }
             )
-            resp = cast(GraphQLResponse, response)
+            print("DEBUG - GraphQL response structure:")
+            print(f"Result type: {type(result)}")
+            print(f"Result keys/indices: {list(result.keys()) if isinstance(result, dict) else range(len(result)) if isinstance(result, (list, tuple)) else 'N/A'}")
+            print(f"Full result: {result}")
+            
+            # Handle response structure correctly
+            if isinstance(result, tuple) and len(result) > 1:
+                resp = result[1]
+            else:
+                resp = result
+                
+            # Check if we have any data at all
+            if not resp or 'data' not in resp:
+                raise Exception("No data in GraphQL response")
+                
+            # Handle partial success case
+            if 'errors' in resp:
+                print(f"GraphQL query partial success - got {len(resp.get('errors', []))} errors")
+                
             data = resp['data']
-            viewer_data = data['viewer']
-            user_login = viewer_data['login']
-            graphql_prs = viewer_data['pullRequests']['nodes']
+            user_login = data['viewer']['login']
+            graphql_prs = data['repository']['pullRequests']['nodes']
             
             print(f"Found {len(graphql_prs)} open PRs by {user_login}")
             
