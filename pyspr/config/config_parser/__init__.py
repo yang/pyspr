@@ -26,10 +26,7 @@ def parse_config(git_cmd: GitInterface) -> Config:
             'github_host': 'github.com',
             'show_pr_titles_in_stack': False,
         },
-        'user': {
-            'log_git_commands': True,
-            'log_github_calls': True,
-        }
+        'user': {}
     }
     
     # Try to load .spr.yaml from repository root

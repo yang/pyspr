@@ -58,10 +58,14 @@ def setup_git(directory: Optional[str] = None) -> Tuple[Config, RealGit, GitHubC
 @click.option('--count', '-c', type=int,
               help="Update a specified number of pull requests from the bottom of the stack")
 @click.option('--no-rebase', '-nr', is_flag=True, help="Disable rebasing")
+@click.option('-v', '--verbose', count=True, help="Increase verbosity (can be used multiple times for more verbosity)")
 @click.pass_context
 def update(ctx: Context, directory: Optional[str], reviewer: List[str], 
-          count: Optional[int], no_rebase: bool) -> None:
+          count: Optional[int], no_rebase: bool, verbose: int) -> None:
     """Update command."""
+    from ... import setup_logging
+    setup_logging(verbose)
+    
     if no_rebase:
         os.environ["SPR_NOREBASE"] = "true"
 
@@ -72,9 +76,13 @@ def update(ctx: Context, directory: Optional[str], reviewer: List[str],
 @cli.command(name="status", help="Show status of open pull requests")
 @click.option('-C', '--directory', type=click.Path(exists=True, file_okay=False, dir_okay=True),
               help='Run as if spr was started in DIRECTORY instead of the current working directory')
+@click.option('-v', '--verbose', count=True, help="Increase verbosity (can be used multiple times for more verbosity)")
 @click.pass_context
-def status(ctx: Context, directory: Optional[str]) -> None:
+def status(ctx: Context, directory: Optional[str], verbose: int) -> None:
     """Status command."""
+    from ... import setup_logging
+    setup_logging(verbose)
+    
     config, git_cmd, github = setup_git(directory)
     stackedpr = StackedPR(config, github, git_cmd)
     stackedpr.status_pull_requests(ctx)
@@ -84,9 +92,13 @@ def status(ctx: Context, directory: Optional[str]) -> None:
               help='Run as if spr was started in DIRECTORY instead of the current working directory')
 @click.option('--count', '-c', type=int,
               help="Merge a specified number of pull requests from the bottom of the stack")
+@click.option('-v', '--verbose', count=True, help="Increase verbosity (can be used multiple times for more verbosity)")
 @click.pass_context
-def merge(ctx: Context, directory: Optional[str], count: Optional[int]) -> None:
+def merge(ctx: Context, directory: Optional[str], count: Optional[int], verbose: int) -> None:
     """Merge command."""
+    from ... import setup_logging
+    setup_logging(verbose)
+    
     config, git_cmd, github = setup_git(directory)
     stackedpr = StackedPR(config, github, git_cmd)
     stackedpr.merge_pull_requests(ctx, count)

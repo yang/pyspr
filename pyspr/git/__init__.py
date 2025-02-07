@@ -211,8 +211,8 @@ class RealGit:
             # Skip rebase command if no-rebase is enabled
             return ""
             
-        if self.config.user.get('log_git_commands', False):
-            logger.debug(f"git {cmd_str}")
+        # Always log git commands
+        logger.info(f"> git {cmd_str}")
         try:
             # Use GitPython
             repo = git.Repo(os.getcwd(), search_parent_directories=True)
