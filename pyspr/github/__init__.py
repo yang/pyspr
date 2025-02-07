@@ -181,12 +181,16 @@ class GitHubClient:
             
         # Use GraphQL to efficiently get all data in one query, matching Go behavior
         query = """
-        query($owner: String!, $name: String!) {
+        query($owner: String!, $name: String!, $after: String) {
           viewer {
             login
           }
           repository(owner: $owner, name: $name) {
-            pullRequests(first:100, states:[OPEN]) {
+            pullRequests(first:100, states:[OPEN], orderBy: {field: CREATED_AT, direction: DESC}, after: $after) {
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
               nodes {
                 id
                 number
@@ -222,34 +226,112 @@ class GitHubClient:
                     "query": query, 
                     "variables": {
                         "owner": owner,
-                        "name": name
+                        "name": name,
+                        "after": None  # Start without cursor
                     }
                 }
             )
-            logger.debug("GraphQL response structure:")
-            logger.debug(f"Result type: {type(result)}")
-            logger.debug(f"Result keys/indices: {list(result.keys()) if isinstance(result, dict) else range(len(result)) if isinstance(result, (list, tuple)) else 'N/A'}")
-            logger.debug(f"Full result: {result}")
             
-            # Handle response structure correctly
-            if isinstance(result, tuple) and len(result) > 1:
-                resp = result[1]
+            # Configuration for pagination
+            use_pagination = False  # Set to True to enable pagination
+            max_pages = 10  # Maximum number of pages to fetch
+
+            # Variables for GraphQL query
+            variables = {
+                "owner": owner,
+                "name": name,
+            }
+
+            if use_pagination:
+                # Paginate through all PRs (disabled by default)
+                all_prs = []
+                page_count = 0
+                has_next_page = True
+                end_cursor = None
+                
+                while has_next_page and page_count < max_pages:
+                    page_count += 1
+                    logger.info(f"Fetching page {page_count} of PRs...")
+                    
+                    # Update cursor for next page if needed
+                    if end_cursor:
+                        variables["after"] = end_cursor
+                    
+                    result = self.client._Github__requester.requestJsonAndCheck(
+                        "POST",
+                        "https://api.github.com/graphql",
+                        input={
+                            "query": query, 
+                            "variables": variables
+                        }
+                    )
+                    
+                    # Handle response structure
+                    if isinstance(result, tuple) and len(result) > 1:
+                        resp = result[1]
+                    else:
+                        resp = result
+                    
+                    # Check if we have any data
+                    if not resp or 'data' not in resp:
+                        raise Exception("No data in GraphQL response")
+                    
+                    # Handle partial success case
+                    if 'errors' in resp:
+                        logger.warning(f"GraphQL query partial success - got {len(resp.get('errors', []))} errors")
+                    
+                    data = resp['data']
+                    user_login = data['viewer']['login']
+                    pr_data = data['repository']['pullRequests']
+                    
+                    # Add PRs from this page
+                    all_prs.extend(pr_data['nodes'])
+                    
+                    # Check if there are more pages
+                    has_next_page = pr_data['pageInfo']['hasNextPage']
+                    end_cursor = pr_data['pageInfo']['endCursor']
+                
+                logger.info(f"GraphQL returned {len(all_prs)} total open PRs across {page_count} pages")
+                pr_nodes = all_prs
             else:
-                resp = result
+                # Single query with ordering (default behavior)
+                result = self.client._Github__requester.requestJsonAndCheck(
+                    "POST",
+                    "https://api.github.com/graphql",
+                    input={
+                        "query": query, 
+                        "variables": variables
+                    }
+                )
                 
-            # Check if we have any data at all
-            if not resp or 'data' not in resp:
-                raise Exception("No data in GraphQL response")
+                # Handle response structure correctly
+                if isinstance(result, tuple) and len(result) > 1:
+                    resp = result[1]
+                else:
+                    resp = result
+                    
+                # Check if we have any data at all
+                if not resp or 'data' not in resp:
+                    raise Exception("No data in GraphQL response")
+                    
+                # Handle partial success case
+                if 'errors' in resp:
+                    logger.warning(f"GraphQL query partial success - got {len(resp.get('errors', []))} errors")
                 
-            # Handle partial success case
-            if 'errors' in resp:
-                logger.warning(f"GraphQL query partial success - got {len(resp.get('errors', []))} errors")
+                data = resp['data']
+                user_login = data['viewer']['login']
+                pr_nodes = data['repository']['pullRequests']['nodes']
                 
-            data = resp['data']
-            user_login = data['viewer']['login']
-            graphql_prs = data['repository']['pullRequests']['nodes']
+                logger.info(f"GraphQL returned {len(pr_nodes)} open PRs (newest first)")
+
+            logger.debug("PRs returned by GraphQL:")
+            for pr in pr_nodes:
+                logger.debug(f"  PR #{pr['number']}: base={pr['baseRefName']} head={pr['headRefName']}")
             
-            logger.info(f"Found {len(graphql_prs)} open PRs by {user_login}")
+            # Keep all PRs from GraphQL, regardless of title
+            graphql_prs = pr_nodes
+            
+            logger.info(f"Processing {len(graphql_prs)} PRs from GraphQL")
             
             for pr_data in graphql_prs:
                 branch_match = re.match(spr_branch_pattern, pr_data['headRefName'])
@@ -264,9 +346,13 @@ class GitHubClient:
                         commit_hash = last_commit['oid']
                         commit_msg = last_commit['messageBody']
                         # Try to get commit ID from message
+                        logger.debug(f"PR #{pr_data['number']} last commit message:\n{commit_msg}")
                         msg_commit_id = re.search(r'commit-id:([a-f0-9]{8})', commit_msg)
                         if msg_commit_id:
-                            commit_id = msg_commit_id.group(1)
+                            message_id = msg_commit_id.group(1)
+                            logger.debug(f"Found commit ID {message_id} in message")
+                            logger.debug(f"Branch name commit ID: {commit_id}")
+                            commit_id = message_id
                             
                         commit = Commit(commit_id, commit_hash, last_commit['messageHeadline'])
                         commits: List[Commit] = [commit]  # Simplified, full commit history not needed

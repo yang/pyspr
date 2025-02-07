@@ -7,8 +7,15 @@ import re
 import logging
 from typing import Dict, List, Optional
 
-# Get module logger
+# Set up logging
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+handler = logging.StreamHandler(sys.stderr)
+handler.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(message)s')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+logger.propagate = False  # Don't double log
 
 from ..git import Commit, get_local_commit_stack, branch_name_from_commit, ConfigProtocol, GitInterface  
 from ..github import GitHubInfo, PullRequest, GitHubInterface
@@ -72,7 +79,26 @@ class StackedPR:
             
         # Map PRs by commit ID
         pull_request_map: Dict[str, PullRequest] = {pr.commit.commit_id: pr for pr in all_pull_requests}
+        logger.debug(f"  PR map has {len(pull_request_map)} entries:")
+        for commit_id, pr in pull_request_map.items():
+            logger.debug(f"    {commit_id}: PR #{pr.number}")
         
+        # First pass: Find any PRs matching local commits by ID
+        direct_matches: List[PullRequest] = []
+        for commit in local_commits:
+            logger.debug(f"  Checking commit {commit.commit_hash[:8]} with ID {commit.commit_id}")
+            if commit.commit_id in pull_request_map:
+                pr = pull_request_map[commit.commit_id]
+                direct_matches.append(pr)
+                logger.debug(f"  Found direct PR match #{pr.number} for commit {commit.commit_id}")
+            else:
+                logger.debug(f"  No PR found for commit ID {commit.commit_id}")
+                
+        if direct_matches:
+            logger.debug(f"  Found {len(direct_matches)} direct PR matches, using those")
+            return direct_matches
+                
+        # Second pass: Try to find stacked PRs if no direct matches
         pull_requests: List[PullRequest] = []
         
         # Find top PR in local commits
@@ -97,8 +123,8 @@ class StackedPR:
                 raise Exception("Empty base branch")
             match = re.match(r'spr/[^/]+/([a-f0-9]{8})', curr_pr.base_ref)
             if not match:
-                logger.error(f"  Error: Invalid base branch: {curr_pr.base_ref}")
-                raise Exception(f"Invalid base branch: {curr_pr.base_ref}")
+                logger.debug(f"  Base is {curr_pr.base_ref} which doesn't match pattern, stopping")
+                break
             next_commit_id = match.group(1)
             curr_pr = pull_request_map.get(next_commit_id)
             if not curr_pr:
@@ -237,10 +263,20 @@ class StackedPR:
         if not github_info:
             return
 
-        local_commits = self.align_local_commits(
-            get_local_commit_stack(self.config, self.git_cmd), 
-            github_info.pull_requests
-        )
+        # Log all pull requests from GitHub
+        logger.debug("All PRs from GitHub:")
+        for pr in github_info.pull_requests:
+            logger.debug(f"  PR #{pr.number}: commit_id={pr.commit.commit_id}, branch={pr.from_branch}")
+
+        all_local_commits = get_local_commit_stack(self.config, self.git_cmd)
+        logger.debug("All local commits:")
+        for commit in all_local_commits:
+            logger.debug(f"  {commit.commit_hash[:8]}: id={commit.commit_id}")
+
+        local_commits = self.align_local_commits(all_local_commits, github_info.pull_requests)
+        logger.debug("Aligned local commits:")
+        for commit in local_commits:
+            logger.debug(f"  {commit.commit_hash[:8]}: id={commit.commit_id}")
 
         # Build connected stack like Go version
         target_branch = self.config.repo.get('github_branch', 'main')
@@ -248,6 +284,11 @@ class StackedPR:
         github_info.pull_requests = self.match_pull_request_stack(
             target_branch, local_commits, all_prs
         )
+
+        # Log matched stack
+        logger.debug("Matched PR stack:")
+        for pr in github_info.pull_requests:
+            logger.debug(f"  PR #{pr.number}: commit_id={pr.commit.commit_id}, branch={pr.from_branch}")
 
         # Close PRs for deleted commits, but only within the stack
         valid_pull_requests: List[PullRequest] = []
@@ -260,6 +301,11 @@ class StackedPR:
             else:
                 valid_pull_requests.append(pr)
         github_info.pull_requests = valid_pull_requests
+        
+        # Log valid PRs
+        logger.debug("Valid PRs after filtering:")
+        for pr in valid_pull_requests:
+            logger.debug(f"  PR #{pr.number}: commit_id={pr.commit.commit_id}, branch={pr.from_branch}")
 
         # Get non-WIP commits 
         non_wip_commits: List[Commit] = []
@@ -286,17 +332,23 @@ class StackedPR:
         github_info.pull_requests = []
 
         # Match commits to PRs first by ID if possible
+        logger.debug("\nProcessing commits to update/create PRs:")
         for commit_index, commit in enumerate(non_wip_commits):
             if count is not None and commit_index == count:
                 break
                 
             prev_commit: Optional[Commit] = non_wip_commits[commit_index-1] if commit_index > 0 else None
+            logger.debug(f"\n  Processing commit {commit.commit_hash[:8]}: id={commit.commit_id}")
+            logger.debug(f"  Valid PRs to match against:")
+            for vpr in valid_pull_requests:
+                logger.debug(f"    PR #{vpr.number}: commit_id={vpr.commit.commit_id}, branch={vpr.from_branch}")
 
             pr_found = False
             for pr in valid_pull_requests:
                 if commit.commit_id == pr.commit.commit_id:
                     # Found matching PR - update it
                     pr_found = True
+                    logger.debug(f"  Found matching PR #{pr.number}")
                     update_queue.append({
                         'pr': pr, 
                         'commit': commit,
@@ -311,6 +363,7 @@ class StackedPR:
 
             if not pr_found:
                 # If no match by ID, create new PR (matching Go behavior)
+                logger.debug(f"  No matching PR found, creating new PR")
                 pr = self.github.create_pull_request(ctx, self.git_cmd, github_info, commit, prev_commit)
                 github_info.pull_requests.append(pr)
                 update_queue.append({
