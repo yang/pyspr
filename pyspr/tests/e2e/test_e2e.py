@@ -6,10 +6,14 @@
 # pyright: reportOptionalMemberAccess=false
 
 import os
+import sys
 import tempfile
 import uuid
 import subprocess
 import io
+import time
+import datetime
+import logging
 from contextlib import redirect_stdout
 from typing import Dict, Generator, List, Optional, Set, Tuple, Union
 import pytest
@@ -18,16 +22,31 @@ from pyspr.config import Config
 from pyspr.git import RealGit, Commit 
 from pyspr.github import GitHubClient, PullRequest
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s.%(msecs)03d [%(levelname)s] %(message)s',
+    datefmt='%H:%M:%S'
+)
+# Add stderr handler to ensure logs are output during pytest
+handler = logging.StreamHandler(sys.stderr)
+handler.setFormatter(logging.Formatter('%(asctime)s.%(msecs)03d [%(levelname)s] %(message)s', '%H:%M:%S'))
+log = logging.getLogger(__name__)
+log.addHandler(handler)
+log.propagate = False  # Don't double log
+
 def run_cmd(cmd: str) -> None:
     """Run a shell command using subprocess with proper error handling."""
     subprocess.run(cmd, shell=True, check=True)
 
-def test_wip_behavior(test_repo: Tuple[str, str, str, str]) -> None:
+def test_wip_behavior(test_repo: Tuple[str, str, str, str], caplog: pytest.LogCaptureFixture) -> None:
     """Test that WIP commits behave as expected:
     - Regular commits before WIP are converted to PRs
     - WIP commits are not converted to PRs
     - Regular commits after WIP are not converted to PRs
     """
+    print("=== TEST STARTED ===")  # Just to see if test runs at all
+    caplog.set_level(logging.INFO)
     owner, repo_name, test_branch, repo_dir = test_repo
 
     orig_dir = os.getcwd()
@@ -51,63 +70,91 @@ def test_wip_behavior(test_repo: Tuple[str, str, str, str]) -> None:
     
     # Create 4 commits: 2 regular, 1 WIP, 1 regular
     def make_commit(file: str, msg: str) -> str:
+        print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Creating commit for {file} - {msg}")
         with open(file, "w") as f:
             f.write(f"{file}\n")
         run_cmd(f"git add {file}")
         run_cmd(f'git commit -m "{msg}"')
-        return git_cmd.must_git("rev-parse HEAD").strip()
+        result = git_cmd.must_git("rev-parse HEAD").strip()
+        print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Created commit {result[:8]}")
+        return result
         
-    print("Creating commits...")
+    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Creating commits...")
     c1_hash = make_commit("wip_test1.txt", "First regular commit")
     c2_hash = make_commit("wip_test2.txt", "Second regular commit")
     c3_hash = make_commit("wip_test3.txt", "WIP Third commit")
     _ = make_commit("wip_test4.txt", "Fourth regular commit")  # Not used but kept for completeness
+    
+    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Pushing branch with commits...")
     run_cmd(f"git push -u origin {test_branch}")  # Push branch with commits
+    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Push complete")
     
     # Run update to create PRs
-    print("Creating PRs...")
+    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Creating PRs...")
     
     # Go back to project dir to run commands 
     os.chdir(orig_dir)
+    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Running pyspr update...")
     run_cmd(f"rye run pyspr update -C {repo_dir}")
+    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} pyspr update complete")
     
     # Go back to repo for verification
     os.chdir(repo_dir)
     
     # Helper to find our test PRs 
     def get_test_prs() -> list:
+        print("=== ABOUT TO CALL GITHUB API ===")  # See if we get here before timeout
+        print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Starting PR filtering...")
+        gh_start = time.time()
+        try:
+            info = github.get_info(None, git_cmd)
+            prs = info.pull_requests if info else []
+        finally:
+            gh_end = time.time()
+            print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} GitHub API get_info took {gh_end - gh_start:.2f} seconds")
+        
+        print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Filtering {len(prs)} PRs...")
+        filter_start = time.time()
         result = []
-        for pr in github.get_info(None, git_cmd).pull_requests:
-            if pr.from_branch.startswith('spr/main/'):
-                try:
-                    files = git_cmd.must_git(f"show --name-only {pr.commit.commit_hash}")
-                    test_files = ['wip_test1.txt', 'wip_test2.txt', 'wip_test3.txt', 'wip_test4.txt']
-                    if any(f in files for f in test_files):
-                        pr_time = int(git_cmd.must_git(f"show -s --format=%ct {pr.commit.commit_hash}").strip())
-                        if pr_time >= commit_time:
-                            result.append(pr)
-                except:  # Skip failures since we're just filtering
-                    pass
+        try:
+            for pr in prs:
+                if pr.from_branch.startswith('spr/main/'):
+                    try:
+                        files = git_cmd.must_git(f"show --name-only {pr.commit.commit_hash}")
+                        test_files = ['wip_test1.txt', 'wip_test2.txt', 'wip_test3.txt', 'wip_test4.txt']
+                        if any(f in files for f in test_files):
+                            pr_time = int(git_cmd.must_git(f"show -s --format=%ct {pr.commit.commit_hash}").strip())
+                            if pr_time >= commit_time:
+                                result.append(pr)
+                    except:  # Skip failures since we're just filtering
+                        pass
+        finally:
+            filter_end = time.time()
+            print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} PR filtering took {filter_end - filter_start:.2f} seconds")
+        print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Found {len(result)} matching PRs")
         return result
     
     # Verify only first two PRs were created
+    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Getting GitHub info...")
     info = github.get_info(None, git_cmd)
     assert info is not None, "GitHub info should not be None"
     
-    print("\nDebug - looking for commits:")
-    print(f"C1: {c1_hash}")
-    print(f"C2: {c2_hash}")
-    print(f"C3: {c3_hash}")
+    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Getting commit info for debugging:")
+    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} C1: {c1_hash}")
+    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} C2: {c2_hash}")
+    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} C3: {c3_hash}")
     
     # Get our test PRs
+    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Getting filtered test PRs...")
     test_prs = get_test_prs()
     
     # Print all PR commit hashes for debugging
-    print("\nTest PR commit hashes:")
+    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Test PR commit hashes:")
     for pr in test_prs:
-        print(f"PR #{pr.number}: {pr.title} - {pr.commit.commit_hash}")
+        print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} PR #{pr.number}: {pr.title} - {pr.commit.commit_hash}")
     
     # Sort PRs by number (most recent first) and take first 2 matching our titles
+    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Finding PRs with target titles...")
     test_prs = sorted(test_prs, key=lambda pr: pr.number, reverse=True)
     prs_with_titles = []
     for pr in test_prs:
@@ -116,6 +163,7 @@ def test_wip_behavior(test_repo: Tuple[str, str, str, str]) -> None:
         if len(prs_with_titles) == 2:
             break
     test_prs = prs_with_titles
+    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Found {len(test_prs)} PRs with target titles")
             
     print("\nMost recent matching PRs:")
     for pr in test_prs:
