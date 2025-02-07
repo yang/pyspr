@@ -3,8 +3,12 @@
 import os
 import sys
 import click
+import logging
 from typing import List, Optional, Tuple
 from click import Context
+
+# Get module logger
+logger = logging.getLogger(__name__)
 
 from ...config import Config, default_config
 from ...config.config_parser import parse_config
@@ -15,7 +19,7 @@ from ...spr import StackedPR
 def check(err: Exception) -> None:
     """Check for error and exit if needed."""
     if err:
-        print(f"error: {err}")
+        logger.error(f"{err}")
         sys.exit(1)
 
 @click.group()

@@ -1,11 +1,15 @@
 """GitHub interfaces and implementation."""
 
 import os
+import logging
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Protocol, TypedDict, cast
 from github import Github
 from github.Repository import Repository
 import re
+
+# Get module logger
+logger = logging.getLogger(__name__)
 
 # Types for GraphQL responses 
 class GraphQLCommitNode(TypedDict):
@@ -118,7 +122,7 @@ class GitHubClient:
         self.config = config
         self.token = self._find_token()
         if not self.token:
-            print("Error: No GitHub token found. Try one of:\n1. Set GITHUB_TOKEN env var\n2. Log in with 'gh auth login'\n3. Put token in /home/ubuntu/code/pyspr/token file")
+            logger.error("No GitHub token found. Try one of:\n1. Set GITHUB_TOKEN env var\n2. Log in with 'gh auth login'\n3. Put token in /home/ubuntu/code/pyspr/token file")
             return
         self.client = Github(self.token)
         self._repo: Optional[Repository] = None
@@ -144,7 +148,7 @@ class GitHubClient:
                         if "oauth_token" in github_config:
                             return github_config["oauth_token"]
         except Exception as e:
-            print(f"Error reading gh CLI config: {e}")
+            logger.error(f"Error reading gh CLI config: {e}")
 
         # Finally try token file
         token_file = "/home/ubuntu/code/pyspr/token"
@@ -155,7 +159,7 @@ class GitHubClient:
                     if token:
                         return token
         except Exception as e:
-            print(f"Error reading token file: {e}")
+            logger.error(f"Error reading token file: {e}")
 
     @property
     def repo(self) -> Optional[Repository]:
@@ -222,10 +226,10 @@ class GitHubClient:
                     }
                 }
             )
-            print("DEBUG - GraphQL response structure:")
-            print(f"Result type: {type(result)}")
-            print(f"Result keys/indices: {list(result.keys()) if isinstance(result, dict) else range(len(result)) if isinstance(result, (list, tuple)) else 'N/A'}")
-            print(f"Full result: {result}")
+            logger.debug("GraphQL response structure:")
+            logger.debug(f"Result type: {type(result)}")
+            logger.debug(f"Result keys/indices: {list(result.keys()) if isinstance(result, dict) else range(len(result)) if isinstance(result, (list, tuple)) else 'N/A'}")
+            logger.debug(f"Full result: {result}")
             
             # Handle response structure correctly
             if isinstance(result, tuple) and len(result) > 1:
@@ -239,18 +243,18 @@ class GitHubClient:
                 
             # Handle partial success case
             if 'errors' in resp:
-                print(f"GraphQL query partial success - got {len(resp.get('errors', []))} errors")
+                logger.warning(f"GraphQL query partial success - got {len(resp.get('errors', []))} errors")
                 
             data = resp['data']
             user_login = data['viewer']['login']
             graphql_prs = data['repository']['pullRequests']['nodes']
             
-            print(f"Found {len(graphql_prs)} open PRs by {user_login}")
+            logger.info(f"Found {len(graphql_prs)} open PRs by {user_login}")
             
             for pr_data in graphql_prs:
                 branch_match = re.match(spr_branch_pattern, pr_data['headRefName'])
                 if branch_match:
-                    print(f"Processing PR #{pr_data['number']} with branch {pr_data['headRefName']}")
+                    logger.debug(f"Processing PR #{pr_data['number']} with branch {pr_data['headRefName']}")
                     commit_id = branch_match.group(1)
                     
                     # Get commit info
@@ -281,19 +285,19 @@ class GitHubClient:
                                                         in_queue=in_queue, title=title, body=body))
             
         except Exception as e:
-            print(f"GraphQL query failed: {e}")
-            print("Falling back to REST API")
+            logger.error(f"GraphQL query failed: {e}")
+            logger.info("Falling back to REST API")
             
             # Fallback to REST API if GraphQL fails
             current_user = self.client.get_user().login
             open_prs = list(self.repo.get_pulls(state='open'))
             user_prs = [pr for pr in open_prs if pr.user.login == current_user]
-            print(f"Found {len(user_prs)} open PRs by {current_user} out of {len(open_prs)} total")
+            logger.info(f"Found {len(user_prs)} open PRs by {current_user} out of {len(open_prs)} total")
             
             for pr in user_prs:
                 branch_match = re.match(spr_branch_pattern, pr.head.ref)
                 if branch_match:
-                    print(f"Processing PR #{pr.number} with branch {pr.head.ref}")
+                    logger.debug(f"Processing PR #{pr.number} with branch {pr.head.ref}")
                     commit_id = branch_match.group(1)
                     commit_hash = pr.head.sha
                     try:
@@ -304,7 +308,7 @@ class GitHubClient:
                             if msg_commit_id:
                                 commit_id = msg_commit_id.group(1)
                     except Exception as e:
-                        print(f"Error getting commits for PR #{pr.number}: {e}")
+                        logger.error(f"Error getting commits for PR #{pr.number}: {e}")
                         pass
 
                     commit = Commit(commit_id, commit_hash, pr.title)
@@ -338,12 +342,12 @@ class GitHubClient:
         
         # Get current PR stack for interlinking
         current_prs: List[PullRequest] = info.pull_requests[:] if info and info.pull_requests else []
-        print(f"DEBUG: Create PR - Current stack has {len(current_prs)} PRs")
+        logger.debug(f"Create PR - Current stack has {len(current_prs)} PRs")
         for i, pr in enumerate(current_prs):
-            print(f"  #{i}: PR#{pr.number} - {pr.commit.commit_id}")
+            logger.debug(f"  #{i}: PR#{pr.number} - {pr.commit.commit_id}")
         new_pr = PullRequest(0, commit, [commit], base_ref=base, title=title)
         current_prs.append(new_pr)  # Add new PR to stack for proper linking
-        print(f"DEBUG: Added new PR, stack now has {len(current_prs)} PRs")
+        logger.debug(f"Added new PR, stack now has {len(current_prs)} PRs")
         
         # Create PR first to get number
         pr = self.repo.create_pull(title=title, body="Creating...", head=branch_name, base=base)
@@ -351,7 +355,7 @@ class GitHubClient:
         
         # Now format body with correct PR numbers
         body = self.format_body(commit, current_prs)
-        print(f"DEBUG: Formatted body:\n{body}")
+        logger.debug(f"Formatted body:\n{body}")
         
         # Update PR with proper body
         pr.edit(body=body)
@@ -366,10 +370,10 @@ class GitHubClient:
             
         gh_pr = self.repo.get_pull(pr.number)
         
-        # Debug print
-        print(f"Debug PR #{pr.number}:")
-        print(f"  Title: {gh_pr.title}")
-        print(f"  Current base: {gh_pr.base.ref}")
+        # Debug info
+        logger.debug(f"PR #{pr.number}:")
+        logger.debug(f"  Title: {gh_pr.title}")
+        logger.debug(f"  Current base: {gh_pr.base.ref}")
         
         # Get fresh info from PR
         pr.title = gh_pr.title
@@ -384,7 +388,7 @@ class GitHubClient:
         # Always update body with current stack info 
         if commit:
             body = self.format_body(commit, prs)
-            print(f"DEBUG: Updating body for PR #{pr.number}:\n{body}")
+            logger.debug(f"Updating body for PR #{pr.number}:\n{body}")
             gh_pr.edit(body=body)
             pr.body = body
 
@@ -401,13 +405,13 @@ class GitHubClient:
             
             if prev_commit:
                 desired_base = self.branch_name_from_commit(prev_commit)
-                print(f"  Should target: {desired_base} (prev commit: {prev_commit.commit_hash[:8]})")
+                logger.debug(f"  Should target: {desired_base} (prev commit: {prev_commit.commit_hash[:8]})")
             else:
                 desired_base = self.config.repo.get('github_branch', 'main')
-                print("  Should target: main (no prev commit)")
+                logger.debug("  Should target: main (no prev commit)")
                 
             if current_base != desired_base:
-                print(f"  Updating base from {current_base} to {desired_base}")
+                logger.info(f"  Updating base from {current_base} to {desired_base}")
                 gh_pr.edit(base=desired_base)
 
     def add_reviewers(self, ctx: StackedPRContextType, pr: PullRequest, user_ids: List[str]) -> None:
@@ -417,7 +421,7 @@ class GitHubClient:
         gh_pr = self.repo.get_pull(pr.number)
         # PyGithub typing is wrong; it actually accepts a list of strings
         gh_pr.create_review_request(reviewers=user_ids)  # type: ignore
-        print(f"DEBUG: Called add_reviewers for PR #{pr.number} with IDs: {user_ids}")
+        logger.debug(f"Called add_reviewers for PR #{pr.number} with IDs: {user_ids}")
 
     def comment_pull_request(self, ctx: StackedPRContextType, pr: PullRequest, comment: str) -> None:
         """Comment on pull request."""
@@ -448,24 +452,24 @@ class GitHubClient:
         
         # Check if merge queue is enabled and supported for this repo
         merge_queue_enabled = self.config.repo.get('merge_queue', False)
-        print(f"Merge queue enabled in config: {merge_queue_enabled}")
+        logger.info(f"Merge queue enabled in config: {merge_queue_enabled}")
         
         if merge_queue_enabled:
             try:
                 # Debug API info
-                print("Pull request attributes available:")
-                print(f"  auto_merge: {getattr(gh_pr, 'auto_merge', None)}")
-                print(f"  mergeable: {gh_pr.mergeable}")
-                print(f"  mergeable_state: {gh_pr.mergeable_state}")
+                logger.debug("Pull request attributes available:")
+                logger.debug(f"  auto_merge: {getattr(gh_pr, 'auto_merge', None)}")
+                logger.debug(f"  mergeable: {gh_pr.mergeable}")
+                logger.debug(f"  mergeable_state: {gh_pr.mergeable_state}")
                 # Convert merge method to uppercase for PyGithub
                 gh_method = merge_method.upper()
                 # Try to enable auto-merge (merge queue)
                 gh_pr.enable_automerge(merge_method=gh_method)
-                print(f"PR #{pr.number} added to merge queue")
+                logger.info(f"PR #{pr.number} added to merge queue")
                 return  # Success, we're done
             except Exception as e:
-                print(f"Merge queue not supported or error: {e}")
-                print(f"Error type: {type(e)}")
+                logger.warning(f"Merge queue not supported or error: {e}")
+                logger.debug(f"Error type: {type(e)}")
                 # If repository requires merge queue, don't fall back
                 if "Changes must be made through the merge queue" in str(e):
                     raise Exception("Repository requires merge queue but failed to add PR to queue") from e

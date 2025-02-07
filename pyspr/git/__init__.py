@@ -3,10 +3,14 @@
 import os
 import re
 import uuid
+import logging
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Any, Dict, Protocol
 import git
 from git.exc import GitCommandError, InvalidGitRepositoryError
+
+# Get module logger
+logger = logging.getLogger(__name__)
 
 @dataclass 
 class Commit:
@@ -208,7 +212,7 @@ class RealGit:
             return ""
             
         if self.config.user.get('log_git_commands', False):
-            print(f"git {cmd_str}")
+            logger.debug(f"git {cmd_str}")
         try:
             # Use GitPython
             repo = git.Repo(os.getcwd(), search_parent_directories=True)
@@ -227,7 +231,7 @@ class RealGit:
             raise Exception("Not in a git repository")
         except Exception as e:
             if str(e):
-                print(f"Git error: {e}")
+                logger.error(f"Git error: {e}")
             raise
 
     def must_git(self, command: str, output: Optional[str] = None) -> str:

@@ -2,9 +2,13 @@
 
 from pathlib import Path
 from typing import Dict, Union, Any
+import logging
 import yaml
 
 from ...git import GitInterface
+
+# Get module logger
+logger = logging.getLogger(__name__)
 
 ConfigValue = Union[str, bool]
 RepoConfig = Dict[str, Any]  # Use Any since yaml can return various types
@@ -61,7 +65,7 @@ def parse_config(git_cmd: GitInterface) -> Config:
                 if not config['repo'].get('github_repo_name'):
                     config['repo']['github_repo_name'] = parts[1]
         except Exception as e:
-            print(f"Failed to parse git remote: {e}")
+            logger.error(f"Failed to parse git remote: {e}")
     
     # Special case for test repo that needs merge queue
     if (config['repo'].get('github_repo_owner') == "yangenttest1" and 
