@@ -3,7 +3,7 @@
 import os
 import logging
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Protocol, TypedDict, cast
+from typing import Any, Dict, List, Optional, Protocol, TypedDict, Union, Tuple, cast
 from github import Github
 from github.Repository import Repository
 import re
@@ -38,10 +38,19 @@ class GraphQLPRData(TypedDict):
 
 class GraphQLViewer(TypedDict):
     login: str
+
+class GraphQLRepository(TypedDict):
     pullRequests: GraphQLPRData
 
+class GraphQLData(TypedDict):
+    viewer: GraphQLViewer
+    repository: GraphQLRepository
+
 class GraphQLResponse(TypedDict):
-    data: Dict[str, GraphQLViewer]
+    data: GraphQLData
+    errors: Optional[List[Dict[str, Any]]]
+
+GraphQLResponseType = Union[Tuple[int, Dict[str, Any]], Dict[str, Any]]
 
 from ..git import Commit, GitInterface, ConfigProtocol
 from ..typing import StackedPRContextProtocol, StackedPRContextType
@@ -144,7 +153,7 @@ class GitHubClient:
                 with open(gh_config_path, "r") as f:
                     gh_config = yaml.safe_load(f)
                     if gh_config and "github.com" in gh_config:
-                        github_config = gh_config["github.com"]
+                        github_config: Dict[str, Any] = gh_config["github.com"]
                         if "oauth_token" in github_config:
                             return github_config["oauth_token"]
         except Exception as e:
@@ -160,6 +169,7 @@ class GitHubClient:
                         return token
         except Exception as e:
             logger.error(f"Error reading token file: {e}")
+        return None
 
     @property
     def repo(self) -> Optional[Repository]:
@@ -218,7 +228,7 @@ class GitHubClient:
             # Execute GraphQL query directly like Go version does
             owner = self.config.repo.get('github_repo_owner')
             name = self.config.repo.get('github_repo_name')
-            result = self.client._Github__requester.requestJsonAndCheck(
+            result: GraphQLResponseType = self.client._Github__requester.requestJsonAndCheck(  # type: ignore
                 "POST",
                 "https://api.github.com/graphql",
                 input={
@@ -230,15 +240,16 @@ class GitHubClient:
                 }
             )
             logger.debug("GraphQL response structure:")
-            logger.debug(f"Result type: {type(result)}")
-            logger.debug(f"Result keys/indices: {list(result.keys()) if isinstance(result, dict) else range(len(result)) if isinstance(result, (list, tuple)) else 'N/A'}")
+            logger.debug(f"Result type: {type(result)}")  # type: ignore
+            logger.debug(f"Result keys/indices: {list(result.keys()) if isinstance(result, dict) else range(len(result)) if isinstance(result, (list, tuple)) else 'N/A'}")  # type: ignore
             logger.debug(f"Full result: {result}")
             
-            # Handle response structure correctly
-            if isinstance(result, tuple) and len(result) > 1:
-                resp = result[1]
+            # Handle response structure correctly 
+            resp: Dict[str, Any]
+            if isinstance(result, tuple) and len(result) > 1:  # type: ignore
+                resp = result[1]  # type: ignore
             else:
-                resp = result
+                resp = cast(Dict[str, Any], result)  # type: ignore
                 
             # Check if we have any data at all
             if not resp or 'data' not in resp:
@@ -246,43 +257,43 @@ class GitHubClient:
                 
             # Handle partial success case
             if 'errors' in resp:
-                logger.warning(f"GraphQL query partial success - got {len(resp.get('errors', []))} errors")
+                logger.warning(f"GraphQL query partial success - got {len(resp.get('errors', []))} errors")  # type: ignore
                 
-            data = resp['data']
+            data: GraphQLData = cast(GraphQLData, resp['data'])
             user_login = data['viewer']['login']
             graphql_prs = data['repository']['pullRequests']['nodes']
             
             logger.info(f"Found {len(graphql_prs)} open PRs by {user_login}")
             
             for pr_data in graphql_prs:
-                branch_match = re.match(spr_branch_pattern, pr_data['headRefName'])
+                branch_match = re.match(spr_branch_pattern, str(pr_data['headRefName']))
                 if branch_match:
                     logger.debug(f"Processing PR #{pr_data['number']} with branch {pr_data['headRefName']}")
                     commit_id = branch_match.group(1)
                     
                     # Get commit info
-                    commit_nodes = pr_data['commits']['nodes']
+                    commit_nodes = pr_data['commits']['nodes']  # type: ignore
                     if commit_nodes:
-                        last_commit = commit_nodes[-1]['commit']
-                        commit_hash = last_commit['oid']
-                        commit_msg = last_commit['messageBody']
+                        last_commit = commit_nodes[-1]['commit']  # type: ignore
+                        commit_hash = str(last_commit['oid'])  # type: ignore
+                        commit_msg = str(last_commit['messageBody'])  # type: ignore
                         # Try to get commit ID from message
-                        msg_commit_id = re.search(r'commit-id:([a-f0-9]{8})', commit_msg)
+                        msg_commit_id = re.search(r'commit-id:([a-f0-9]{8})', str(commit_msg))
                         if msg_commit_id:
                             commit_id = msg_commit_id.group(1)
                             
-                        commit = Commit(commit_id, commit_hash, last_commit['messageHeadline'])
+                        commit = Commit(commit_id, commit_hash, str(last_commit['messageHeadline']))  # type: ignore
                         commits: List[Commit] = [commit]  # Simplified, full commit history not needed
                         
-                        # Get basic PR info
-                        number = pr_data['number']
-                        base_ref = pr_data['baseRefName']
-                        title = pr_data['title']
-                        body = pr_data['body']
+                        # Get basic PR info 
+                        number = int(pr_data['number'])
+                        base_ref = str(pr_data['baseRefName'])
+                        title = str(pr_data['title'])
+                        body = str(pr_data['body'])
                         
                         in_queue = False  # Auto merge info not critical
                         
-                        from_branch = pr_data['headRefName']
+                        from_branch = str(pr_data['headRefName'])
                         pull_requests.append(PullRequest(number, commit, commits,
                                                         base_ref=base_ref, from_branch=from_branch,
                                                         in_queue=in_queue, title=title, body=body))
@@ -293,12 +304,15 @@ class GitHubClient:
             
             # Fallback to REST API if GraphQL fails
             current_user = self.client.get_user().login
-            open_prs = list(self.repo.get_pulls(state='open'))
+            repo = self.repo
+            if not repo:
+                return GitHubInfo(local_branch, pull_requests)
+            open_prs = list(repo.get_pulls(state='open'))
             user_prs = [pr for pr in open_prs if pr.user.login == current_user]
             logger.info(f"Found {len(user_prs)} open PRs by {current_user} out of {len(open_prs)} total")
             
             for pr in user_prs:
-                branch_match = re.match(spr_branch_pattern, pr.head.ref)
+                branch_match = re.match(spr_branch_pattern, str(pr.head.ref))
                 if branch_match:
                     logger.debug(f"Processing PR #{pr.number} with branch {pr.head.ref}")
                     commit_id = branch_match.group(1)
@@ -307,7 +321,7 @@ class GitHubClient:
                         commits_in_pr = list(pr.get_commits())
                         if commits_in_pr:
                             last_commit = commits_in_pr[-1]
-                            msg_commit_id = re.search(r'commit-id:([a-f0-9]{8})', last_commit.commit.message)
+                            msg_commit_id = re.search(r'commit-id:([a-f0-9]{8})', str(last_commit.commit.message))
                             if msg_commit_id:
                                 commit_id = msg_commit_id.group(1)
                     except Exception as e:
@@ -477,13 +491,13 @@ class GitHubClient:
             try:
                 # Debug API info
                 logger.debug("Pull request attributes available:")
-                logger.debug(f"  auto_merge: {getattr(gh_pr, 'auto_merge', None)}")
+                logger.debug(f"  auto_merge: {getattr(gh_pr, 'auto_merge', None)}")  # type: ignore
                 logger.debug(f"  mergeable: {gh_pr.mergeable}")
                 logger.debug(f"  mergeable_state: {gh_pr.mergeable_state}")
                 # Convert merge method to uppercase for PyGithub
                 gh_method = merge_method.upper()
                 # Try to enable auto-merge (merge queue)
-                gh_pr.enable_automerge(merge_method=gh_method)
+                gh_pr.enable_automerge(merge_method=gh_method)  # type: ignore
                 logger.info(f"PR #{pr.number} added to merge queue")
                 return  # Success, we're done
             except Exception as e:
@@ -494,19 +508,19 @@ class GitHubClient:
                     raise Exception("Repository requires merge queue but failed to add PR to queue") from e
                 # Fall back to regular merge only if merge queue is optional
                 if merge_method == 'squash':
-                    gh_pr.merge(merge_method='squash')
+                    gh_pr.merge(merge_method='squash')  # type: ignore
                 elif merge_method == 'rebase':
-                    gh_pr.merge(merge_method='rebase')
+                    gh_pr.merge(merge_method='rebase')  # type: ignore
                 else:
-                    gh_pr.merge(merge_method='merge')
+                    gh_pr.merge(merge_method='merge')  # type: ignore
         else:
             # Regular merge
             if merge_method == 'squash':
-                gh_pr.merge(merge_method='squash')
+                gh_pr.merge(merge_method='squash')  # type: ignore
             elif merge_method == 'rebase':
-                gh_pr.merge(merge_method='rebase')
+                gh_pr.merge(merge_method='rebase')  # type: ignore
             else:
-                gh_pr.merge(merge_method='merge')
+                gh_pr.merge(merge_method='merge')  # type: ignore
 
     def branch_name_from_commit(self, commit: Commit) -> str:
         """Generate branch name from commit. Matches Go implementation."""

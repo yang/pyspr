@@ -4,6 +4,11 @@
 # pyright: reportUnknownVariableType=false
 # pyright: reportUnknownMemberType=false
 # pyright: reportOptionalMemberAccess=false
+# pyright: reportUnknownArgumentType=false
+# pyright: reportUnknownParameterType=false
+# pyright: reportMissingTypeArgument=false
+# pyright: reportUnknownLambdaType=false
+# pyright: reportUnnecessaryComparison=false
 
 import os
 import sys
