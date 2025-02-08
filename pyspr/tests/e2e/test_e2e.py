@@ -73,6 +73,67 @@ def run_cmd(cmd: str) -> None:
     log.info(f"Running command: {cmd}")
     subprocess.run(cmd, shell=True, check=True)
 
+def test_simple_update(test_repo: Tuple[str, str, str, str]) -> None:
+    """Simple test that creates one commit, runs pyspr update, and verifies the PR."""
+    owner, repo_name, test_branch, repo_dir = test_repo
+
+    orig_dir = os.getcwd()
+    os.chdir(repo_dir)
+
+    # Create config for the test repo
+    config = Config({
+        'repo': {
+            'github_remote': 'origin',
+            'github_branch': 'main',
+            'github_repo_owner': owner,
+            'github_repo_name': repo_name,
+        },
+        'user': {}
+    })
+    git_cmd = RealGit(config)
+    github = GitHubClient(None, config)
+    
+    # Get timestamp before we create PR
+    commit_time = int(git_cmd.must_git("show -s --format=%ct").strip())
+    
+    # Create a single test commit
+    test_file = "test_simple_update.txt"
+    with open(test_file, "w") as f:
+        f.write(f"{test_file}\ntest content\n")
+    run_cmd(f"git add {test_file}")
+    run_cmd('git commit -m "Test simple update"')
+    commit_hash = git_cmd.must_git("rev-parse HEAD").strip()
+    
+    # Push branch with commit
+    run_cmd(f"git push -u origin {test_branch}")
+    
+    # Run pyspr update
+    os.chdir(orig_dir)
+    run_cmd(f"rye run pyspr update -C {repo_dir}")
+    os.chdir(repo_dir)
+    
+    # Helper to find our test PR
+    def get_test_pr() -> Optional[PullRequest]:
+        for pr in github.get_info(None, git_cmd).pull_requests:
+            if pr.from_branch.startswith('spr/main/'):
+                try:
+                    files = git_cmd.must_git(f"show --name-only {pr.commit.commit_hash}")
+                    if test_file in files:
+                        pr_time = int(git_cmd.must_git(f"show -s --format=%ct {pr.commit.commit_hash}").strip())
+                        if pr_time >= commit_time:
+                            return pr
+                except:
+                    pass
+        return None
+
+    # Verify PR was created
+    pr = get_test_pr()
+    assert pr is not None, "Should have created a PR"
+    assert pr.base_ref == "main", "PR should target main"
+    # Don't check exact commit hash as it changes during PR creation
+    
+    os.chdir(orig_dir)
+
 def test_wip_behavior(test_repo: Tuple[str, str, str, str], caplog: pytest.LogCaptureFixture) -> None:
     """Test that WIP commits behave as expected:
     - Regular commits before WIP are converted to PRs
