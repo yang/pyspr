@@ -108,9 +108,7 @@ def test_simple_update(test_repo: Tuple[str, str, str, str]) -> None:
     run_cmd(f"git push -u origin {test_branch}")
     
     # Run pyspr update
-    os.chdir(orig_dir)
-    run_cmd(f"rye run pyspr update -C {repo_dir}")
-    os.chdir(repo_dir)
+    run_cmd(f"pyspr update")
     
     # Get current commit message after first update (should have commit ID)
     updated_msg = git_cmd.must_git("show -s --format=%B HEAD").strip()
@@ -170,10 +168,8 @@ def test_simple_update(test_repo: Tuple[str, str, str, str]) -> None:
     
     log.info(f"\nAmended commit message:\n{git_cmd.must_git('show -s --format=%B HEAD').strip()}")
     
-    # Run pyspr update again
-    os.chdir(orig_dir)
-    run_cmd(f"rye run pyspr update -C {repo_dir} -v")  # Added -v for verbose output
-    os.chdir(repo_dir)
+    # Run pyspr update again with verbose flag
+    run_cmd(f"pyspr update -v")
     
     log.info(f"\nCommit message after second update:\n{git_cmd.must_git('show -s --format=%B HEAD').strip()}")
     
@@ -249,19 +245,14 @@ def test_wip_behavior(test_repo: Tuple[str, str, str, str], caplog: pytest.LogCa
     # Run update to create PRs
     log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Creating PRs...")
     
-    # Go back to project dir to run commands 
-    os.chdir(orig_dir)
     log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Running pyspr update...")
-    run_cmd(f"rye run pyspr update -C {repo_dir}")
+    run_cmd(f"pyspr update")
     log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} pyspr update complete")
     
     # Let GitHub process the PRs
     log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Waiting for PRs to be available in GitHub...")
     time.sleep(5)
-    
-    # Go back to repo for verification
-    os.chdir(repo_dir)
-    
+
     # Debug: Check what branches actually exist
     log.info("Checking remote branches:")
     remote_branches = git_cmd.must_git("ls-remote --heads origin").split("\n")
@@ -454,9 +445,7 @@ def test_reviewer_functionality_yang(test_reviewer_repo: Tuple[str, str, str, st
     run_cmd(f"git push -u origin {test_branch}")
 
     # Create initial PR without reviewer
-    os.chdir(orig_dir)
-    subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
-    os.chdir(repo_dir)
+    subprocess.run(["pyspr", "update"], check=True)
 
     # Helper to find our test PRs 
     def get_test_prs() -> list:
@@ -503,9 +492,7 @@ def test_reviewer_functionality_yang(test_reviewer_repo: Tuple[str, str, str, st
     run_cmd("git push")
 
     # Try to add self as reviewer (should be handled gracefully)
-    os.chdir(orig_dir)
-    subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir, "-r", "yang"], check=True)
-    os.chdir(repo_dir)
+    subprocess.run(["pyspr", "update", "-r", "yang"], check=True)
 
     # Verify:
     # - First PR still has no reviewer 
@@ -606,9 +593,7 @@ def test_reviewer_functionality_testluser(test_reviewer_repo: Tuple[str, str, st
     commit_time = int(git_cmd.must_git("show -s --format=%ct").strip())
 
     # Create initial PR without reviewer
-    os.chdir(orig_dir)
-    subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
-    os.chdir(repo_dir)
+    subprocess.run(["pyspr", "update"], check=True)
 
     # Verify first PR
     our_prs = get_test_prs(commit_time)
@@ -633,14 +618,12 @@ def test_reviewer_functionality_testluser(test_reviewer_repo: Tuple[str, str, st
     run_cmd("git push")  # Push to current SPR branch
 
     # Add testluser as reviewer and capture output
-    os.chdir(orig_dir)
     result = subprocess.run(
-        ["rye", "run", "pyspr", "update", "-C", repo_dir, "-r", "testluser"], 
+        ["pyspr", "update", "-r", "testluser"],
         check=True,
         capture_output=True,
         text=True
     )
-    os.chdir(repo_dir)
     update_output = result.stdout + result.stderr
 
     # Find our PRs again
@@ -753,7 +736,7 @@ def test_amend_workflow(test_repo: Tuple[str, str, str, str]) -> None:
     
     # Initial update to create PRs
     log.info("Creating initial PRs...")
-    subprocess.run(["rye", "run", "pyspr", "update"], check=True)
+    subprocess.run(["pyspr", "update"], check=True)
     
     # Helper to find our test PRs 
     def get_test_prs() -> list:
@@ -851,7 +834,7 @@ def test_amend_workflow(test_repo: Tuple[str, str, str, str]) -> None:
     
     log.info("Updating PRs after amend...")
     # Run update with amended commits
-    subprocess.run(["rye", "run", "pyspr", "update"], check=True)
+    subprocess.run(["pyspr", "update"], check=True)
     
     # Verify PRs updated properly
     info = github.get_info(None, git_cmd)
@@ -983,15 +966,10 @@ def _run_merge_test(
         # Get git status for debugging
         subprocess.run(["git", "status"], check=False)
         raise
-    
-    # Go back to project dir to run commands
-    os.chdir(orig_dir)
-    
+
     # Initial update to create PRs
     log.info("Creating initial PRs...")
-    subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
-    
-    os.chdir(repo_dir)
+    subprocess.run(["pyspr", "update"], check=True)
 
     # Helper to find our test PRs 
     def get_test_prs() -> list:
@@ -1027,7 +1005,7 @@ def _run_merge_test(
     os.chdir(orig_dir)
 
     # Run merge for all or some PRs
-    merge_cmd = ["rye", "run", "pyspr", "merge", "-C", repo_dir]
+    merge_cmd = ["pyspr", "merge"]
     if count is not None:
         merge_cmd.extend(["-c", str(count)])
     log.info(f"\nMerging {'to queue' if use_merge_queue else 'all'} PRs{' (partial)' if count else ''}...")
@@ -1261,9 +1239,7 @@ def test_replace_commit(test_repo: Tuple[str, str, str, str]) -> None:
             return result
 
         log.info("Creating initial PRs...")
-        os.chdir(orig_dir)
-        subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
-        os.chdir(repo_dir)
+        subprocess.run(["pyspr", "update"], check=True)
 
         # Get initial PR info and filter to our newly created PRs
         commit_prs = get_test_prs()
@@ -1294,9 +1270,7 @@ def test_replace_commit(test_repo: Tuple[str, str, str, str]) -> None:
 
         # 3. Run update
         log.info("Running update after replace...")
-        os.chdir(orig_dir)
-        subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
-        os.chdir(repo_dir)
+        subprocess.run(["pyspr", "update"], check=True)
 
         # 4. Verify:
         log.info("\nVerifying PR handling after replace...")
@@ -1574,9 +1548,7 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
 
         # Update to create connected PRs 1A and 1B
         log.info("Creating stack 1 PRs...")
-        os.chdir(orig_dir)
-        subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
-        os.chdir(repo_dir)
+        subprocess.run(["pyspr", "update"], check=True)
 
         # 2. Create branch2 with 2 connected PRs 
         log.info("Creating branch2 with 2-PR stack...")
@@ -1592,9 +1564,7 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
 
         # Update to create connected PRs 2A and 2B
         log.info("Creating stack 2 PRs...")
-        os.chdir(orig_dir)
-        subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
-        os.chdir(repo_dir)
+        subprocess.run(["pyspr", "update"], check=True)
 
         # Helper to find our test PRs 
         def get_test_prs() -> list:
@@ -1648,9 +1618,7 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
 
         # Run update in branch1
         log.info("Running update in branch1...")
-        os.chdir(orig_dir)
-        subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
-        os.chdir(repo_dir)
+        subprocess.run(["pyspr", "update"], check=True)
 
         # 4. Verify PR1A is closed, PR1B retargeted to main, while PR2A and PR2B remain untouched
         log.info("Verifying PR state after updates...")

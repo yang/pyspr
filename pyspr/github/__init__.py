@@ -183,11 +183,20 @@ class GitHubClient:
 
     def get_info(self, ctx: StackedPRContextType, git_cmd: GitInterface) -> Optional[GitHubInfo]:
         """Get GitHub info."""
+        from ..git import get_local_commit_stack
+        
         local_branch = git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
         
-        pull_requests: List[PullRequest] = []
+        # Get local commits first to filter PRs
+        local_commits = get_local_commit_stack(self.config, git_cmd)
+        local_commit_ids = {commit.commit_id for commit in local_commits}
+        
+        logger.debug("Local commit IDs:")
+        for commit in local_commits:
+            logger.debug(f"  {commit.commit_hash[:8]}: id={commit.commit_id}")
+        
         if not self.repo:
-            return GitHubInfo(local_branch, pull_requests)
+            return GitHubInfo(local_branch, [])
             
         # Use GraphQL to efficiently get all data in one query, matching Go behavior
         query = """
@@ -227,121 +236,55 @@ class GitHubClient:
         spr_branch_pattern = r'^spr/[^/]+/([a-f0-9]{8})'
         
         logger.info(f"> github fetch pull requests")
+        
+        # Build PR map keyed by commit ID, like Go version
+        pull_request_map = {}
             
         try:
             # Execute GraphQL query directly like Go version does
             owner = self.config.repo.get('github_repo_owner')
             name = self.config.repo.get('github_repo_name')
+            target_branch = self.config.repo.get('github_branch', 'main')
             
-            # Configuration for pagination
-            use_pagination = False  # Set to True to enable pagination
-            max_pages = 10  # Maximum number of pages to fetch
-
             # Variables for GraphQL query
             variables = {
                 "owner": owner,
                 "name": name,
             }
 
-            if use_pagination:
-                # Paginate through all PRs (disabled by default)
-                all_prs = []
-                page_count = 0
-                has_next_page = True
-                end_cursor = None
-                
-                while has_next_page and page_count < max_pages:
-                    page_count += 1
-                    logger.info(f"Fetching page {page_count} of PRs...")
-                    
-                    # Update cursor for next page if needed
-                    if end_cursor:
-                        variables["after"] = end_cursor
-                    
-                    result: GraphQLResponseType = self.client._Github__requester.requestJsonAndCheck(  # type: ignore
-                        "POST",
-                        "https://api.github.com/graphql",
-                        input={
-                            "query": query, 
-                            "variables": variables
-                        }
-                    )
-                    
-                    # Handle response structure
-                    resp: Dict[str, Any]
-                    if isinstance(result, tuple) and len(result) > 1:  # type: ignore
-                        resp = result[1]  # type: ignore
-                    else:
-                        resp = cast(Dict[str, Any], result)  # type: ignore
-                    
-                    # Check if we have any data
-                    if not resp or 'data' not in resp:
-                        raise Exception("No data in GraphQL response")
-                    
-                    # Handle partial success case
-                    if 'errors' in resp:
-                        logger.warning(f"GraphQL query partial success - got {len(resp.get('errors', []))} errors")  # type: ignore
-                    
-                    data: GraphQLData = cast(GraphQLData, resp['data'])
-                    user_login = data['viewer']['login']
-                    pr_data = data['repository']['pullRequests']
-                    
-                    # Add PRs from this page
-                    all_prs.extend(pr_data['nodes'])
-                    
-                    # Check if there are more pages
-                    has_next_page = pr_data['pageInfo']['hasNextPage']
-                    end_cursor = pr_data['pageInfo']['endCursor']
-                
-                logger.info(f"GraphQL returned {len(all_prs)} total open PRs across {page_count} pages")
-                pr_nodes = all_prs
+            # Single query (no pagination for now)
+            result: GraphQLResponseType = self.client._Github__requester.requestJsonAndCheck(  # type: ignore
+                "POST",
+                "https://api.github.com/graphql",
+                input={
+                    "query": query, 
+                    "variables": variables
+                }
+            )
+            
+            # Handle response structure correctly 
+            resp: Dict[str, Any]
+            if isinstance(result, tuple) and len(result) > 1:  # type: ignore
+                resp = result[1]  # type: ignore
             else:
-                # Single query with ordering (default behavior)
-                result: GraphQLResponseType = self.client._Github__requester.requestJsonAndCheck(  # type: ignore
-                    "POST",
-                    "https://api.github.com/graphql",
-                    input={
-                        "query": query, 
-                        "variables": variables
-                    }
-                )
+                resp = cast(Dict[str, Any], result)  # type: ignore
                 
-                logger.debug("GraphQL response structure:")
-                logger.debug(f"Result type: {type(result)}")  # type: ignore
-                logger.debug(f"Result keys/indices: {list(result.keys()) if isinstance(result, dict) else range(len(result)) if isinstance(result, (list, tuple)) else 'N/A'}")  # type: ignore
-                logger.debug(f"Full result: {result}")
+            # Check if we have any data at all
+            if not resp or 'data' not in resp:
+                raise Exception("No data in GraphQL response")
                 
-                # Handle response structure correctly 
-                resp: Dict[str, Any]
-                if isinstance(result, tuple) and len(result) > 1:  # type: ignore
-                    resp = result[1]  # type: ignore
-                else:
-                    resp = cast(Dict[str, Any], result)  # type: ignore
-                    
-                # Check if we have any data at all
-                if not resp or 'data' not in resp:
-                    raise Exception("No data in GraphQL response")
-                    
-                # Handle partial success case
-                if 'errors' in resp:
-                    logger.warning(f"GraphQL query partial success - got {len(resp.get('errors', []))} errors")  # type: ignore
-                
-                data: GraphQLData = cast(GraphQLData, resp['data'])
-                user_login = data['viewer']['login']
-                pr_nodes = data['repository']['pullRequests']['nodes']
-                
-                logger.info(f"GraphQL returned {len(pr_nodes)} open PRs (newest first)")
+            data: GraphQLData = cast(GraphQLData, resp['data'])
+            user_login = data['viewer']['login']
+            pr_nodes = data['repository']['pullRequests']['nodes']
+            
+            logger.info(f"GraphQL returned {len(pr_nodes)} open PRs (newest first)")
 
             logger.debug("PRs returned by GraphQL:")
             for pr in pr_nodes:
                 logger.debug(f"  PR #{pr['number']}: base={pr['baseRefName']} head={pr['headRefName']}")
             
-            # Keep all PRs from GraphQL, regardless of title
-            graphql_prs = pr_nodes
-            
-            logger.info(f"Processing {len(graphql_prs)} PRs from GraphQL")
-            
-            for pr_data in graphql_prs:
+            # Process PRs into map
+            for pr_data in pr_nodes:
                 branch_match = re.match(spr_branch_pattern, str(pr_data['headRefName']))
                 if branch_match:
                     logger.debug(f"Processing PR #{pr_data['number']} with branch {pr_data['headRefName']}")
@@ -363,7 +306,16 @@ class GitHubClient:
                             commit_id = message_id
                             
                         commit = Commit(commit_id, commit_hash, str(last_commit['messageHeadline']))  # type: ignore
-                        commits: List[Commit] = [commit]  # Simplified, full commit history not needed
+                        
+                        # Create list of all commits in PR
+                        all_commits: List[Commit] = []
+                        for node in commit_nodes:  # type: ignore
+                            c = node['commit']  # type: ignore
+                            c_msg = str(c['messageBody'])  # type: ignore
+                            c_id_match = re.search(r'commit-id:([a-f0-9]{8})', c_msg)
+                            if c_id_match:
+                                c_id = c_id_match.group(1)
+                                all_commits.append(Commit(c_id, str(c['oid']), str(c['messageHeadline'])))  # type: ignore
                         
                         # Get basic PR info 
                         number = int(pr_data['number'])
@@ -374,9 +326,16 @@ class GitHubClient:
                         in_queue = False  # Auto merge info not critical
                         
                         from_branch = str(pr_data['headRefName'])
-                        pull_requests.append(PullRequest(number, commit, commits,
-                                                        base_ref=base_ref, from_branch=from_branch,
-                                                        in_queue=in_queue, title=title, body=body))
+                        pr = PullRequest(number, commit, all_commits,
+                                      base_ref=base_ref, from_branch=from_branch,
+                                      in_queue=in_queue, title=title, body=body)
+                                      
+                        # Only add to map if commit ID exists in local stack
+                        if commit_id in local_commit_ids:
+                            logger.debug(f"Adding PR #{number} to map with commit ID {commit_id}")
+                            pull_request_map[commit_id] = pr
+                        else:
+                            logger.debug(f"Skipping PR #{number} - commit ID {commit_id} not in local stack")
             
         except Exception as e:
             logger.error(f"GraphQL query failed: {e}")
@@ -386,7 +345,7 @@ class GitHubClient:
             current_user = self.client.get_user().login
             repo = self.repo
             if not repo:
-                return GitHubInfo(local_branch, pull_requests)
+                return GitHubInfo(local_branch, [])
             open_prs = list(repo.get_pulls(state='open'))
             user_prs = [pr for pr in open_prs if pr.user.login == current_user]
             logger.info(f"Found {len(user_prs)} open PRs by {current_user} out of {len(open_prs)} total")
@@ -399,25 +358,76 @@ class GitHubClient:
                     commit_hash = pr.head.sha
                     try:
                         commits_in_pr = list(pr.get_commits())
+                        all_commits = []
                         if commits_in_pr:
                             last_commit = commits_in_pr[-1]
                             msg_commit_id = re.search(r'commit-id:([a-f0-9]{8})', str(last_commit.commit.message))
                             if msg_commit_id:
                                 commit_id = msg_commit_id.group(1)
+                            
+                            # Get all commit IDs
+                            for c in commits_in_pr:
+                                c_msg = str(c.commit.message)
+                                c_id_match = re.search(r'commit-id:([a-f0-9]{8})', c_msg)
+                                if c_id_match:
+                                    c_id = c_id_match.group(1)
+                                    all_commits.append(Commit(c_id, c.sha, c.commit.message.split('\n')[0]))
                     except Exception as e:
                         logger.error(f"Error getting commits for PR #{pr.number}: {e}")
                         pass
 
                     commit = Commit(commit_id, commit_hash, pr.title)
-                    commits = [commit]
                     try:
                         in_queue = False
                     except:
                         in_queue = False
-                    pull_requests.append(PullRequest(pr.number, commit, commits,
-                                                   base_ref=pr.base.ref, from_branch=pr.head.ref,
-                                                   in_queue=in_queue,
-                                                   title=pr.title, body=pr.body))
+                        
+                    new_pr = PullRequest(pr.number, commit, all_commits,
+                                     base_ref=pr.base.ref, from_branch=pr.head.ref,
+                                     in_queue=in_queue,
+                                     title=pr.title, body=pr.body)
+                                     
+                    # Only add to map if commit ID exists in local stack
+                    if commit_id in local_commit_ids:
+                        logger.debug(f"Adding PR #{pr.number} to map with commit ID {commit_id}")
+                        pull_request_map[commit_id] = new_pr
+                    else:
+                        logger.debug(f"Skipping PR #{pr.number} - commit ID {commit_id} not in local stack")
+
+        # Build PR stack like Go version
+        pull_requests = []
+        target_branch = self.config.repo.get('github_branch', 'main')
+        
+        # Find top PR
+        curr_pr = None
+        for commit in reversed(local_commits):
+            curr_pr = pull_request_map.get(commit.commit_id)
+            if curr_pr:
+                logger.debug(f"Found top PR #{curr_pr.number} with commit ID {commit.commit_id}")
+                break
+                
+        # Build stack
+        while curr_pr:
+            pull_requests.insert(0, curr_pr)  # Prepend like Go
+            logger.debug(f"Added PR #{curr_pr.number} to stack - base: {curr_pr.base_ref}")
+            if curr_pr.base_ref == target_branch:
+                logger.debug("Reached target branch, stopping")
+                break
+                
+            # Get next commit ID from base branch
+            match = re.match(r'spr/[^/]+/([a-f0-9]{8})', str(curr_pr.base_ref))
+            if not match:
+                logger.debug(f"Base is {curr_pr.base_ref} which doesn't match pattern, stopping")
+                break
+            next_commit_id = match.group(1)
+            curr_pr = pull_request_map.get(next_commit_id)
+            if not curr_pr:
+                logger.debug(f"No PR found for commit {next_commit_id}, stopping")
+                break
+                
+        logger.debug(f"Final PR stack has {len(pull_requests)} PRs")
+        for pr in pull_requests:
+            logger.debug(f"  PR #{pr.number}: commit={pr.commit.commit_id} base={pr.base_ref}")
                 
         return GitHubInfo(local_branch, pull_requests)
 
