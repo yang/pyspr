@@ -93,15 +93,15 @@ def test_simple_update(test_repo: Tuple[str, str, str, str]) -> None:
     git_cmd = RealGit(config)
     github = GitHubClient(None, config)
     
-    # Get timestamp before we create PR
-    commit_time = int(git_cmd.must_git("show -s --format=%ct").strip())
-    
-    # Create a single test commit
+    # Create a unique tag for this test run
+    unique_tag = f"test-simple-update-{uuid.uuid4().hex[:8]}"
     test_file = "test_simple_update.txt"
+    
+    # Create a single test commit with unique tag in message
     with open(test_file, "w") as f:
         f.write(f"{test_file}\ntest content\n")
     run_cmd(f"git add {test_file}")
-    run_cmd('git commit -m "Test simple update"')
+    run_cmd(f'git commit -m "Test simple update [{unique_tag}]"')
     first_commit_hash = git_cmd.must_git("rev-parse HEAD").strip()
     
     # Push branch with commit
@@ -112,16 +112,21 @@ def test_simple_update(test_repo: Tuple[str, str, str, str]) -> None:
     run_cmd(f"rye run pyspr update -C {repo_dir}")
     os.chdir(repo_dir)
     
-    # Helper to find our test PR
+    # Get current commit message after first update (should have commit ID)
+    updated_msg = git_cmd.must_git("show -s --format=%B HEAD").strip()
+    print(f"\nCommit message after first update:\n{updated_msg}")
+    
+    # Helper to find our test PR using unique tag
     def get_test_pr() -> Optional[PullRequest]:
+        print("\nLooking for PR with unique tag...")
         for pr in github.get_info(None, git_cmd).pull_requests:
             if pr.from_branch.startswith('spr/main/'):
                 try:
-                    files = git_cmd.must_git(f"show --name-only {pr.commit.commit_hash}")
-                    if test_file in files:
-                        pr_time = int(git_cmd.must_git(f"show -s --format=%ct {pr.commit.commit_hash}").strip())
-                        if pr_time >= commit_time:
-                            return pr
+                    # Look for our unique tag in the commit message
+                    commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
+                    if f"[{unique_tag}]" in commit_msg:
+                        print(f"Found PR #{pr.number} with tag and commit ID {pr.commit.commit_id}")
+                        return pr
                 except:
                     pass
         return None
@@ -141,20 +146,36 @@ def test_simple_update(test_repo: Tuple[str, str, str, str]) -> None:
     
     # Save the initial commit ID for later verification
     initial_commit_id = pr.commit.commit_id
+    print(f"Initial commit ID: {initial_commit_id}")
     
-    # Now amend the commit with new content
+    # Now amend the commit with new content, preserving the unique tag and commit ID
     print("\nAmending commit...")
     with open(test_file, "a") as f:
         f.write("additional content\n")
     run_cmd(f"git add {test_file}")
-    run_cmd('git commit --amend --no-edit')
+    # Keep the commit-id line from the updated message
+    commit_id_line = None
+    for line in updated_msg.splitlines():
+        if line.startswith("commit-id:"):
+            commit_id_line = line
+            break
+    assert commit_id_line, "Should have found commit-id line in message"
+    
+    amended_msg = f"""Test simple update with amendment [{unique_tag}]
+
+{commit_id_line}"""
+    run_cmd(f"git commit --amend -m '{amended_msg}'")
     amended_commit_hash = git_cmd.must_git("rev-parse HEAD").strip()
     assert amended_commit_hash != first_commit_hash, "Amended commit should have new hash"
     
+    print(f"\nAmended commit message:\n{git_cmd.must_git('show -s --format=%B HEAD').strip()}")
+    
     # Run pyspr update again
     os.chdir(orig_dir)
-    run_cmd(f"rye run pyspr update -C {repo_dir}")
+    run_cmd(f"rye run pyspr update -C {repo_dir} -v")  # Added -v for verbose output
     os.chdir(repo_dir)
+    
+    print(f"\nCommit message after second update:\n{git_cmd.must_git('show -s --format=%B HEAD').strip()}")
     
     # Verify PR state after amendment
     pr = get_test_pr()
