@@ -31,6 +31,7 @@ class StackedPR:
         self.git_cmd = git_cmd
         self.output = sys.stdout
         self.input = sys.stdin
+        self.pretend = False  # Default to not pretend mode
 
     def align_local_commits(self, commits: List[Commit], prs: List[PullRequest]) -> List[Commit]:
         """Align local commits with pull requests."""
@@ -248,12 +249,18 @@ class StackedPR:
 
         if ref_names:
             remote = self.config.repo.get('github_remote', 'origin')
-            if self.config.repo.get('branch_push_individually', False):
+            if self.pretend:
+                logger.info("\n[PRETEND] Would push the following branches:")
                 for ref_name in ref_names:
-                    self.git_cmd.must_git(f"push --force {remote} {ref_name}")
+                    commit_hash, branch = ref_name.split(':refs/heads/')
+                    logger.info(f"  {branch} ({commit_hash[:8]})")
             else:
-                cmd = f"push --force --atomic {remote} " + " ".join(ref_names)
-                self.git_cmd.must_git(cmd)
+                if self.config.repo.get('branch_push_individually', False):
+                    for ref_name in ref_names:
+                        self.git_cmd.must_git(f"push --force {remote} {ref_name}")
+                else:
+                    cmd = f"push --force --atomic {remote} " + " ".join(ref_names)
+                    self.git_cmd.must_git(cmd)
 
     def update_pull_requests(self, ctx: StackedPRContextProtocol, 
                          reviewers: Optional[List[str]] = None, 
@@ -295,9 +302,12 @@ class StackedPR:
         local_commit_map: Dict[str, Commit] = {commit.commit_id: commit for commit in local_commits}
         for pr in github_info.pull_requests:
             if pr.commit.commit_id not in local_commit_map:
-                logger.info(f"Closing PR #{pr.number} - commit {pr.commit.commit_id} has gone away")
-                self.github.comment_pull_request(ctx, pr, "Closing pull request: commit has gone away")
-                self.github.close_pull_request(ctx, pr)
+                if self.pretend:
+                    logger.info(f"[PRETEND] Would close PR #{pr.number} - commit {pr.commit.commit_id} has gone away")
+                else:
+                    logger.info(f"Closing PR #{pr.number} - commit {pr.commit.commit_id} has gone away")
+                    self.github.comment_pull_request(ctx, pr, "Closing pull request: commit has gone away")
+                    self.github.close_pull_request(ctx, pr)
             else:
                 valid_pull_requests.append(pr)
         github_info.pull_requests = valid_pull_requests
@@ -363,15 +373,37 @@ class StackedPR:
 
             if not pr_found:
                 # If no match by ID, create new PR (matching Go behavior)
-                logger.debug(f"  No matching PR found, creating new PR")
-                pr = self.github.create_pull_request(ctx, self.git_cmd, github_info, commit, prev_commit)
+                if self.pretend:
+                    logger.info(f"\n[PRETEND] Would create new PR for commit {commit.commit_hash[:8]}")
+                    logger.info(f"  Title: {commit.subject}")
+                    branch_name = branch_name_from_commit(self.config, commit)
+                    base_branch = self.config.repo.get('github_branch', 'main')
+                    if prev_commit:
+                        base_branch = f"spr/{base_branch}/{prev_commit.commit_id}"
+                    logger.info(f"  Branch: {branch_name}")
+                    logger.info(f"  Base branch: {base_branch}")
+                    # Create dummy PR object for the update queue
+                    from ..github import PullRequest, Commit as GitHubCommit
+                    pr = PullRequest(
+                        number=-1,  # Dummy number 
+                        title=commit.subject,
+                        body="",
+                        from_branch=branch_name,
+                        base_ref=base_branch,
+                        commit=GitHubCommit(commit.commit_hash, commit.commit_id),
+                        commits=[GitHubCommit(commit.commit_hash, commit.commit_id)],
+                        draft=False
+                    )
+                else:
+                    logger.debug(f"  No matching PR found, creating new PR")
+                    pr = self.github.create_pull_request(ctx, self.git_cmd, github_info, commit, prev_commit)
                 github_info.pull_requests.append(pr)
                 update_queue.append({
                     'pr': pr,
                     'commit': commit,
                     'prev_commit': prev_commit
                 })
-                if reviewers:
+                if reviewers and not self.pretend:
                     # Get list of assignable users for matching
                     if assignable is None:
                         assignable = self.github.get_assignable_users(ctx)
@@ -389,16 +421,29 @@ class StackedPR:
                         self.github.add_reviewers(ctx, pr, user_logins)
 
         # Update all PRs to have correct bases
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            from concurrent.futures import Future
-            futures: List[Future[None]] = []
+        if not self.pretend:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                from concurrent.futures import Future
+                futures: List[Future[None]] = []
+                for update in update_queue:
+                    futures.append(
+                        executor.submit(self.github.update_pull_request,
+                                       ctx, self.git_cmd, github_info.pull_requests,
+                                       update['pr'], update['commit'], update['prev_commit'])
+                    )
+                concurrent.futures.wait(futures)
+        else:
+            logger.info("\n[PRETEND] Would update the following PRs:")
             for update in update_queue:
-                futures.append(
-                    executor.submit(self.github.update_pull_request,
-                                   ctx, self.git_cmd, github_info.pull_requests,
-                                   update['pr'], update['commit'], update['prev_commit'])
-                )
-            concurrent.futures.wait(futures)
+                pr = update['pr']
+                commit = update['commit']
+                prev_commit = update['prev_commit']
+                if pr.number == -1:  # Skip dummy PRs we created above
+                    continue
+                base_branch = self.config.repo.get('github_branch', 'main')
+                if prev_commit:
+                    base_branch = f"spr/{base_branch}/{prev_commit.commit_id}"
+                logger.info(f"  PR #{pr.number}: Update base branch to {base_branch}")
 
         # Status
         self.status_pull_requests(ctx)
