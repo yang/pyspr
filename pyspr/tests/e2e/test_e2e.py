@@ -849,11 +849,9 @@ def test_repo() -> Generator[Tuple[str, str, str, str], None, None]:
         run_cmd("git config user.email 'test@example.com'")
         
         repo_dir = os.path.abspath(os.getcwd())
-        os.chdir(orig_dir)
         yield owner, name, test_branch, repo_dir
 
-        # Cleanup - go back to repo to delete branch
-        os.chdir(repo_dir)
+        # Cleanup - delete branch
         run_cmd("git checkout main")
         run_cmd(f"git branch -D {test_branch}")
         try:
