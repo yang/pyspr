@@ -74,7 +74,7 @@ def run_cmd(cmd: str) -> None:
     subprocess.run(cmd, shell=True, check=True)
 
 def test_simple_update(test_repo: Tuple[str, str, str, str]) -> None:
-    """Simple test that creates one commit, runs pyspr update, and verifies the PR."""
+    """Test that creates one commit, runs update, amends the commit, updates again, and verifies PR state after each update."""
     owner, repo_name, test_branch, repo_dir = test_repo
 
     orig_dir = os.getcwd()
@@ -102,7 +102,7 @@ def test_simple_update(test_repo: Tuple[str, str, str, str]) -> None:
         f.write(f"{test_file}\ntest content\n")
     run_cmd(f"git add {test_file}")
     run_cmd('git commit -m "Test simple update"')
-    commit_hash = git_cmd.must_git("rev-parse HEAD").strip()
+    first_commit_hash = git_cmd.must_git("rev-parse HEAD").strip()
     
     # Push branch with commit
     run_cmd(f"git push -u origin {test_branch}")
@@ -126,16 +126,52 @@ def test_simple_update(test_repo: Tuple[str, str, str, str]) -> None:
                     pass
         return None
 
-    # Verify PR was created
+    # Verify initial PR was created
     pr = get_test_pr()
     assert pr is not None, "Should have created a PR"
+    initial_pr_number = pr.number
     assert pr.base_ref == "main", "PR should target main"
     
-    # Get the final local commit hash after update
+    # Get the final local commit hash after first update
     final_local_hash = git_cmd.must_git("rev-parse HEAD").strip()
     
-    # Verify PR commit hash matches final local commit hash
-    assert pr.commit.commit_hash == final_local_hash, f"PR commit hash {pr.commit.commit_hash} should match final local commit {final_local_hash}"
+    # Verify PR commit hash matches local commit hash
+    assert pr.commit.commit_hash == final_local_hash, \
+        f"After first update: PR commit hash {pr.commit.commit_hash} should match local commit {final_local_hash}"
+    
+    # Save the initial commit ID for later verification
+    initial_commit_id = pr.commit.commit_id
+    
+    # Now amend the commit with new content
+    print("\nAmending commit...")
+    with open(test_file, "a") as f:
+        f.write("additional content\n")
+    run_cmd(f"git add {test_file}")
+    run_cmd('git commit --amend --no-edit')
+    amended_commit_hash = git_cmd.must_git("rev-parse HEAD").strip()
+    assert amended_commit_hash != first_commit_hash, "Amended commit should have new hash"
+    
+    # Run pyspr update again
+    os.chdir(orig_dir)
+    run_cmd(f"rye run pyspr update -C {repo_dir}")
+    os.chdir(repo_dir)
+    
+    # Verify PR state after amendment
+    pr = get_test_pr()
+    assert pr is not None, "PR should still exist after amendment"
+    assert pr.number == initial_pr_number, f"PR number should remain {initial_pr_number}, got {pr.number}"
+    assert pr.base_ref == "main", "PR should still target main"
+    
+    # Get the final local commit hash after second update
+    final_amended_hash = git_cmd.must_git("rev-parse HEAD").strip()
+    
+    # Verify PR commit hash matches amended commit hash
+    assert pr.commit.commit_hash == final_amended_hash, \
+        f"After amendment: PR commit hash {pr.commit.commit_hash} should match amended commit {final_amended_hash}"
+    
+    # Verify commit ID remained the same (preserved through amendment)
+    assert pr.commit.commit_id == initial_commit_id, \
+        f"Commit ID should remain {initial_commit_id}, got {pr.commit.commit_id}"
     
     os.chdir(orig_dir)
 
