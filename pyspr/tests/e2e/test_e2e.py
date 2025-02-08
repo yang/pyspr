@@ -1067,11 +1067,8 @@ def test_mq_repo() -> Generator[Tuple[str, str, str, str], None, None]:
         run_cmd("git checkout -b test_local") # Create local branch first
         
         repo_dir = os.path.abspath(os.getcwd())
-        os.chdir(orig_dir)
         yield "yangenttest1", "teststack", test_branch, repo_dir
 
-        # Cleanup - go back to repo to delete branch
-        os.chdir(repo_dir)
         run_cmd("git checkout main")
         run_cmd(f"git branch -D {test_branch}")
         try:
