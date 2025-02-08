@@ -107,7 +107,7 @@ def test_delete_insert(test_repo: Tuple[str, str, str, str]) -> None:
         run_cmd(f'git commit -m "{full_msg}"')
         commit_hash = git_cmd.must_git("rev-parse HEAD").strip()
         return commit_hash, commit_id
-        
+
     commit1_hash, commit1_id = make_commit("test1.txt", "test content 1", "First commit")
     commit2_hash, commit2_id = make_commit("test2.txt", "test content 2", "Second commit")
     commit3_hash, commit3_id = make_commit("test3.txt", "test content 3", "Third commit")
@@ -158,7 +158,7 @@ def test_delete_insert(test_repo: Tuple[str, str, str, str]) -> None:
     # Now reset and recreate commits but skip commit2 and add c3.5
     log.info("\nRecreating commits without second commit and adding c3.5...")
     run_cmd("git reset --hard HEAD~4")  # Remove all commits
-    
+
     # Get the original commit messages
     c1_msg = git_cmd.must_git(f"show -s --format=%B {commit1_hash}").strip()
     c3_msg = git_cmd.must_git(f"show -s --format=%B {commit3_hash}").strip()
@@ -170,30 +170,30 @@ def test_delete_insert(test_repo: Tuple[str, str, str, str]) -> None:
     
     # Add new c3.5 commit
     new_c35_hash, new_c35_id = make_commit("test3_5.txt", "test content 3.5", "Commit three point five")
-    
+
     run_cmd(f"git cherry-pick {commit4_hash}")
-    
+
     # Capture current commit hashes after reconstruction
     new_commit1_hash = git_cmd.must_git("rev-parse HEAD~3").strip()
     new_commit3_hash = git_cmd.must_git("rev-parse HEAD~2").strip()
     new_commit4_hash = git_cmd.must_git("rev-parse HEAD").strip()
-    
+
     # Run pyspr update again
     run_cmd(f"pyspr update -v")
     
     # Get PRs after removing commit2 and adding c3.5
     prs = get_test_prs()
     assert len(prs) == 4, f"Should have 4 PRs after removing commit2 and adding c3.5, found {len(prs)}"
-    
+
     # Get PR numbers that still exist
     current_pr_nums = {pr.number for pr in prs}
-    
+
     # Verify PR2 is closed while others remain
     assert pr1_num in current_pr_nums, f"PR1 #{pr1_num} should still exist"
     assert pr2_num not in current_pr_nums, f"PR2 #{pr2_num} should be closed"
     assert pr3_num in current_pr_nums, f"PR3 #{pr3_num} should still exist"
     assert pr4_num in current_pr_nums, f"PR4 #{pr4_num} should still exist"
-    
+
     # Get PRs by number
     pr1_after = next((pr for pr in prs if pr.number == pr1_num), None)
     pr3_after = next((pr for pr in prs if pr.number == pr3_num), None)
@@ -223,7 +223,7 @@ def test_delete_insert(test_repo: Tuple[str, str, str, str]) -> None:
     assert pr3_after.commit.commit_hash == new_commit3_hash, f"PR3 hash {pr3_after.commit.commit_hash} should match new local commit hash {new_commit3_hash}"
     assert pr35.commit.commit_hash == new_c35_hash, f"PR35 hash {pr35.commit.commit_hash} should match local commit hash {new_c35_hash}"
     assert pr4_after.commit.commit_hash == new_commit4_hash, f"PR4 hash {pr4_after.commit.commit_hash} should match new local commit hash {new_commit4_hash}"
-    
+
     log.info(f"\nVerified PRs after removing commit2 and adding c3.5: #{pr1_num} -> #{pr3_num} -> #{pr35.number} -> #{pr4_num}")
     log.info(f"PR2 #{pr2_num} correctly closed")
     log.info("Verified all PR commit hashes match local commit hashes")
@@ -477,7 +477,7 @@ def test_reviewer_functionality_yang(test_reviewer_repo: Tuple[str, str, str, st
         run_cmd(f"git add {file}")
         run_cmd(f'git commit -m "{full_msg}"')
         return git_cmd.must_git("rev-parse HEAD").strip()
-        
+
     log.info("Creating first commit without reviewer...")
     make_commit("r_test1.txt", "First commit")
     run_cmd(f"git push -u origin {test_branch}")
@@ -711,10 +711,10 @@ def test_reorder(test_repo: Tuple[str, str, str, str]) -> None:
     })
     git_cmd = RealGit(config)
     github = GitHubClient(None, config)
-    
+
     # Create a unique tag for this test run
     unique_tag = f"test-simple-{uuid.uuid4().hex[:8]}"
-    
+
     # Create four test commits with unique tag in message
     def make_commit(file: str, content: str, msg: str) -> Tuple[str, str]:
         commit_id = uuid.uuid4().hex[:8]
@@ -725,19 +725,19 @@ def test_reorder(test_repo: Tuple[str, str, str, str]) -> None:
         run_cmd(f'git commit -m "{full_msg}"')
         commit_hash = git_cmd.must_git("rev-parse HEAD").strip()
         return commit_hash, commit_id
-        
+
     # Create commits c1, c2, c3, c4
     commit1_hash, commit1_id = make_commit("test1.txt", "test content 1", "First commit")
     commit2_hash, commit2_id = make_commit("test2.txt", "test content 2", "Second commit")
     commit3_hash, commit3_id = make_commit("test3.txt", "test content 3", "Third commit")
     commit4_hash, commit4_id = make_commit("test4.txt", "test content 4", "Fourth commit")
-    
+
     # Push branch with commits
     run_cmd(f"git push -u origin {test_branch}")
-    
+
     # Run pyspr update
     run_cmd(f"pyspr update")
-    
+
     # Helper to find our test PRs using unique tag
     def get_test_prs() -> List[PullRequest]:
         log.info("\nLooking for PRs with unique tag...")
@@ -759,65 +759,65 @@ def test_reorder(test_repo: Tuple[str, str, str, str]) -> None:
     assert len(prs) == 4, f"Should have created 4 PRs, found {len(prs)}"
     prs.sort(key=lambda p: p.number)  # Sort by PR number
     pr1, pr2, pr3, pr4 = prs
-    
+
     # Save PR numbers for later verification
     pr1_num, pr2_num, pr3_num, pr4_num = pr1.number, pr2.number, pr3.number, pr4.number
-    
+
     # Verify PR chain
     assert pr1.base_ref == "main", "First PR should target main"
     assert pr2.base_ref == f"spr/main/{commit1_id}", "Second PR should target first PR's branch"
     assert pr3.base_ref == f"spr/main/{commit2_id}", "Third PR should target second PR's branch"
     assert pr4.base_ref == f"spr/main/{commit3_id}", "Fourth PR should target third PR's branch"
-    
+
     log.info(f"\nInitial PRs created: #{pr1_num}, #{pr2_num}, #{pr3_num}, #{pr4_num}")
-    
+
     # Now reset and recreate commits but reorder c3 and c4
     log.info("\nRecreating commits with c3 and c4 reordered...")
     run_cmd("git reset --hard HEAD~4")  # Remove all commits
-    
+
     # Get the original commit messages
     c1_msg = git_cmd.must_git(f"show -s --format=%B {commit1_hash}").strip()
     c2_msg = git_cmd.must_git(f"show -s --format=%B {commit2_hash}").strip()
     c3_msg = git_cmd.must_git(f"show -s --format=%B {commit3_hash}").strip()
     c4_msg = git_cmd.must_git(f"show -s --format=%B {commit4_hash}").strip()
-    
+
     # Recreate commits preserving commit IDs, but with c4 before c3
     run_cmd(f"git cherry-pick {commit1_hash}")
     run_cmd(f"git cherry-pick {commit2_hash}")
     run_cmd(f"git cherry-pick {commit4_hash}")  # c4 now before c3
     run_cmd(f"git cherry-pick {commit3_hash}")  # c3 now after c4
-    
+
     # Run pyspr update again
     run_cmd(f"pyspr update -v")
-    
+
     # Get PRs after reordering
     prs = get_test_prs()
     assert len(prs) == 4, f"Should still have 4 PRs after reordering, found {len(prs)}"
-    
+
     # Instead of checking PRs by number, check them by commit ID
     prs_by_commit_id = {pr.commit.commit_id: pr for pr in prs}
-    
+
     # Verify all commits still have PRs
     assert commit1_id in prs_by_commit_id, f"No PR found for commit 1 ({commit1_id})"
     assert commit2_id in prs_by_commit_id, f"No PR found for commit 2 ({commit2_id})"
     assert commit3_id in prs_by_commit_id, f"No PR found for commit 3 ({commit3_id})"
     assert commit4_id in prs_by_commit_id, f"No PR found for commit 4 ({commit4_id})"
-    
+
     pr1_after = prs_by_commit_id[commit1_id]
     pr2_after = prs_by_commit_id[commit2_id]
     pr3_after = prs_by_commit_id[commit3_id]
     pr4_after = prs_by_commit_id[commit4_id]
-    
+
     # Verify new PR chain after reordering
     assert pr1_after.base_ref == "main", "First PR should target main"
     assert pr2_after.base_ref == f"spr/main/{commit1_id}", "Second PR should target first PR's branch"
     assert pr4_after.base_ref == f"spr/main/{commit2_id}", "Fourth PR should now target second PR's branch"
     assert pr3_after.base_ref == f"spr/main/{commit4_id}", "Third PR should now target fourth PR's branch"
-    
+
     # Log the final PR numbers in the new order
     pr_chain = f"#{pr1_after.number} -> #{pr2_after.number} -> #{pr4_after.number} -> #{pr3_after.number}"
     log.info(f"\nVerified PRs after reordering: {pr_chain}")
-    
+
     os.chdir(orig_dir)
 
 @pytest.fixture
@@ -863,195 +863,6 @@ def test_repo() -> Generator[Tuple[str, str, str, str], None, None]:
 
         # Return to original directory
         os.chdir(orig_dir)
-
-def test_amend_workflow(test_repo: Tuple[str, str, str, str]) -> None:
-    """Test full amend workflow with real PRs."""
-    owner, repo_name, test_branch = test_repo[:3]  # Used in config below
-
-    # Real config using the test repo
-    config = Config({
-        'repo': {
-            'github_remote': 'origin',
-            'github_branch': 'main', 
-            'github_repo_owner': owner,
-            'github_repo_name': 'teststack', 
-        },
-        'user': {}
-    })
-    git_cmd = RealGit(config)
-    github = GitHubClient(None, config)  # Real GitHub client
-    
-    # Create a unique tag for this test run
-    unique_tag = f"test-amend-{uuid.uuid4().hex[:8]}"
-    
-    # Create 3 commits
-    def make_commit(file: str, line: str, msg: str) -> str:
-        full_msg = f"{msg} [test-tag:{unique_tag}]"
-        with open(file, "w") as f:
-            f.write(f"{file}\n{line}\n")
-        run_cmd(f"git add {file}")
-        run_cmd(f'git commit -m "{full_msg}"')
-        return git_cmd.must_git("rev-parse HEAD").strip()
-        
-    log.info("Creating commits...")
-    c1_hash = make_commit("ta.txt", "line 1", "First commit")
-    c2_hash = make_commit("tb.txt", "line 1", "Second commit")  
-    c3_hash = make_commit("tc.txt", "line 1", "Third commit")
-    c4_hash = make_commit("td.txt", "line 1", "Fourth commit")
-    run_cmd(f"git push -u origin {test_branch}")  # Push branch with commits
-    
-    # Initial update to create PRs
-    log.info("Creating initial PRs...")
-    subprocess.run(["pyspr", "update"], check=True)
-    
-    # Helper to find our test PRs 
-    def get_test_prs() -> list:
-        result = []
-        for pr in github.get_info(None, git_cmd).pull_requests:
-            if pr.from_branch.startswith('spr/main/'):
-                try:
-                    # Look for our unique tag in the commit message
-                    commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
-                    if f"test-tag:{unique_tag}" in commit_msg:
-                        result.append(pr)
-                except:  # Skip failures since we're just filtering
-                    pass
-        return result
-    
-    # Verify PRs created
-    info = github.get_info(None, git_cmd)
-    assert info is not None, "GitHub info should not be None"
-    test_prs = get_test_prs()
-    assert len(test_prs) == 4, f"Should have 4 PRs for our test, found {len(test_prs)}"
-    pr1, pr2, pr3, pr4 = sorted(test_prs, key=lambda pr: pr.number)
-    log.info(f"Created PRs: #{pr1.number}, #{pr2.number}, #{pr3.number}, #{pr4.number}")
-    
-    # Save PR numbers and commit IDs and hashes
-    pr1_num = pr1.number
-    pr2_num = pr2.number
-    pr3_num = pr3.number
-    pr4_num = pr4.number
-    
-    c1_id = pr1.commit.commit_id
-    c2_id = pr2.commit.commit_id
-    c3_id = pr3.commit.commit_id
-    c4_id = pr4.commit.commit_id
-
-    # Store but don't actually use these variables 
-    _ = pr1.commit.commit_hash
-    _ = pr2.commit.commit_hash
-    _ = pr3.commit.commit_hash
-    _ = pr4.commit.commit_hash
-
-    # Debug: Check if commit messages have IDs after first update
-    log.info("\nChecking commit messages after first update:")
-    for c_hash in [c1_hash, c2_hash, c3_hash, c4_hash]:
-        msg = git_cmd.must_git(f"show -s --format=%B {c_hash}").strip()
-        log.info(f"Commit {c_hash[:8]} message:\n{msg}\n")
-
-    # Verify initial PR chain
-    assert pr1.base_ref == "main"
-    assert pr2.base_ref == f"spr/main/{c1_id}"
-    assert pr3.base_ref == f"spr/main/{c2_id}"
-    assert pr4.base_ref == f"spr/main/{c3_id}"
-    
-    log.info("Amending third commit, deleting second, adding new commit...")
-    # Get current messages (which should have IDs from spr update)
-    c1_msg = git_cmd.must_git(f"show -s --format=%B HEAD~3").strip()
-    c3_msg = git_cmd.must_git(f"show -s --format=%B HEAD~1").strip()
-    c4_msg = git_cmd.must_git(f"show -s --format=%B HEAD").strip()
-
-    # Reset and cherry-pick c1, preserving SPR-updated message 
-    # and ensuring test tag remains
-    run_cmd("git reset --hard HEAD~4")
-    run_cmd(f"git cherry-pick {c1_hash}")
-    assert f"test-tag:{unique_tag}" in c1_msg, "Test tag should be preserved in updated message"
-    run_cmd(f'git commit --amend -m "{c1_msg}"')
-    c1_hash_new = git_cmd.must_git("rev-parse HEAD").strip()
-    log1 = git_cmd.must_git(f"show -s --format=%B {c1_hash_new}").strip()
-    log.info(f"Commit 1: old={c1_hash} new={c1_hash_new} id={c1_id}")
-    log.info(f"Log 1:\n{log1}")
-    
-    # Skip c2 entirely - delete it from stack
-    log.info("Skipping c2 - deleting it")
-    
-    # Cherry-pick and amend c3, preserving SPR-updated message
-    # and ensuring test tag remains
-    run_cmd(f"git cherry-pick {c3_hash}")
-    with open("tc.txt", "a") as f:
-        f.write("line 2\n")
-    run_cmd("git add tc.txt")
-    assert f"test-tag:{unique_tag}" in c3_msg, "Test tag should be preserved in updated message"
-    run_cmd(f'git commit --amend -m "{c3_msg}"')
-    c3_hash_new = git_cmd.must_git("rev-parse HEAD").strip()
-    log3 = git_cmd.must_git(f"show -s --format=%B {c3_hash_new}").strip()
-    log.info(f"Commit 3: old={c3_hash} new={c3_hash_new} id={c3_id}")
-    log.info(f"Log 3:\n{log3}")
-    
-    # Insert new c3.5
-    log.info("Inserting new c3.5")
-    # Create new commit with same test tag
-    _new_c35_hash = make_commit("tc5.txt", "line 1", "Commit three point five")
-    
-    # Cherry-pick c4, preserving SPR-updated message
-    # and ensuring test tag remains
-    run_cmd(f"git cherry-pick {c4_hash}")
-    assert f"test-tag:{unique_tag}" in c4_msg, "Test tag should be preserved in updated message"
-    run_cmd(f'git commit --amend -m "{c4_msg}"')
-    c4_hash_new = git_cmd.must_git("rev-parse HEAD").strip()
-    log4 = git_cmd.must_git(f"show -s --format=%B {c4_hash_new}").strip()
-    log.info(f"Commit 4: old={c4_hash} new={c4_hash_new} id={c4_id}")
-    log.info(f"Log 4:\n{log4}")
-    
-    log.info("Updating PRs after amend...")
-    # Run update with amended commits
-    subprocess.run(["pyspr", "update"], check=True)
-    
-    # Verify PRs updated properly
-    info = github.get_info(None, git_cmd)
-    assert info is not None, "GitHub info should not be None"
-    test_prs = get_test_prs()
-    assert len(test_prs) == 4, f"Should have 4 PRs for our test after amend, found {len(test_prs)}"
-    prs_by_num = {pr.number: pr for pr in test_prs}
-    pr1 = prs_by_num.get(pr1_num)
-    pr3 = prs_by_num.get(pr3_num)
-    pr4 = prs_by_num.get(pr4_num)
-    new_pr = next((pr for pr in test_prs if pr.number not in [pr1_num, pr2_num, pr3_num, pr4_num]), None)
-    
-    # Verify PR1 and PR4 remain, PR2 deleted, PR3 updated, and new PR added
-    assert pr1 is not None, "PR1 should still exist"
-    assert pr2_num not in prs_by_num, "PR2 should be deleted"
-    assert pr3 is not None, "PR3 should still exist" 
-    assert pr4 is not None, "PR4 should still exist"
-    assert new_pr is not None, "New PR for c3.5 should be created"
-    
-    # Verify PR numbers - except PR2 which should be deleted
-    assert pr1.number == pr1_num, f"PR1 number changed from {pr1_num} to {pr1.number}"
-    assert pr3.number == pr3_num, f"PR3 number changed from {pr3_num} to {pr3.number}"
-    assert pr4.number == pr4_num, f"PR4 number changed from {pr4_num} to {pr4.number}"
-    
-    # Verify commit IDs - PR1 and PR4 shouldn't change
-    assert pr1.commit.commit_id == c1_id, f"PR1 commit ID changed from {c1_id} to {pr1.commit.commit_id}"
-    assert pr3.commit.commit_id == c3_id, f"PR3 commit ID changed from {c3_id} to {pr3.commit.commit_id}"
-    assert pr4.commit.commit_id == c4_id, f"PR4 commit ID changed from {c4_id} to {pr4.commit.commit_id}"
-    
-    # Only PR3's hash should change (was amended), PR1 and PR4 hashes shouldn't change
-    assert pr1.commit.commit_hash == c1_hash_new, f"PR1 hash should be {c1_hash_new}"
-    assert pr3.commit.commit_hash == c3_hash_new, f"PR3 hash should be {c3_hash_new}"
-    assert pr4.commit.commit_hash == c4_hash_new, f"PR4 hash should be {c4_hash_new}"
-    
-    # Verify PR targets remained correct
-    assert pr1.base_ref == "main", f"PR1 base ref incorrect: {pr1.base_ref}"
-    assert pr3.base_ref == f"spr/main/{c1_id}", f"PR3 base ref incorrect: {pr3.base_ref}" # PR3 now targets PR1
-    assert new_pr.base_ref == f"spr/main/{c3_id}", f"New PR base ref incorrect: {new_pr.base_ref}"
-    assert pr4.base_ref == f"spr/main/{new_pr.commit.commit_id}", f"PR4 base ref incorrect: {pr4.base_ref}" # PR4 now targets new PR
-
-    # Verify commit IDs exist in messages and are preserved through updates
-    log.info("\nVerifying commit IDs in messages after updates:")
-    for pr in [pr1, pr3, new_pr, pr4]:
-        message = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}").strip()
-        log.info(f"PR #{pr.number} message:\n{message}\n")
-        assert f"commit-id:{pr.commit.commit_id}" in message, f"PR #{pr.number} should have correct commit ID in message"
 
 def _run_merge_test(
         repo_fixture: Union[Tuple[str, str, str], Tuple[str, str, str, str]], 
@@ -1656,8 +1467,8 @@ def test_no_rebase_functionality(test_repo: Tuple[str, str, str, str]) -> None:
 
 def test_no_rebase_pr_stacking(test_repo: Tuple[str, str, str, str]) -> None:
     """Test stacking new PRs on top without changing earlier PRs using --no-rebase.
-    
-    1. Create first PR and update normally 
+
+    1. Create first PR and update normally
     2. Create second PR and update with --no-rebase
     3. Verify earlier PR commit hash is preserved
     4. Verify stack links updated properly
@@ -1691,7 +1502,7 @@ def test_no_rebase_pr_stacking(test_repo: Tuple[str, str, str, str]) -> None:
         c1_hash = make_commit("nr_test1.txt", "First commit")
         run_cmd(f"git push -u origin {test_branch}")
 
-        # Create first PR 
+        # Create first PR
         print("\nCreating first PR...")
         os.chdir(orig_dir)
         subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
@@ -1722,10 +1533,10 @@ def test_no_rebase_pr_stacking(test_repo: Tuple[str, str, str, str]) -> None:
         # Check PR state after no-rebase update
         info = github.get_info(None, git_cmd)
         assert info is not None, "GitHub info should not be None"
-        prs = sorted([pr for pr in info.pull_requests if pr.from_branch.startswith('spr/main/')], 
+        prs = sorted([pr for pr in info.pull_requests if pr.from_branch.startswith('spr/main/')],
                     key=lambda pr: pr.number)
         assert len(prs) == 2, f"Should have 2 PRs, found {len(prs)}"
-        
+
         # Verify PR1 still exists with same commit hash
         pr1_after = next((pr for pr in prs if pr.number == pr1_number), None)
         assert pr1_after is not None, f"PR #{pr1_number} should still exist"
@@ -1740,7 +1551,7 @@ def test_no_rebase_pr_stacking(test_repo: Tuple[str, str, str, str]) -> None:
             f"PR2 commit hash wrong: {pr2.commit.commit_hash[:8]} vs {c2_hash[:8]}"
         print(f"Verified PR #{pr2.number} created with commit {c2_hash[:8]}")
 
-        # Verify stack links updated 
+        # Verify stack links updated
         assert pr1_after.base_ref == "main", f"PR1 should target main, got {pr1_after.base_ref}"
         assert pr2.base_ref is not None and pr2.base_ref.startswith('spr/main/'), \
             f"PR2 should target PR1's branch, got {pr2.base_ref}"
