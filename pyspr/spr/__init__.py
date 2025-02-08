@@ -5,7 +5,7 @@ import os
 import sys
 import re
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, TypedDict
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -20,6 +20,12 @@ logger.propagate = False  # Don't double log
 from ..git import Commit, get_local_commit_stack, branch_name_from_commit, ConfigProtocol, GitInterface  
 from ..github import GitHubInfo, PullRequest, GitHubInterface
 from ..typing import StackedPRContextProtocol
+
+class UpdateItem(TypedDict):
+    """Type for update queue items."""
+    pr: PullRequest
+    commit: Optional[Commit]
+    prev_commit: Optional[Commit]
 
 class StackedPR:
     """StackedPR implementation."""
@@ -262,13 +268,6 @@ class StackedPR:
                     cmd = f"push --force --atomic {remote} " + " ".join(ref_names)
                     self.git_cmd.must_git(cmd)
 
-    from typing import TypedDict
-    
-    class UpdateItem(TypedDict):
-        pr: PullRequest
-        commit: Optional[Commit]
-        prev_commit: Optional[Commit]
-        
     def update_pull_requests(self, ctx: StackedPRContextProtocol, 
                          reviewers: Optional[List[str]] = None, 
                          count: Optional[int] = None) -> None:
@@ -383,16 +382,16 @@ class StackedPR:
                     logger.info(f"  Branch: {branch_name}")
                     logger.info(f"  Base branch: {base_branch}")
                     # Create dummy PR object for the update queue
-                    from ..github import PullRequest, Commit as GitHubCommit
-                    pr = PullRequest(
+                    from ..github import PullRequest as GHPullRequest
+                    from ..github import Commit as GitHubCommit
+                    pr = GHPullRequest(
                         number=-1,  # Dummy number 
                         title=commit.subject,
+                        commit=GitHubCommit(commit.commit_id, commit.commit_hash, commit.subject),
+                        commits=[GitHubCommit(commit.commit_id, commit.commit_hash, commit.subject)],
                         body="",
                         from_branch=branch_name,
-                        base_ref=base_branch,
-                        commit=GitHubCommit(commit.commit_hash, commit.commit_id),
-                        commits=[GitHubCommit(commit.commit_hash, commit.commit_id)],
-                        draft=False
+                        base_ref=base_branch
                     )
                 else:
                     logger.debug(f"  No matching PR found, creating new PR")

@@ -1,13 +1,13 @@
 """Unit test for --no-rebase functionality."""
 
 import os
-import pytest
 import io
 from contextlib import redirect_stdout
 from unittest.mock import MagicMock, patch
 
 from pyspr.config import Config
 from pyspr.spr import StackedPR
+from pyspr.typing import StackedPRContextType
 
 def test_no_rebase_functionality():
     """Test that --no-rebase properly skips rebasing.
@@ -28,13 +28,14 @@ def test_no_rebase_functionality():
     # Mock git and github
     git_mock = MagicMock()
     github_mock = MagicMock()
+    ctx: StackedPRContextType = MagicMock()
 
     # Test regular update - should rebase
     with patch.dict(os.environ, {}, clear=True):  # Ensure no SPR_NOREBASE
         f = io.StringIO()
         with redirect_stdout(f):
             spr = StackedPR(config, github_mock, git_mock)
-            spr.fetch_and_get_github_info(None)
+            spr.fetch_and_get_github_info(ctx)
         regular_update_log = f.getvalue()
 
     # Verify rebase was attempted
@@ -49,7 +50,7 @@ def test_no_rebase_functionality():
         f = io.StringIO()
         with redirect_stdout(f):
             spr = StackedPR(config, github_mock, git_mock)
-            spr.fetch_and_get_github_info(None)
+            spr.fetch_and_get_github_info(ctx)
         no_rebase_log = f.getvalue()
 
     # Verify rebase was skipped

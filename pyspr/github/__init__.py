@@ -3,7 +3,7 @@
 import os
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Protocol, TypedDict, Union, Tuple, cast
+from typing import Any, Dict, List, Optional, Protocol, cast
 from github import Github
 from github.Repository import Repository
 import re
@@ -11,46 +11,8 @@ import re
 # Get module logger
 logger = logging.getLogger(__name__)
 
-# Types for GraphQL responses 
-class GraphQLCommitNode(TypedDict):
-    oid: str
-    messageHeadline: str
-    messageBody: str
-
-class GraphQLCommitData(TypedDict):
-    commit: GraphQLCommitNode
-
-class GraphQLCommits(TypedDict):
-    nodes: List[GraphQLCommitData]
-
-class GraphQLPullRequest(TypedDict):
-    id: str
-    number: int
-    title: str
-    body: str
-    baseRefName: str
-    headRefName: str
-    mergeable: str
-    commits: GraphQLCommits
-
-class GraphQLPRData(TypedDict):
-    nodes: List[GraphQLPullRequest]
-
-class GraphQLViewer(TypedDict):
-    login: str
-
-class GraphQLRepository(TypedDict):
-    pullRequests: GraphQLPRData
-
-class GraphQLData(TypedDict):
-    viewer: GraphQLViewer
-    repository: GraphQLRepository
-
-class GraphQLResponse(TypedDict):
-    data: GraphQLData
-    errors: Optional[List[Dict[str, Any]]]
-
-GraphQLResponseType = Union[Tuple[int, Dict[str, Any]], Dict[str, Any]]
+# Import GraphQL response types from dedicated module
+from .types import GraphQLData, GraphQLResponseType
 
 from ..git import Commit, GitInterface, ConfigProtocol
 from ..typing import StackedPRContextProtocol, StackedPRContextType
@@ -189,6 +151,8 @@ class GitHubClient:
         
         # Get local commits first to filter PRs
         local_commits = get_local_commit_stack(self.config, git_cmd)
+        # local_commit_ids is intentionally unused - keeping for future use
+        # when we want to filter PRs by local commits
         local_commit_ids = {commit.commit_id for commit in local_commits}
         
         logger.debug("Local commit IDs:")
@@ -274,6 +238,8 @@ class GitHubClient:
                 raise Exception("No data in GraphQL response")
                 
             data: GraphQLData = cast(GraphQLData, resp['data'])
+            # user_login is intentionally unused - keeping for future use
+            # when we want to filter PRs by user
             user_login = data['viewer']['login']
             pr_nodes = data['repository']['pullRequests']['nodes']
             
@@ -292,6 +258,7 @@ class GitHubClient:
                     
                     # Get commit info
                     commit_nodes = pr_data['commits']['nodes']  # type: ignore
+                    all_commits: List[Commit] = []  # Declare before use
                     if commit_nodes:
                         last_commit = commit_nodes[-1]['commit']  # type: ignore
                         commit_hash = str(last_commit['oid'])  # type: ignore
@@ -306,9 +273,6 @@ class GitHubClient:
                             commit_id = message_id
                             
                         commit = Commit(commit_id, commit_hash, str(last_commit['messageHeadline']))  # type: ignore
-                        
-                        # Create list of all commits in PR
-                        all_commits: List[Commit] = []
                         for node in commit_nodes:  # type: ignore
                             c = node['commit']  # type: ignore
                             c_msg = str(c['messageBody'])  # type: ignore
@@ -393,7 +357,7 @@ class GitHubClient:
         target_branch = self.config.repo.get('github_branch', 'main')
         
         # Find top PR
-        curr_pr = None
+        curr_pr: Optional[PullRequest] = None
         for commit in reversed(local_commits):
             curr_pr = pull_request_map.get(commit.commit_id)
             if curr_pr:
