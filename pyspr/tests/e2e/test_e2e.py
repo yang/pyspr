@@ -130,7 +130,12 @@ def test_simple_update(test_repo: Tuple[str, str, str, str]) -> None:
     pr = get_test_pr()
     assert pr is not None, "Should have created a PR"
     assert pr.base_ref == "main", "PR should target main"
-    # Don't check exact commit hash as it changes during PR creation
+    
+    # Get the final local commit hash after update
+    final_local_hash = git_cmd.must_git("rev-parse HEAD").strip()
+    
+    # Verify PR commit hash matches final local commit hash
+    assert pr.commit.commit_hash == final_local_hash, f"PR commit hash {pr.commit.commit_hash} should match final local commit {final_local_hash}"
     
     os.chdir(orig_dir)
 
