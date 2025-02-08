@@ -75,7 +75,7 @@ def run_cmd(cmd: str) -> None:
 
 def test_delete_insert(test_repo: Tuple[str, str, str, str]) -> None:
     """Test that creates four commits, runs update, then recreates commits but skips the second one,
-    and verifies PR state after each update."""
+    and verifies PR state after each update, including verifying PR hashes match local commit hashes."""
     owner, repo_name, test_branch, repo_dir = test_repo
 
     orig_dir = os.getcwd()
@@ -149,6 +149,12 @@ def test_delete_insert(test_repo: Tuple[str, str, str, str]) -> None:
     
     log.info(f"\nInitial PRs created: #{pr1_num}, #{pr2_num}, #{pr3_num}, #{pr4_num}")
     
+    # Verify each PR hash matches its local commit hash
+    assert pr1.commit.commit_hash == commit1_hash, f"PR1 hash {pr1.commit.commit_hash} should match local commit1 hash {commit1_hash}"
+    assert pr2.commit.commit_hash == commit2_hash, f"PR2 hash {pr2.commit.commit_hash} should match local commit2 hash {commit2_hash}"
+    assert pr3.commit.commit_hash == commit3_hash, f"PR3 hash {pr3.commit.commit_hash} should match local commit3 hash {commit3_hash}"
+    assert pr4.commit.commit_hash == commit4_hash, f"PR4 hash {pr4.commit.commit_hash} should match local commit4 hash {commit4_hash}"
+    
     # Now reset and recreate commits but skip commit2 and add c3.5
     log.info("\nRecreating commits without second commit and adding c3.5...")
     run_cmd("git reset --hard HEAD~4")  # Remove all commits
@@ -166,6 +172,11 @@ def test_delete_insert(test_repo: Tuple[str, str, str, str]) -> None:
     new_c35_hash, new_c35_id = make_commit("test3_5.txt", "test content 3.5", "Commit three point five")
     
     run_cmd(f"git cherry-pick {commit4_hash}")
+    
+    # Capture current commit hashes after reconstruction
+    new_commit1_hash = git_cmd.must_git("rev-parse HEAD~3").strip()
+    new_commit3_hash = git_cmd.must_git("rev-parse HEAD~2").strip()
+    new_commit4_hash = git_cmd.must_git("rev-parse HEAD").strip()
     
     # Run pyspr update again
     run_cmd(f"pyspr update -v")
@@ -207,8 +218,15 @@ def test_delete_insert(test_repo: Tuple[str, str, str, str]) -> None:
     assert pr35.commit.commit_id == new_c35_id, f"New PR commit ID should be {new_c35_id}"
     assert pr4_after.commit.commit_id == commit4_id, f"PR4 commit ID should remain {commit4_id}"
     
+    # Verify PR hashes match new local commit hashes
+    assert pr1_after.commit.commit_hash == new_commit1_hash, f"PR1 hash {pr1_after.commit.commit_hash} should match new local commit hash {new_commit1_hash}"
+    assert pr3_after.commit.commit_hash == new_commit3_hash, f"PR3 hash {pr3_after.commit.commit_hash} should match new local commit hash {new_commit3_hash}"
+    assert pr35.commit.commit_hash == new_c35_hash, f"PR35 hash {pr35.commit.commit_hash} should match local commit hash {new_c35_hash}"
+    assert pr4_after.commit.commit_hash == new_commit4_hash, f"PR4 hash {pr4_after.commit.commit_hash} should match new local commit hash {new_commit4_hash}"
+    
     log.info(f"\nVerified PRs after removing commit2 and adding c3.5: #{pr1_num} -> #{pr3_num} -> #{pr35.number} -> #{pr4_num}")
     log.info(f"PR2 #{pr2_num} correctly closed")
+    log.info("Verified all PR commit hashes match local commit hashes")
     
     os.chdir(orig_dir)
 
