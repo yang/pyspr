@@ -101,7 +101,7 @@ def test_simple_update(test_repo: Tuple[str, str, str, str]) -> None:
     with open(test_file, "w") as f:
         f.write(f"{test_file}\ntest content\n")
     run_cmd(f"git add {test_file}")
-    run_cmd(f'git commit -m "Test simple update [{unique_tag}]"')
+    run_cmd(f'git commit -m "Test simple update [test-tag:{unique_tag}]"')
     first_commit_hash = git_cmd.must_git("rev-parse HEAD").strip()
     
     # Push branch with commit
@@ -122,7 +122,7 @@ def test_simple_update(test_repo: Tuple[str, str, str, str]) -> None:
                 try:
                     # Look for our unique tag in the commit message
                     commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
-                    if f"[{unique_tag}]" in commit_msg:
+                    if f"test-tag:{unique_tag}" in commit_msg:
                         log.info(f"Found PR #{pr.number} with tag and commit ID {pr.commit.commit_id}")
                         return pr
                 except:
@@ -159,7 +159,7 @@ def test_simple_update(test_repo: Tuple[str, str, str, str]) -> None:
             break
     assert commit_id_line, "Should have found commit-id line in message"
     
-    amended_msg = f"""Test simple update with amendment [{unique_tag}]
+    amended_msg = f"""Test simple update with amendment [test-tag:{unique_tag}]
 
 {commit_id_line}"""
     run_cmd(f"git commit --amend -m '{amended_msg}'")
@@ -218,16 +218,17 @@ def test_wip_behavior(test_repo: Tuple[str, str, str, str], caplog: pytest.LogCa
     git_cmd = RealGit(config)
     github = GitHubClient(None, config)  # Real GitHub client
     
-    # Get timestamp before we create PRs
-    commit_time = int(git_cmd.must_git("show -s --format=%ct").strip())
+    # Create a unique tag for this test run
+    unique_tag = f"test-wip-{uuid.uuid4().hex[:8]}"
     
     # Create 4 commits: 2 regular, 1 WIP, 1 regular
     def make_commit(file: str, msg: str) -> str:
         log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Creating commit for {file} - {msg}")
+        full_msg = f"{msg} [test-tag:{unique_tag}]"
         with open(file, "w") as f:
             f.write(f"{file}\n")
         run_cmd(f"git add {file}")
-        run_cmd(f'git commit -m "{msg}"')
+        run_cmd(f'git commit -m "{full_msg}"')
         result = git_cmd.must_git("rev-parse HEAD").strip()
         log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Created commit {result[:8]}")
         return result
@@ -281,13 +282,11 @@ def test_wip_behavior(test_repo: Tuple[str, str, str, str], caplog: pytest.LogCa
                     # Debug each PR being checked
                     log.info(f"Checking PR #{pr.number} - branch {pr.from_branch}")
                     if pr.from_branch is not None and pr.from_branch.startswith('spr/main/') and pr.commit is not None:
-                        files = git_cmd.must_git(f"show --name-only {pr.commit.commit_hash}")
-                        test_files = ['wip_test1.txt', 'wip_test2.txt', 'wip_test3.txt', 'wip_test4.txt']
-                        if any(f in files for f in test_files):
-                            pr_time = int(git_cmd.must_git(f"show -s --format=%ct {pr.commit.commit_hash}").strip())
-                            if pr_time >= commit_time:
-                                log.info(f"Found matching PR #{pr.number}")
-                                result.append(pr)
+                        # Look for our unique tag in the commit message
+                        commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
+                        if f"test-tag:{unique_tag}" in commit_msg:
+                            log.info(f"Found matching PR #{pr.number}")
+                            result.append(pr)
                 except Exception as e:  # Log any failures
                     log.info(f"Error checking PR #{getattr(pr, 'number', 'unknown')}: {e}")
                     pass
@@ -429,16 +428,17 @@ def test_reviewer_functionality_yang(test_reviewer_repo: Tuple[str, str, str, st
     git_cmd = RealGit(config)
     github = GitHubClient(None, config)
 
+    # Create a unique tag for this test run
+    unique_tag = f"test-reviewer-yang-{uuid.uuid4().hex[:8]}"
+
     # Create first commit and PR without reviewer
     def make_commit(file: str, msg: str) -> str:
+        full_msg = f"{msg} [test-tag:{unique_tag}]"
         with open(file, "w") as f:
             f.write(f"{file}\n{msg}\n")
         run_cmd(f"git add {file}")
-        run_cmd(f'git commit -m "{msg}"')
+        run_cmd(f'git commit -m "{full_msg}"')
         return git_cmd.must_git("rev-parse HEAD").strip()
-        
-    # Get timestamp before we create PRs
-    commit_time = int(git_cmd.must_git("show -s --format=%ct").strip())
         
     log.info("Creating first commit without reviewer...")
     make_commit("r_test1.txt", "First commit")
@@ -453,11 +453,10 @@ def test_reviewer_functionality_yang(test_reviewer_repo: Tuple[str, str, str, st
         for pr in github.get_info(None, git_cmd).pull_requests:
             if pr.from_branch.startswith('spr/main/'):
                 try:
-                    files = git_cmd.must_git(f"show --name-only {pr.commit.commit_hash}")
-                    if 'r_test1.txt' in files:
-                        pr_time = int(git_cmd.must_git(f"show -s --format=%ct {pr.commit.commit_hash}").strip())
-                        if pr_time >= commit_time:
-                            result.append(pr)
+                    # Look for our unique tag in the commit message
+                    commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
+                    if f"test-tag:{unique_tag}" in commit_msg:
+                        result.append(pr)
                 except:  # Skip failures since we're just filtering
                     pass
         return result
@@ -563,24 +562,27 @@ def test_reviewer_functionality_testluser(test_reviewer_repo: Tuple[str, str, st
     git_cmd = RealGit(config)
     github = GitHubClient(None, config)
 
+    # Create a unique tag for this test run
+    unique_tag = f"test-reviewer-testluser-{uuid.uuid4().hex[:8]}"
+
     def make_commit(file: str, msg: str) -> str:
+        full_msg = f"{msg} [test-tag:{unique_tag}]"
         with open(file, "w") as f:
             f.write(f"{file}\n{msg}\n")
         run_cmd(f"git add {file}")
-        run_cmd(f'git commit -m "{msg}"')
+        run_cmd(f'git commit -m "{full_msg}"')
         return git_cmd.must_git("rev-parse HEAD").strip()
 
-    def get_test_prs(min_time: int) -> list:
+    def get_test_prs() -> list:
         """Helper to find the test PRs efficiently"""
         result = []
         for pr in github.get_info(None, git_cmd).pull_requests:
             if pr.from_branch.startswith('spr/main/'):
                 try:
-                    files = git_cmd.must_git(f"show --name-only {pr.commit.commit_hash}")
-                    if any(f in files for f in ['r_test1.txt', 'r_test2.txt']):
-                        pr_time = int(git_cmd.must_git(f"show -s --format=%ct {pr.commit.commit_hash}").strip())
-                        if pr_time >= min_time:
-                            result.append(pr)
+                    # Look for our unique tag in the commit message
+                    commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
+                    if f"test-tag:{unique_tag}" in commit_msg:
+                        result.append(pr)
                 except:  # Skip failures since we're just filtering
                     pass
         return result
@@ -589,14 +591,11 @@ def test_reviewer_functionality_testluser(test_reviewer_repo: Tuple[str, str, st
     make_commit("r_test1.txt", "First commit")
     run_cmd(f"git push -u origin {test_branch}")
 
-    # Get timestamp before we create PRs
-    commit_time = int(git_cmd.must_git("show -s --format=%ct").strip())
-
     # Create initial PR without reviewer
     subprocess.run(["pyspr", "update"], check=True)
 
     # Verify first PR
-    our_prs = get_test_prs(commit_time)
+    our_prs = get_test_prs()
     assert len(our_prs) == 1, f"Should have 1 PR for our test, found {len(our_prs)}"
     pr1 = our_prs[0]
     gh_pr1 = github.repo.get_pull(pr1.number)
@@ -627,7 +626,7 @@ def test_reviewer_functionality_testluser(test_reviewer_repo: Tuple[str, str, st
     update_output = result.stdout + result.stderr
 
     # Find our PRs again
-    our_prs = get_test_prs(commit_time)
+    our_prs = get_test_prs()
     assert len(our_prs) == 2, f"Should have 2 PRs for our test, found {len(our_prs)}"
     
     # Get the latest PR
@@ -716,15 +715,16 @@ def test_amend_workflow(test_repo: Tuple[str, str, str, str]) -> None:
     git_cmd = RealGit(config)
     github = GitHubClient(None, config)  # Real GitHub client
     
-    # Get timestamp before we create PRs
-    commit_time = int(git_cmd.must_git("show -s --format=%ct").strip())
+    # Create a unique tag for this test run
+    unique_tag = f"test-amend-{uuid.uuid4().hex[:8]}"
     
     # Create 3 commits
     def make_commit(file: str, line: str, msg: str) -> str:
+        full_msg = f"{msg} [test-tag:{unique_tag}]"
         with open(file, "w") as f:
             f.write(f"{file}\n{line}\n")
         run_cmd(f"git add {file}")
-        run_cmd(f'git commit -m "{msg}"')
+        run_cmd(f'git commit -m "{full_msg}"')
         return git_cmd.must_git("rev-parse HEAD").strip()
         
     log.info("Creating commits...")
@@ -744,12 +744,10 @@ def test_amend_workflow(test_repo: Tuple[str, str, str, str]) -> None:
         for pr in github.get_info(None, git_cmd).pull_requests:
             if pr.from_branch.startswith('spr/main/'):
                 try:
-                    files = git_cmd.must_git(f"show --name-only {pr.commit.commit_hash}")
-                    test_files = ['ta.txt', 'tb.txt', 'tc.txt', 'td.txt', 'tc5.txt']
-                    if any(f in files for f in test_files):
-                        pr_time = int(git_cmd.must_git(f"show -s --format=%ct {pr.commit.commit_hash}").strip())
-                        if pr_time >= commit_time:
-                            result.append(pr)
+                    # Look for our unique tag in the commit message
+                    commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
+                    if f"test-tag:{unique_tag}" in commit_msg:
+                        result.append(pr)
                 except:  # Skip failures since we're just filtering
                     pass
         return result
@@ -797,9 +795,11 @@ def test_amend_workflow(test_repo: Tuple[str, str, str, str]) -> None:
     c3_msg = git_cmd.must_git(f"show -s --format=%B HEAD~1").strip()
     c4_msg = git_cmd.must_git(f"show -s --format=%B HEAD").strip()
 
-    # Reset and cherry-pick c1, preserving SPR-updated message
+    # Reset and cherry-pick c1, preserving SPR-updated message 
+    # and ensuring test tag remains
     run_cmd("git reset --hard HEAD~4")
     run_cmd(f"git cherry-pick {c1_hash}")
+    assert f"test-tag:{unique_tag}" in c1_msg, "Test tag should be preserved in updated message"
     run_cmd(f'git commit --amend -m "{c1_msg}"')
     c1_hash_new = git_cmd.must_git("rev-parse HEAD").strip()
     log1 = git_cmd.must_git(f"show -s --format=%B {c1_hash_new}").strip()
@@ -810,10 +810,12 @@ def test_amend_workflow(test_repo: Tuple[str, str, str, str]) -> None:
     log.info("Skipping c2 - deleting it")
     
     # Cherry-pick and amend c3, preserving SPR-updated message
+    # and ensuring test tag remains
     run_cmd(f"git cherry-pick {c3_hash}")
     with open("tc.txt", "a") as f:
         f.write("line 2\n")
     run_cmd("git add tc.txt")
+    assert f"test-tag:{unique_tag}" in c3_msg, "Test tag should be preserved in updated message"
     run_cmd(f'git commit --amend -m "{c3_msg}"')
     c3_hash_new = git_cmd.must_git("rev-parse HEAD").strip()
     log3 = git_cmd.must_git(f"show -s --format=%B {c3_hash_new}").strip()
@@ -822,10 +824,13 @@ def test_amend_workflow(test_repo: Tuple[str, str, str, str]) -> None:
     
     # Insert new c3.5
     log.info("Inserting new c3.5")
+    # Create new commit with same test tag
     _new_c35_hash = make_commit("tc5.txt", "line 1", "Commit three point five")
     
     # Cherry-pick c4, preserving SPR-updated message
+    # and ensuring test tag remains
     run_cmd(f"git cherry-pick {c4_hash}")
+    assert f"test-tag:{unique_tag}" in c4_msg, "Test tag should be preserved in updated message"
     run_cmd(f'git commit --amend -m "{c4_msg}"')
     c4_hash_new = git_cmd.must_git("rev-parse HEAD").strip()
     log4 = git_cmd.must_git(f"show -s --format=%B {c4_hash_new}").strip()
@@ -918,18 +923,19 @@ def _run_merge_test(
     git_cmd = RealGit(config)
     github = GitHubClient(None, config)  # Real GitHub client
 
-    # Get timestamp before we create PRs
-    commit_time = int(git_cmd.must_git("show -s --format=%ct").strip())
+    # Create a unique tag for this test run
+    unique_tag = f"test-merge-{uuid.uuid4().hex[:8]}"
     
     # Create commits
     def make_commit(file: str, line: str, msg: str) -> str:
+        full_msg = f"{msg} [test-tag:{unique_tag}]"
         with open(file, "w") as f:
             f.write(f"{file}\n{line}\n")
         try:
             log.info(f"Creating file {file}...")
             run_cmd(f"git add {file}")
             run_cmd("git status")  # Debug: show git status after add
-            result = subprocess.run(f'git commit -m "{msg}"', shell=True, check=False,
+            result = subprocess.run(f'git commit -m "{full_msg}"', shell=True, check=False,
                                   stderr=subprocess.PIPE, stdout=subprocess.PIPE,
                                   universal_newlines=True)
             if result.returncode != 0:
@@ -977,11 +983,10 @@ def _run_merge_test(
         for pr in github.get_info(None, git_cmd).pull_requests:
             if pr.from_branch.startswith('spr/main/'):
                 try:
-                    files = git_cmd.must_git(f"show --name-only {pr.commit.commit_hash}")
-                    if any(f in files for f in test_files):
-                        pr_time = int(git_cmd.must_git(f"show -s --format=%ct {pr.commit.commit_hash}").strip())
-                        if pr_time >= commit_time:
-                            result.append(pr)
+                    # Look for our unique tag in the commit message
+                    commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
+                    if f"test-tag:{unique_tag}" in commit_msg:
+                        result.append(pr)
                 except:  # Skip failures since we're just filtering
                     pass
         return result
@@ -1195,12 +1200,12 @@ def test_replace_commit(test_repo: Tuple[str, str, str, str]) -> None:
     git_cmd = RealGit(config)
     github = GitHubClient(None, config)
 
-    # Get timestamp before we create PRs
-    commit_time = int(git_cmd.must_git("show -s --format=%ct").strip())
+    # Create a unique tag for this test run
+    unique_tag = f"test-replace-{uuid.uuid4().hex[:8]}"
 
     def make_commit(file: str, line: str, msg: str) -> Tuple[str, str]:
         commit_id = uuid.uuid4().hex[:8]
-        full_msg = f"{msg}\n\ncommit-id:{commit_id}"
+        full_msg = f"{msg} [test-tag:{unique_tag}]\n\ncommit-id:{commit_id}"
         with open(file, "w") as f:
             f.write(f"{file}\n{line}\n")
         run_cmd(f"git add {file}")
@@ -1229,11 +1234,10 @@ def test_replace_commit(test_repo: Tuple[str, str, str, str]) -> None:
             for pr in github.get_info(None, git_cmd).pull_requests:
                 if pr.from_branch.startswith('spr/main/'):
                     try:
-                        files = git_cmd.must_git(f"show --name-only {pr.commit.commit_hash}")
-                        if any(f in files for f in test_files):
-                            pr_time = int(git_cmd.must_git(f"show -s --format=%ct {pr.commit.commit_hash}").strip())
-                            if pr_time >= commit_time:
-                                result.append(pr)
+                        # Look for our unique tag in the commit message
+                        commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
+                        if f"test-tag:{unique_tag}" in commit_msg:
+                            result.append(pr)
                     except:  # Skip failures since we're just filtering
                         pass
             return result
@@ -1617,13 +1621,15 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
     git_cmd = RealGit(config)
     github = GitHubClient(None, config)  # Real GitHub client
 
-    # Get timestamp before we create PRs
-    commit_time = int(git_cmd.must_git("show -s --format=%ct").strip())
+    # Create two unique tags for the two stacks
+    unique_tag1 = f"test-stack1-{uuid.uuid4().hex[:8]}"
+    unique_tag2 = f"test-stack2-{uuid.uuid4().hex[:8]}"
 
-    # Helper to make commit with unique commit-id
-    def make_commit(file: str, line: str, msg: str) -> Tuple[str, str]:
+    # Helper to make commit with unique commit-id and test tag
+    def make_commit(file: str, line: str, msg: str, stack_num: int) -> Tuple[str, str]:
         commit_id = uuid.uuid4().hex[:8]
-        full_msg = f"{msg}\n\ncommit-id:{commit_id}"
+        tag = unique_tag1 if stack_num == 1 else unique_tag2
+        full_msg = f"{msg} [test-tag:{tag}]\n\ncommit-id:{commit_id}"
         with open(file, "w") as f:
             f.write(f"{file}\n{line}\n")
         run_cmd(f"git add {file}")
@@ -1646,9 +1652,9 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
         run_cmd(f"git checkout -b {branch1}")
 
         # First commit for PR1A
-        c1a_hash, c1a_id = make_commit("stack1a.txt", "line 1", "Stack 1 commit A")
+        c1a_hash, c1a_id = make_commit("stack1a.txt", "line 1", "Stack 1 commit A", 1)
         # Second commit for PR1B
-        c1b_hash, c1b_id = make_commit("stack1b.txt", "line 1", "Stack 1 commit B")
+        c1b_hash, c1b_id = make_commit("stack1b.txt", "line 1", "Stack 1 commit B", 1)
         run_cmd(f"git push -u origin {branch1}")
 
         # Update to create connected PRs 1A and 1B
@@ -1662,9 +1668,9 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
         run_cmd(f"git checkout -b {branch2}")
 
         # First commit for PR2A
-        _c2a_hash, c2a_id = make_commit("stack2a.txt", "line 1", "Stack 2 commit A")
+        _c2a_hash, c2a_id = make_commit("stack2a.txt", "line 1", "Stack 2 commit A", 2)
         # Second commit for PR2B
-        _c2b_hash, c2b_id = make_commit("stack2b.txt", "line 1", "Stack 2 commit B")
+        _c2b_hash, c2b_id = make_commit("stack2b.txt", "line 1", "Stack 2 commit B", 2)
         run_cmd(f"git push -u origin {branch2}")
 
         # Update to create connected PRs 2A and 2B
@@ -1677,11 +1683,10 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
             for pr in github.get_info(None, git_cmd).pull_requests:
                 if pr.from_branch.startswith('spr/main/'):
                     try:
-                        files = git_cmd.must_git(f"show --name-only {pr.commit.commit_hash}")
-                        if any(f in files for f in test_files):
-                            pr_time = int(git_cmd.must_git(f"show -s --format=%ct {pr.commit.commit_hash}").strip())
-                            if pr_time >= commit_time:
-                                result.append(pr)
+                        # Look for our unique tags in the commit message
+                        commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
+                        if f"test-tag:{unique_tag1}" in commit_msg or f"test-tag:{unique_tag2}" in commit_msg:
+                            result.append(pr)
                     except:  # Skip failures since we're just filtering
                         pass
             return result
