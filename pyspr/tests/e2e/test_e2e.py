@@ -47,7 +47,7 @@ def get_gh_token() -> str:
                     if "oauth_token" in github_config:
                         return github_config["oauth_token"]
     except Exception as e:
-        print(f"Error reading gh config: {e}")
+        log.info(f"Error reading gh config: {e}")
 
     raise Exception("Could not get GitHub token from gh CLI")
 
@@ -114,18 +114,18 @@ def test_simple_update(test_repo: Tuple[str, str, str, str]) -> None:
     
     # Get current commit message after first update (should have commit ID)
     updated_msg = git_cmd.must_git("show -s --format=%B HEAD").strip()
-    print(f"\nCommit message after first update:\n{updated_msg}")
+    log.info(f"\nCommit message after first update:\n{updated_msg}")
     
     # Helper to find our test PR using unique tag
     def get_test_pr() -> Optional[PullRequest]:
-        print("\nLooking for PR with unique tag...")
+        log.info("\nLooking for PR with unique tag...")
         for pr in github.get_info(None, git_cmd).pull_requests:
             if pr.from_branch.startswith('spr/main/'):
                 try:
                     # Look for our unique tag in the commit message
                     commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
                     if f"[{unique_tag}]" in commit_msg:
-                        print(f"Found PR #{pr.number} with tag and commit ID {pr.commit.commit_id}")
+                        log.info(f"Found PR #{pr.number} with tag and commit ID {pr.commit.commit_id}")
                         return pr
                 except:
                     pass
@@ -146,10 +146,10 @@ def test_simple_update(test_repo: Tuple[str, str, str, str]) -> None:
     
     # Save the initial commit ID for later verification
     initial_commit_id = pr.commit.commit_id
-    print(f"Initial commit ID: {initial_commit_id}")
+    log.info(f"Initial commit ID: {initial_commit_id}")
     
     # Now amend the commit with new content, preserving the unique tag and commit ID
-    print("\nAmending commit...")
+    log.info("\nAmending commit...")
     with open(test_file, "a") as f:
         f.write("additional content\n")
     run_cmd(f"git add {test_file}")
@@ -168,14 +168,14 @@ def test_simple_update(test_repo: Tuple[str, str, str, str]) -> None:
     amended_commit_hash = git_cmd.must_git("rev-parse HEAD").strip()
     assert amended_commit_hash != first_commit_hash, "Amended commit should have new hash"
     
-    print(f"\nAmended commit message:\n{git_cmd.must_git('show -s --format=%B HEAD').strip()}")
+    log.info(f"\nAmended commit message:\n{git_cmd.must_git('show -s --format=%B HEAD').strip()}")
     
     # Run pyspr update again
     os.chdir(orig_dir)
     run_cmd(f"rye run pyspr update -C {repo_dir} -v")  # Added -v for verbose output
     os.chdir(repo_dir)
     
-    print(f"\nCommit message after second update:\n{git_cmd.must_git('show -s --format=%B HEAD').strip()}")
+    log.info(f"\nCommit message after second update:\n{git_cmd.must_git('show -s --format=%B HEAD').strip()}")
     
     # Verify PR state after amendment
     pr = get_test_pr()
@@ -202,7 +202,7 @@ def test_wip_behavior(test_repo: Tuple[str, str, str, str], caplog: pytest.LogCa
     - WIP commits are not converted to PRs
     - Regular commits after WIP are not converted to PRs
     """
-    print("=== TEST STARTED ===")  # Just to see if test runs at all
+    log.info("=== TEST STARTED ===")  # Just to see if test runs at all
     caplog.set_level(logging.INFO)
     owner, repo_name, test_branch, repo_dir = test_repo
 
@@ -227,106 +227,106 @@ def test_wip_behavior(test_repo: Tuple[str, str, str, str], caplog: pytest.LogCa
     
     # Create 4 commits: 2 regular, 1 WIP, 1 regular
     def make_commit(file: str, msg: str) -> str:
-        print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Creating commit for {file} - {msg}")
+        log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Creating commit for {file} - {msg}")
         with open(file, "w") as f:
             f.write(f"{file}\n")
         run_cmd(f"git add {file}")
         run_cmd(f'git commit -m "{msg}"')
         result = git_cmd.must_git("rev-parse HEAD").strip()
-        print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Created commit {result[:8]}")
+        log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Created commit {result[:8]}")
         return result
         
-    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Creating commits...")
+    log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Creating commits...")
     c1_hash = make_commit("wip_test1.txt", "First regular commit")
     c2_hash = make_commit("wip_test2.txt", "Second regular commit")
     c3_hash = make_commit("wip_test3.txt", "WIP Third commit")
     _ = make_commit("wip_test4.txt", "Fourth regular commit")  # Not used but kept for completeness
     
-    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Pushing branch with commits...")
+    log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Pushing branch with commits...")
     run_cmd(f"git push -u origin {test_branch}")  # Push branch with commits
-    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Push complete")
+    log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Push complete")
     
     # Run update to create PRs
-    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Creating PRs...")
+    log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Creating PRs...")
     
     # Go back to project dir to run commands 
     os.chdir(orig_dir)
-    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Running pyspr update...")
+    log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Running pyspr update...")
     run_cmd(f"rye run pyspr update -C {repo_dir}")
-    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} pyspr update complete")
+    log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} pyspr update complete")
     
     # Let GitHub process the PRs
-    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Waiting for PRs to be available in GitHub...")
+    log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Waiting for PRs to be available in GitHub...")
     time.sleep(5)
     
     # Go back to repo for verification
     os.chdir(repo_dir)
     
     # Debug: Check what branches actually exist
-    print("Checking remote branches:")
+    log.info("Checking remote branches:")
     remote_branches = git_cmd.must_git("ls-remote --heads origin").split("\n")
     for branch in remote_branches:
         if branch:
-            print(f"  {branch}")
+            log.info(f"  {branch}")
     
     # Helper to find our test PRs 
     def get_test_prs() -> list:
-        print("=== ABOUT TO CALL GITHUB API ===")  # See if we get here before timeout
-        print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Starting PR filtering...")
+        log.info("=== ABOUT TO CALL GITHUB API ===")  # See if we get here before timeout
+        log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Starting PR filtering...")
         gh_start = time.time()
         try:
             info = github.get_info(None, git_cmd)
             prs = info.pull_requests if info else []
         finally:
             gh_end = time.time()
-            print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} GitHub API get_info took {gh_end - gh_start:.2f} seconds")
+            log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} GitHub API get_info took {gh_end - gh_start:.2f} seconds")
         
-        print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Filtering {len(prs)} PRs...")
+        log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Filtering {len(prs)} PRs...")
         filter_start = time.time()
         result = []
         try:
             for pr in prs:
                 try:
                     # Debug each PR being checked
-                    print(f"Checking PR #{pr.number} - branch {pr.from_branch}")
+                    log.info(f"Checking PR #{pr.number} - branch {pr.from_branch}")
                     if pr.from_branch is not None and pr.from_branch.startswith('spr/main/') and pr.commit is not None:
                         files = git_cmd.must_git(f"show --name-only {pr.commit.commit_hash}")
                         test_files = ['wip_test1.txt', 'wip_test2.txt', 'wip_test3.txt', 'wip_test4.txt']
                         if any(f in files for f in test_files):
                             pr_time = int(git_cmd.must_git(f"show -s --format=%ct {pr.commit.commit_hash}").strip())
                             if pr_time >= commit_time:
-                                print(f"Found matching PR #{pr.number}")
+                                log.info(f"Found matching PR #{pr.number}")
                                 result.append(pr)
                 except Exception as e:  # Log any failures
-                    print(f"Error checking PR #{getattr(pr, 'number', 'unknown')}: {e}")
+                    log.info(f"Error checking PR #{getattr(pr, 'number', 'unknown')}: {e}")
                     pass
         finally:
             filter_end = time.time()
-            print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} PR filtering took {filter_end - filter_start:.2f} seconds")
-        print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Found {len(result)} matching PRs")
+            log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} PR filtering took {filter_end - filter_start:.2f} seconds")
+        log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Found {len(result)} matching PRs")
         return result
     
     # Verify only first two PRs were created
-    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Getting GitHub info...")
+    log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Getting GitHub info...")
     info = github.get_info(None, git_cmd)
     assert info is not None, "GitHub info should not be None"
     
-    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Getting commit info for debugging:")
-    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} C1: {c1_hash}")
-    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} C2: {c2_hash}")
-    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} C3: {c3_hash}")
+    log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Getting commit info for debugging:")
+    log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} C1: {c1_hash}")
+    log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} C2: {c2_hash}")
+    log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} C3: {c3_hash}")
     
     # Get our test PRs
-    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Getting filtered test PRs...")
+    log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Getting filtered test PRs...")
     test_prs = get_test_prs()
     
     # Print all PR commit hashes for debugging
-    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Test PR commit hashes:")
+    log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Test PR commit hashes:")
     for pr in test_prs:
-        print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} PR #{pr.number}: {pr.title} - {pr.commit.commit_hash}")
+        log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} PR #{pr.number}: {pr.title} - {pr.commit.commit_hash}")
     
     # Sort PRs by number (most recent first) and take first 2 matching our titles
-    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Finding PRs with target titles...")
+    log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Finding PRs with target titles...")
     test_prs = sorted(test_prs, key=lambda pr: pr.number, reverse=True)
     prs_with_titles = []
     for pr in test_prs:
@@ -335,11 +335,11 @@ def test_wip_behavior(test_repo: Tuple[str, str, str, str], caplog: pytest.LogCa
         if len(prs_with_titles) == 2:
             break
     test_prs = prs_with_titles
-    print(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Found {len(test_prs)} PRs with target titles")
+    log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Found {len(test_prs)} PRs with target titles")
             
-    print("\nMost recent matching PRs:")
+    log.info("\nMost recent matching PRs:")
     for pr in test_prs:
-        print(f"PR #{pr.number}: {pr.title}")
+        log.info(f"PR #{pr.number}: {pr.title}")
             
     assert len(test_prs) == 2, f"Should find 2 PRs before the WIP commit, found {len(test_prs)}: {[pr.title for pr in test_prs]}"
     
@@ -352,10 +352,10 @@ def test_wip_behavior(test_repo: Tuple[str, str, str, str], caplog: pytest.LogCa
     c2_msg = git_cmd.must_git(f"show -s --format=%B {c2_hash}").strip()
     c3_msg = git_cmd.must_git(f"show -s --format=%B {c3_hash}").strip() 
     
-    print("\nVerifying commit messages:")
-    print(f"C1: {c1_msg}")
-    print(f"C2: {c2_msg}")
-    print(f"C3: {c3_msg}")
+    log.info("\nVerifying commit messages:")
+    log.info(f"C1: {c1_msg}")
+    log.info(f"C2: {c2_msg}")
+    log.info(f"C3: {c3_msg}")
     
     # Verify WIP commit is correctly identified
     assert c1_msg is not None, "First commit message should not be None"
@@ -380,7 +380,7 @@ def test_reviewer_repo() -> Generator[Tuple[str, str, str, str, str], None, None
     owner = "yang"
     repo_name = "teststack"
     test_branch = f"test-spr-reviewers-{uuid.uuid4().hex[:7]}"
-    print(f"Using test branch {test_branch} in {owner}/{repo_name}")
+    log.info(f"Using test branch {test_branch} in {owner}/{repo_name}")
     
     # Use gh CLI token
     token = get_gh_token()
@@ -413,7 +413,7 @@ def test_reviewer_repo() -> Generator[Tuple[str, str, str, str, str], None, None
         try:
             run_cmd(f"git push origin --delete {test_branch}")
         except subprocess.CalledProcessError:
-            print(f"Failed to delete remote branch {test_branch}, may not exist")
+            log.info(f"Failed to delete remote branch {test_branch}, may not exist")
 
         os.chdir(orig_dir)
 
@@ -449,7 +449,7 @@ def test_reviewer_functionality_yang(test_reviewer_repo: Tuple[str, str, str, st
     # Get timestamp before we create PRs
     commit_time = int(git_cmd.must_git("show -s --format=%ct").strip())
         
-    print("Creating first commit without reviewer...")
+    log.info("Creating first commit without reviewer...")
     make_commit("r_test1.txt", "First commit")
     run_cmd(f"git push -u origin {test_branch}")
 
@@ -483,22 +483,22 @@ def test_reviewer_functionality_yang(test_reviewer_repo: Tuple[str, str, str, st
     gh_pr1 = github.repo.get_pull(pr1.number)
     
     # Debug review requests for first PR
-    print("\nDEBUG: First PR review requests")
+    log.info("\nDEBUG: First PR review requests")
     try:
         # Get requested reviewers directly
         requested_users, requested_teams = gh_pr1.get_review_requests()
         requested_logins = [u.login.lower() for u in requested_users]
-        print(f"Requested Users: {requested_logins}")
-        print(f"Requested Teams: {list(requested_teams)}")
+        log.info(f"Requested Users: {requested_logins}")
+        log.info(f"Requested Teams: {list(requested_teams)}")
     except Exception as e:
-        print(f"Error getting review data: {e}")
+        log.info(f"Error getting review data: {e}")
         requested_logins = []
     
     assert current_owner.lower() not in requested_logins, f"First PR correctly has no {current_owner} reviewer (can't review own PR)"
-    print(f"Created PR #{pr1.number} with no {current_owner} reviewer")
+    log.info(f"Created PR #{pr1.number} with no {current_owner} reviewer")
 
     # Create second commit and PR with reviewer
-    print("\nCreating second commit with reviewer...")
+    log.info("\nCreating second commit with reviewer...")
     make_commit("r_test2.txt", "Second commit")
     run_cmd("git push")
 
@@ -520,14 +520,14 @@ def test_reviewer_functionality_yang(test_reviewer_repo: Tuple[str, str, str, st
     # Debug first PR reviews - verify still no reviewer
     assert github.repo is not None, "GitHub repo should be available"
     gh_pr1 = github.repo.get_pull(pr1.number)
-    print("\nDEBUG: First PR review requests after update")
+    log.info("\nDEBUG: First PR review requests after update")
     try:
         requested_users, requested_teams = gh_pr1.get_review_requests()
         requested_logins1 = [u.login.lower() for u in requested_users]
-        print(f"Requested Users: {requested_logins1}")
-        print(f"Requested Teams: {list(requested_teams)}")
+        log.info(f"Requested Users: {requested_logins1}")
+        log.info(f"Requested Teams: {list(requested_teams)}")
     except Exception as e:
-        print(f"Error getting review data: {e}")
+        log.info(f"Error getting review data: {e}")
         requested_logins1 = []
         
     assert current_owner.lower() not in requested_logins1, f"First PR correctly has no {current_owner} reviewer"
@@ -536,23 +536,23 @@ def test_reviewer_functionality_yang(test_reviewer_repo: Tuple[str, str, str, st
     gh_pr2 = github.repo.get_pull(pr2.number)
     
     # Debug second PR reviews - verify has no reviewer (can't add self)
-    print("\nDEBUG: Second PR review requests")
+    log.info("\nDEBUG: Second PR review requests")
     try:
         requested_users, requested_teams = gh_pr2.get_review_requests()
         requested_logins2 = [u.login.lower() for u in requested_users]
-        print(f"Requested Users: {requested_logins2}")
-        print(f"Requested Teams: {list(requested_teams)}")
+        log.info(f"Requested Users: {requested_logins2}")
+        log.info(f"Requested Teams: {list(requested_teams)}")
     except Exception as e:
-        print(f"Error getting review data: {e}")
+        log.info(f"Error getting review data: {e}")
         requested_logins2 = []
         
     # This assertion is the key difference - we expect no reviewer because GitHub
     # doesn't allow you to request reviews from yourself
     assert current_owner.lower() not in requested_logins2, f"Second PR correctly has no {current_owner} reviewer (can't review own PR)"
     
-    print(f"Successfully verified -r flag handling with self-review attempt")
+    log.info(f"Successfully verified -r flag handling with self-review attempt")
 
-    print(f"Verified PR #{pr1.number} has no reviewer and PR #{pr2.number} has testluser")
+    log.info(f"Verified PR #{pr1.number} has no reviewer and PR #{pr2.number} has testluser")
 
     # Return to original directory
     os.chdir(orig_dir)
@@ -598,7 +598,7 @@ def test_reviewer_functionality_testluser(test_reviewer_repo: Tuple[str, str, st
                     pass
         return result
         
-    print("Creating first commit without reviewer...")
+    log.info("Creating first commit without reviewer...")
     make_commit("r_test1.txt", "First commit")
     run_cmd(f"git push -u origin {test_branch}")
 
@@ -616,19 +616,19 @@ def test_reviewer_functionality_testluser(test_reviewer_repo: Tuple[str, str, st
     pr1 = our_prs[0]
     gh_pr1 = github.repo.get_pull(pr1.number)
     
-    print(f"\nFound test PR #{pr1.number} with branch {pr1.from_branch}")
+    log.info(f"\nFound test PR #{pr1.number} with branch {pr1.from_branch}")
     
     # Verify no reviewer on first PR
     requested_users, _ = gh_pr1.get_review_requests()
     requested_logins = [u.login.lower() for u in requested_users]
     assert "testluser" not in requested_logins, "First PR correctly has no testluser reviewer"
-    print(f"Verified PR #{pr1.number} has no reviewer")
+    log.info(f"Verified PR #{pr1.number} has no reviewer")
 
     # Switch to SPR-managed branch for second commit
     run_cmd(f"git checkout {pr1.from_branch}")
 
     # Create second commit 
-    print("\nCreating second commit...")
+    log.info("\nCreating second commit...")
     make_commit("r_test2.txt", "Second commit")
     run_cmd("git push")  # Push to current SPR branch
 
@@ -658,15 +658,15 @@ def test_reviewer_functionality_testluser(test_reviewer_repo: Tuple[str, str, st
     assert "testluser" not in requested_logins, "Second PR correctly has no testluser reviewer due to self-review restriction"
     
     # Verify debug message shows attempt to add reviewers
-    print("\nDEBUG: Update command output:")
-    print(update_output)
+    log.info("\nDEBUG: Update command output:")
+    log.info(update_output)
     assert "Trying to add reviewers" in update_output or \
            "Adding reviewers" in update_output or \
            "DEBUG:" in update_output, \
            "Should have attempted to add testluser as reviewer"
     
-    print(f"Verified PR #{pr1.number} has no reviewer and PR #{pr2.number} has no reviewer due to self-review restriction")
-    print("Successfully verified -r flag handles self-review restriction")
+    log.info(f"Verified PR #{pr1.number} has no reviewer and PR #{pr2.number} has no reviewer due to self-review restriction")
+    log.info("Successfully verified -r flag handles self-review restriction")
 
     # Return to original directory
     os.chdir(orig_dir)
@@ -677,9 +677,9 @@ def test_repo() -> Generator[Tuple[str, str, str, str], None, None]:
     orig_dir = os.getcwd()
     owner = "yang"
     name = "teststack"
-    repo_name = f"{owner}/{name}"  # Used in print and subprocess call
+    repo_name = f"{owner}/{name}"  # Used in log.info and subprocess call
     test_branch = f"test-spr-amend-{uuid.uuid4().hex[:7]}"
-    print(f"Using test branch {test_branch} in {repo_name}")
+    log.info(f"Using test branch {test_branch} in {repo_name}")
     
     # Use gh CLI token
     token = get_gh_token()
@@ -711,7 +711,7 @@ def test_repo() -> Generator[Tuple[str, str, str, str], None, None]:
         try:
             run_cmd(f"git push origin --delete {test_branch}")
         except subprocess.CalledProcessError:
-            print(f"Failed to delete remote branch {test_branch}, may not exist")
+            log.info(f"Failed to delete remote branch {test_branch}, may not exist")
 
         # Return to original directory
         os.chdir(orig_dir)
@@ -744,7 +744,7 @@ def test_amend_workflow(test_repo: Tuple[str, str, str, str]) -> None:
         run_cmd(f'git commit -m "{msg}"')
         return git_cmd.must_git("rev-parse HEAD").strip()
         
-    print("Creating commits...")
+    log.info("Creating commits...")
     c1_hash = make_commit("ta.txt", "line 1", "First commit")
     c2_hash = make_commit("tb.txt", "line 1", "Second commit")  
     c3_hash = make_commit("tc.txt", "line 1", "Third commit")
@@ -752,7 +752,7 @@ def test_amend_workflow(test_repo: Tuple[str, str, str, str]) -> None:
     run_cmd(f"git push -u origin {test_branch}")  # Push branch with commits
     
     # Initial update to create PRs
-    print("Creating initial PRs...")
+    log.info("Creating initial PRs...")
     subprocess.run(["rye", "run", "pyspr", "update"], check=True)
     
     # Helper to find our test PRs 
@@ -777,7 +777,7 @@ def test_amend_workflow(test_repo: Tuple[str, str, str, str]) -> None:
     test_prs = get_test_prs()
     assert len(test_prs) == 4, f"Should have 4 PRs for our test, found {len(test_prs)}"
     pr1, pr2, pr3, pr4 = sorted(test_prs, key=lambda pr: pr.number)
-    print(f"Created PRs: #{pr1.number}, #{pr2.number}, #{pr3.number}, #{pr4.number}")
+    log.info(f"Created PRs: #{pr1.number}, #{pr2.number}, #{pr3.number}, #{pr4.number}")
     
     # Save PR numbers and commit IDs and hashes
     pr1_num = pr1.number
@@ -797,10 +797,10 @@ def test_amend_workflow(test_repo: Tuple[str, str, str, str]) -> None:
     _ = pr4.commit.commit_hash
 
     # Debug: Check if commit messages have IDs after first update
-    print("\nChecking commit messages after first update:")
+    log.info("\nChecking commit messages after first update:")
     for c_hash in [c1_hash, c2_hash, c3_hash, c4_hash]:
         msg = git_cmd.must_git(f"show -s --format=%B {c_hash}").strip()
-        print(f"Commit {c_hash[:8]} message:\n{msg}\n")
+        log.info(f"Commit {c_hash[:8]} message:\n{msg}\n")
 
     # Verify initial PR chain
     assert pr1.base_ref == "main"
@@ -808,7 +808,7 @@ def test_amend_workflow(test_repo: Tuple[str, str, str, str]) -> None:
     assert pr3.base_ref == f"spr/main/{c2_id}"
     assert pr4.base_ref == f"spr/main/{c3_id}"
     
-    print("Amending third commit, deleting second, adding new commit...")
+    log.info("Amending third commit, deleting second, adding new commit...")
     # Get current messages (which should have IDs from spr update)
     c1_msg = git_cmd.must_git(f"show -s --format=%B HEAD~3").strip()
     c3_msg = git_cmd.must_git(f"show -s --format=%B HEAD~1").strip()
@@ -820,11 +820,11 @@ def test_amend_workflow(test_repo: Tuple[str, str, str, str]) -> None:
     run_cmd(f'git commit --amend -m "{c1_msg}"')
     c1_hash_new = git_cmd.must_git("rev-parse HEAD").strip()
     log1 = git_cmd.must_git(f"show -s --format=%B {c1_hash_new}").strip()
-    print(f"Commit 1: old={c1_hash} new={c1_hash_new} id={c1_id}")
-    print(f"Log 1:\n{log1}")
+    log.info(f"Commit 1: old={c1_hash} new={c1_hash_new} id={c1_id}")
+    log.info(f"Log 1:\n{log1}")
     
     # Skip c2 entirely - delete it from stack
-    print("Skipping c2 - deleting it")
+    log.info("Skipping c2 - deleting it")
     
     # Cherry-pick and amend c3, preserving SPR-updated message
     run_cmd(f"git cherry-pick {c3_hash}")
@@ -834,11 +834,11 @@ def test_amend_workflow(test_repo: Tuple[str, str, str, str]) -> None:
     run_cmd(f'git commit --amend -m "{c3_msg}"')
     c3_hash_new = git_cmd.must_git("rev-parse HEAD").strip()
     log3 = git_cmd.must_git(f"show -s --format=%B {c3_hash_new}").strip()
-    print(f"Commit 3: old={c3_hash} new={c3_hash_new} id={c3_id}")
-    print(f"Log 3:\n{log3}")
+    log.info(f"Commit 3: old={c3_hash} new={c3_hash_new} id={c3_id}")
+    log.info(f"Log 3:\n{log3}")
     
     # Insert new c3.5
-    print("Inserting new c3.5")
+    log.info("Inserting new c3.5")
     _new_c35_hash = make_commit("tc5.txt", "line 1", "Commit three point five")
     
     # Cherry-pick c4, preserving SPR-updated message
@@ -846,10 +846,10 @@ def test_amend_workflow(test_repo: Tuple[str, str, str, str]) -> None:
     run_cmd(f'git commit --amend -m "{c4_msg}"')
     c4_hash_new = git_cmd.must_git("rev-parse HEAD").strip()
     log4 = git_cmd.must_git(f"show -s --format=%B {c4_hash_new}").strip()
-    print(f"Commit 4: old={c4_hash} new={c4_hash_new} id={c4_id}")
-    print(f"Log 4:\n{log4}")
+    log.info(f"Commit 4: old={c4_hash} new={c4_hash_new} id={c4_id}")
+    log.info(f"Log 4:\n{log4}")
     
-    print("Updating PRs after amend...")
+    log.info("Updating PRs after amend...")
     # Run update with amended commits
     subprocess.run(["rye", "run", "pyspr", "update"], check=True)
     
@@ -893,10 +893,10 @@ def test_amend_workflow(test_repo: Tuple[str, str, str, str]) -> None:
     assert pr4.base_ref == f"spr/main/{new_pr.commit.commit_id}", f"PR4 base ref incorrect: {pr4.base_ref}" # PR4 now targets new PR
 
     # Verify commit IDs exist in messages and are preserved through updates
-    print("\nVerifying commit IDs in messages after updates:")
+    log.info("\nVerifying commit IDs in messages after updates:")
     for pr in [pr1, pr3, new_pr, pr4]:
         message = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}").strip()
-        print(f"PR #{pr.number} message:\n{message}\n")
+        log.info(f"PR #{pr.number} message:\n{message}\n")
         assert f"commit-id:{pr.commit.commit_id}" in message, f"PR #{pr.number} should have correct commit ID in message"
 
 def _run_merge_test(
@@ -943,29 +943,29 @@ def _run_merge_test(
         with open(file, "w") as f:
             f.write(f"{file}\n{line}\n")
         try:
-            print(f"Creating file {file}...")
+            log.info(f"Creating file {file}...")
             run_cmd(f"git add {file}")
             run_cmd("git status")  # Debug: show git status after add
             result = subprocess.run(f'git commit -m "{msg}"', shell=True, check=False,
                                   stderr=subprocess.PIPE, stdout=subprocess.PIPE,
                                   universal_newlines=True)
             if result.returncode != 0:
-                print(f"Git commit failed with code {result.returncode}")
-                print(f"STDOUT: {result.stdout}")
-                print(f"STDERR: {result.stderr}")
-                print("Directory contents:")
+                log.info(f"Git commit failed with code {result.returncode}")
+                log.info(f"STDOUT: {result.stdout}")
+                log.info(f"STDERR: {result.stderr}")
+                log.info("Directory contents:")
                 subprocess.run(["ls", "-la"], check=False)
                 raise subprocess.CalledProcessError(result.returncode, result.args,
                                                    output=result.stdout,
                                                    stderr=result.stderr)
         except subprocess.CalledProcessError as e:
-            print(f"Failed to commit: {e}")
+            log.info(f"Failed to commit: {e}")
             raise
         result = git_cmd.must_git("rev-parse HEAD").strip()
         assert result is not None, "Commit hash should not be None"
         return result
         
-    print("Creating commits...")
+    log.info("Creating commits...")
     try:
         # Use static filenames but unique content
         unique = str(uuid.uuid4())[:8]
@@ -988,7 +988,7 @@ def _run_merge_test(
     os.chdir(orig_dir)
     
     # Initial update to create PRs
-    print("Creating initial PRs...")
+    log.info("Creating initial PRs...")
     subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
     
     os.chdir(repo_dir)
@@ -1015,7 +1015,7 @@ def _run_merge_test(
     assert len(prs) == num_commits, f"Should have created {num_commits} PRs for our test, found {len(prs)}"
     prs = sorted(prs, key=lambda pr: pr.number)
     pr_nums = [pr.number for pr in prs]
-    print(f"Created PRs: {', '.join(f'#{num}' for num in pr_nums)}")
+    log.info(f"Created PRs: {', '.join(f'#{num}' for num in pr_nums)}")
 
     # Verify initial PR chain
     assert prs[0].base_ref == "main", f"Bottom PR should target main, got {prs[0].base_ref}"
@@ -1030,33 +1030,33 @@ def _run_merge_test(
     merge_cmd = ["rye", "run", "pyspr", "merge", "-C", repo_dir]
     if count is not None:
         merge_cmd.extend(["-c", str(count)])
-    print(f"\nMerging {'to queue' if use_merge_queue else 'all'} PRs{' (partial)' if count else ''}...")
+    log.info(f"\nMerging {'to queue' if use_merge_queue else 'all'} PRs{' (partial)' if count else ''}...")
     try:
         merge_output = subprocess.check_output(
             merge_cmd,
             stderr=subprocess.STDOUT,
             universal_newlines=True
         )
-        print(merge_output)
+        log.info(merge_output)
     except subprocess.CalledProcessError as e:
         # Get final PR state to help debug failure
         os.chdir(repo_dir)
         info = github.get_info(None, git_cmd)
         assert info is not None, "GitHub info should not be None"
-        print("\nFinal PR state after merge attempt:")
+        log.info("\nFinal PR state after merge attempt:")
         for pr in sorted(info.pull_requests, key=lambda pr: pr.number):
             if github.repo:
                 gh_pr = github.repo.get_pull(pr.number)
-                print(f"PR #{pr.number}:")
-                print(f"  Title: {gh_pr.title}")
-                print(f"  Base: {gh_pr.base.ref}")
-                print(f"  State: {gh_pr.state}")
-                print(f"  Merged: {gh_pr.merged}")
+                log.info(f"PR #{pr.number}:")
+                log.info(f"  Title: {gh_pr.title}")
+                log.info(f"  Base: {gh_pr.base.ref}")
+                log.info(f"  State: {gh_pr.state}")
+                log.info(f"  Merged: {gh_pr.merged}")
                 if use_merge_queue:
-                    print(f"  Mergeable state: {gh_pr.mergeable_state}")
-                    print(f"  Auto merge: {getattr(gh_pr, 'auto_merge', None)}")
+                    log.info(f"  Mergeable state: {gh_pr.mergeable_state}")
+                    log.info(f"  Auto merge: {getattr(gh_pr, 'auto_merge', None)}")
         os.chdir(orig_dir)
-        print(f"Merge failed with output:\n{e.output}")
+        log.info(f"Merge failed with output:\n{e.output}")
         raise
 
     # For partial merges, find the top PR number differently based on count
@@ -1141,7 +1141,7 @@ def test_mq_repo() -> Generator[Tuple[str, str, str, str], None, None]:
     orig_dir = os.getcwd()
     repo_name = "yangenttest1/teststack"
     test_branch = f"test-spr-mq-{uuid.uuid4().hex[:7]}"
-    print(f"Using test branch {test_branch} in {repo_name}")
+    log.info(f"Using test branch {test_branch} in {repo_name}")
     
     # Use gh CLI token
     token = get_gh_token()
@@ -1173,7 +1173,7 @@ def test_mq_repo() -> Generator[Tuple[str, str, str, str], None, None]:
         try:
             run_cmd(f"git push origin --delete {test_branch}")
         except subprocess.CalledProcessError:
-            print(f"Failed to delete remote branch {test_branch}, may not exist")
+            log.info(f"Failed to delete remote branch {test_branch}, may not exist")
 
         # Return to original directory
         os.chdir(orig_dir)
@@ -1231,7 +1231,7 @@ def test_replace_commit(test_repo: Tuple[str, str, str, str]) -> None:
         return commit_hash, commit_id
 
     try:
-        print("\nCreating initial stack of 3 commits...")
+        log.info("\nCreating initial stack of 3 commits...")
         run_cmd("git checkout main")
         run_cmd("git pull")
         branch = f"test-replace-{uuid.uuid4().hex[:7]}"
@@ -1260,7 +1260,7 @@ def test_replace_commit(test_repo: Tuple[str, str, str, str]) -> None:
                         pass
             return result
 
-        print("Creating initial PRs...")
+        log.info("Creating initial PRs...")
         os.chdir(orig_dir)
         subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
         os.chdir(repo_dir)
@@ -1277,7 +1277,7 @@ def test_replace_commit(test_repo: Tuple[str, str, str, str]) -> None:
         assert c3_id in prs_by_id, f"No PR found for commit C ({c3_id})"
         
         pr1, pr2, pr3 = prs_by_id[c1_id], prs_by_id[c2_id], prs_by_id[c3_id]
-        print(f"Created PRs: #{pr1.number} (A), #{pr2.number} (B), #{pr3.number} (C)")
+        log.info(f"Created PRs: #{pr1.number} (A), #{pr2.number} (B), #{pr3.number} (C)")
         pr2_num = pr2.number  # Remember B's PR number
 
         # Verify PR stack
@@ -1286,20 +1286,20 @@ def test_replace_commit(test_repo: Tuple[str, str, str, str]) -> None:
         assert pr3.base_ref == f"spr/main/{c2_id}", "PR3 should target PR2"
 
         # 2. Replace commit B with new commit D
-        print("\nReplacing commit B with new commit D...")
+        log.info("\nReplacing commit B with new commit D...")
         run_cmd("git reset --hard HEAD~2")  # Remove B and C
         _new_c2_hash, new_c2_id = make_commit("file2_new.txt", "line 1", "New Commit D")
         run_cmd(f"git cherry-pick {c3_hash}")  # Add C back
         run_cmd("git push -f origin")
 
         # 3. Run update
-        print("Running update after replace...")
+        log.info("Running update after replace...")
         os.chdir(orig_dir)
         subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
         os.chdir(repo_dir)
 
         # 4. Verify:
-        print("\nVerifying PR handling after replace...")
+        log.info("\nVerifying PR handling after replace...")
         relevant_prs = get_test_prs()
         pr_nums_to_check: Set[int] = set(pr.number for pr in relevant_prs)
         if pr2_num not in pr_nums_to_check:
@@ -1319,14 +1319,14 @@ def test_replace_commit(test_repo: Tuple[str, str, str, str]) -> None:
             reused_pr = next((pr for pr in relevant_prs if pr.number == pr2_num), None)
             if reused_pr:
                 assert reused_pr.commit.commit_id == new_c2_id, f"PR #{pr2_num} should not retain B's commit - found {reused_pr.commit.commit_id}"
-                print(f"Found PR #{pr2_num} reused for commit {new_c2_id}")
+                log.info(f"Found PR #{pr2_num} reused for commit {new_c2_id}")
         else:
-            print(f"PR #{pr2_num} was properly closed")
+            log.info(f"PR #{pr2_num} was properly closed")
         
         # - Verify new commit D has a PR
         assert new_c2_id in active_pr_ids, f"Should have PR for new commit D ({new_c2_id})"
         new_pr = active_pr_ids[new_c2_id]
-        print(f"Found PR #{new_pr.number} for new commit {new_c2_id}")
+        log.info(f"Found PR #{new_pr.number} for new commit {new_c2_id}")
         
         # Key assertions to verify we don't use positional matching:
         # 1. B's PR should be closed, not reused for any commit
@@ -1353,7 +1353,7 @@ def test_replace_commit(test_repo: Tuple[str, str, str, str]) -> None:
         assert pr_d is not None, "PR_D should exist"
         assert pr3 is not None, "PR3 should exist"
         
-        print(f"Final PR stack: #{pr1.number} <- #{pr_d.number} <- #{pr3.number}")
+        log.info(f"Final PR stack: #{pr1.number} <- #{pr_d.number} <- #{pr3.number}")
 
         assert pr1.base_ref == "main", "PR1 should target main"
         assert pr_d.base_ref == f"spr/main/{c1_id}", "New PR should target PR1" 
@@ -1426,7 +1426,7 @@ def test_no_rebase_functionality(test_repo: Tuple[str, str, str, str]) -> None:
         commit_count_before = len(git_cmd.must_git("log --oneline").splitlines())
 
         # Step 2: Test regular update - should rebase
-        print("\nRunning regular update logic...")
+        log.info("\nRunning regular update logic...")
         # Test just the rebase part without GitHub API
         os.chdir(repo_dir)  # Ensure we're in repo dir
         regular_output = io.StringIO()
@@ -1443,7 +1443,7 @@ def test_no_rebase_functionality(test_repo: Tuple[str, str, str, str]) -> None:
                 # Do the rebase part we want to test
                 git_cmd.must_git(f"rebase origin/main --autostash")
         except Exception as e:
-            print(f"ERROR: {e}")
+            log.info(f"ERROR: {e}")
         regular_output_str = regular_output.getvalue()
         
         # Verify regular update rebased by:
@@ -1463,7 +1463,7 @@ def test_no_rebase_functionality(test_repo: Tuple[str, str, str, str]) -> None:
         run_cmd(f"git reset --hard {branch_sha}")
         
         # Step 4: Test update with --no-rebase
-        print("\nRunning update with --no-rebase logic...")
+        log.info("\nRunning update with --no-rebase logic...")
         os.chdir(repo_dir)  # Ensure we're in repo dir
         no_rebase_output = io.StringIO()
         try:
@@ -1484,14 +1484,14 @@ def test_no_rebase_functionality(test_repo: Tuple[str, str, str, str]) -> None:
                     os.environ.get("SPR_NOREBASE") == "true" or 
                     config.user.get('noRebase', False)
                 )
-                print(f"DEBUG: no_rebase={no_rebase}")
+                log.info(f"DEBUG: no_rebase={no_rebase}")
                 if not no_rebase:
                     git_cmd.must_git(f"rebase origin/main --autostash")
 
                 # Cleanup env var
                 del os.environ["SPR_NOREBASE"]
         except Exception as e:
-            print(f"ERROR: {e}")
+            log.info(f"ERROR: {e}")
         no_rebase_output_str = no_rebase_output.getvalue()
         
         # Verify no-rebase skipped rebasing by:
