@@ -152,8 +152,8 @@ def test_delete_insert(test_repo: Tuple[str, str, str, str]) -> None:
     
     log.info(f"\nInitial PRs created: #{pr1_num}, #{pr2_num}, #{pr3_num}, #{pr4_num}")
     
-    # Now reset and recreate commits but skip commit2
-    log.info("\nRecreating commits without second commit...")
+    # Now reset and recreate commits but skip commit2 and add c3.5
+    log.info("\nRecreating commits without second commit and adding c3.5...")
     run_cmd("git reset --hard HEAD~4")  # Remove all commits
     
     # Get the original commit messages
@@ -161,9 +161,13 @@ def test_delete_insert(test_repo: Tuple[str, str, str, str]) -> None:
     c3_msg = git_cmd.must_git(f"show -s --format=%B {commit3_hash}").strip()
     c4_msg = git_cmd.must_git(f"show -s --format=%B {commit4_hash}").strip()
     
-    # Recreate commits preserving commit IDs, but skip commit2
+    # Recreate commits preserving commit IDs, but skip commit2 and add c3.5
     run_cmd(f"git cherry-pick {commit1_hash}")
     run_cmd(f"git cherry-pick {commit3_hash}")
+    
+    # Add new c3.5 commit
+    new_c35_hash, new_c35_id = make_commit("test3_5.txt", "test content 3.5", "Commit three point five")
+    
     run_cmd(f"git cherry-pick {commit4_hash}")
     
     # Push changes
@@ -172,9 +176,9 @@ def test_delete_insert(test_repo: Tuple[str, str, str, str]) -> None:
     # Run pyspr update again
     run_cmd(f"pyspr update -v")
     
-    # Get PRs after removing commit2
+    # Get PRs after removing commit2 and adding c3.5
     prs = get_test_prs()
-    assert len(prs) == 3, f"Should have 3 PRs after removing commit2, found {len(prs)}"
+    assert len(prs) == 4, f"Should have 4 PRs after removing commit2 and adding c3.5, found {len(prs)}"
     
     # Get PR numbers that still exist
     current_pr_nums = {pr.number for pr in prs}
@@ -189,22 +193,27 @@ def test_delete_insert(test_repo: Tuple[str, str, str, str]) -> None:
     pr1_after = next((pr for pr in prs if pr.number == pr1_num), None)
     pr3_after = next((pr for pr in prs if pr.number == pr3_num), None)
     pr4_after = next((pr for pr in prs if pr.number == pr4_num), None)
+    # Find the new PR for c3.5
+    pr35 = next((pr for pr in prs if pr.number not in [pr1_num, pr2_num, pr3_num, pr4_num]), None)
     
     assert pr1_after is not None, f"PR1 #{pr1_num} should exist"
     assert pr3_after is not None, f"PR3 #{pr3_num} should exist"
+    assert pr35 is not None, f"New PR for c3.5 should exist"
     assert pr4_after is not None, f"PR4 #{pr4_num} should exist"
     
     # Verify new PR chain
     assert pr1_after.base_ref == "main", "First PR should target main"
     assert pr3_after.base_ref == f"spr/main/{commit1_id}", "Third PR should now target first PR's branch"
-    assert pr4_after.base_ref == f"spr/main/{commit3_id}", "Fourth PR should target third PR's branch"
+    assert pr35.base_ref == f"spr/main/{commit3_id}", "New PR should target third PR's branch"
+    assert pr4_after.base_ref == f"spr/main/{new_c35_id}", "Fourth PR should target new PR's branch"
     
     # Verify commit IDs remained the same
     assert pr1_after.commit.commit_id == commit1_id, f"PR1 commit ID should remain {commit1_id}"
     assert pr3_after.commit.commit_id == commit3_id, f"PR3 commit ID should remain {commit3_id}"
+    assert pr35.commit.commit_id == new_c35_id, f"New PR commit ID should be {new_c35_id}"
     assert pr4_after.commit.commit_id == commit4_id, f"PR4 commit ID should remain {commit4_id}"
     
-    log.info(f"\nVerified PRs after removing commit2: #{pr1_num} -> #{pr3_num} -> #{pr4_num}")
+    log.info(f"\nVerified PRs after removing commit2 and adding c3.5: #{pr1_num} -> #{pr3_num} -> #{pr35.number} -> #{pr4_num}")
     log.info(f"PR2 #{pr2_num} correctly closed")
     
     os.chdir(orig_dir)
@@ -765,9 +774,6 @@ def test_reorder(test_repo: Tuple[str, str, str, str]) -> None:
     run_cmd(f"git cherry-pick {commit2_hash}")
     run_cmd(f"git cherry-pick {commit4_hash}")  # c4 now before c3
     run_cmd(f"git cherry-pick {commit3_hash}")  # c3 now after c4
-    
-    # Push changes
-    run_cmd("git push -f")
     
     # Run pyspr update again
     run_cmd(f"pyspr update -v")
