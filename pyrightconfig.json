@@ -1,4 +1,8 @@
 {
   "include": ["pyspr"],
-  "strict": true
+  "typeCheckingMode": "strict",
+  "reportPrivateUsage": true,
+  "reportUntypedFunctionDecorator": true,
+  "reportInvalidTypeVarUse": true,
+  "reportUnusedClass": true
 }
