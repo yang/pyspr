@@ -330,12 +330,9 @@ class GitHubClient:
                                       base_ref=base_ref, from_branch=from_branch,
                                       in_queue=in_queue, title=title, body=body)
                                       
-                        # Only add to map if commit ID exists in local stack
-                        if commit_id in local_commit_ids:
-                            logger.debug(f"Adding PR #{number} to map with commit ID {commit_id}")
-                            pull_request_map[commit_id] = pr
-                        else:
-                            logger.debug(f"Skipping PR #{number} - commit ID {commit_id} not in local stack")
+                        # Add PR to map regardless of local commits to follow chain
+                        logger.debug(f"Adding PR #{number} to map with commit ID {commit_id}")
+                        pull_request_map[commit_id] = pr
             
         except Exception as e:
             logger.error(f"GraphQL query failed: {e}")
@@ -387,12 +384,9 @@ class GitHubClient:
                                      in_queue=in_queue,
                                      title=pr.title, body=pr.body)
                                      
-                    # Only add to map if commit ID exists in local stack
-                    if commit_id in local_commit_ids:
-                        logger.debug(f"Adding PR #{pr.number} to map with commit ID {commit_id}")
-                        pull_request_map[commit_id] = new_pr
-                    else:
-                        logger.debug(f"Skipping PR #{pr.number} - commit ID {commit_id} not in local stack")
+                    # Add PR to map regardless of local commits to follow chain
+                    logger.debug(f"Adding PR #{pr.number} to map with commit ID {commit_id}")
+                    pull_request_map[commit_id] = new_pr
 
         # Build PR stack like Go version
         pull_requests = []
