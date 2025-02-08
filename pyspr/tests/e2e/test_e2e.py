@@ -844,10 +844,6 @@ def _run_merge_test(
     else:
         owner, repo_name, test_branch, repo_dir = repo_fixture
 
-    orig_dir = os.getcwd()
-    # Temporarily go to repo to create commits
-    os.chdir(repo_dir)
-
     # Config based on parameters
     config = Config({
         'repo': {
@@ -945,9 +941,6 @@ def _run_merge_test(
         assert prs[i].base_ref == f"spr/main/{prs[i-1].commit.commit_id}", \
             f"PR #{prs[i].number} should target PR #{prs[i-1].number}, got {prs[i].base_ref}"
 
-    # Go back to project dir to run merge
-    os.chdir(orig_dir)
-
     # Run merge for all or some PRs
     merge_cmd = ["pyspr", "merge"]
     if count is not None:
@@ -961,8 +954,6 @@ def _run_merge_test(
         )
         log.info(merge_output)
     except subprocess.CalledProcessError as e:
-        # Get final PR state to help debug failure
-        os.chdir(repo_dir)
         info = github.get_info(None, git_cmd)
         assert info is not None, "GitHub info should not be None"
         log.info("\nFinal PR state after merge attempt:")
@@ -977,7 +968,6 @@ def _run_merge_test(
                 if use_merge_queue:
                     log.info(f"  Mergeable state: {gh_pr.mergeable_state}")
                     log.info(f"  Auto merge: {getattr(gh_pr, 'auto_merge', None)}")
-        os.chdir(orig_dir)
         log.info(f"Merge failed with output:\n{e.output}")
         raise
 
@@ -996,8 +986,6 @@ def _run_merge_test(
         if use_merge_queue:
             assert "added to merge queue" in merge_output, "PR should be added to merge queue"
 
-    # Go back to repo to verify final state 
-    os.chdir(repo_dir)
     info = github.get_info(None, git_cmd)
     assert info is not None, "GitHub info should not be None"
     
@@ -1048,9 +1036,6 @@ def _run_merge_test(
         # Verify remaining PRs stay open
         for pr in to_remain:
             assert pr.number in prs_by_num, f"PR #{pr.number} should remain open"
-
-    # Return to project dir
-    os.chdir(orig_dir)
 
 def test_merge_workflow(test_repo: Tuple[str, str, str, str]) -> None:
     """Test full merge workflow with real PRs."""
@@ -1340,7 +1325,6 @@ def test_no_rebase_functionality(test_repo: Tuple[str, str, str, str]) -> None:
         # Step 2: Test regular update - should rebase
         log.info("\nRunning regular update logic...")
         # Test just the rebase part without GitHub API
-        os.chdir(repo_dir)  # Ensure we're in repo dir
         regular_output = io.StringIO()
         try:
             # Manual simulation of fetch_and_get_github_info without GitHub API
@@ -1376,7 +1360,6 @@ def test_no_rebase_functionality(test_repo: Tuple[str, str, str, str]) -> None:
         
         # Step 4: Test update with --no-rebase
         log.info("\nRunning update with --no-rebase logic...")
-        os.chdir(repo_dir)  # Ensure we're in repo dir
         no_rebase_output = io.StringIO()
         try:
             # Manual simulation of fetch_and_get_github_info without GitHub API
