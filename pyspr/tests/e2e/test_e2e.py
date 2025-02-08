@@ -74,7 +74,8 @@ def run_cmd(cmd: str) -> None:
     subprocess.run(cmd, shell=True, check=True)
 
 def test_simple_update(test_repo: Tuple[str, str, str, str]) -> None:
-    """Test that creates four commits, runs update, amends the top commit, updates again, and verifies PR state after each update."""
+    """Test that creates four commits, runs update, then recreates commits but skips the second one,
+    and verifies PR state after each update."""
     owner, repo_name, test_branch, repo_dir = test_repo
 
     orig_dir = os.getcwd()
@@ -97,27 +98,26 @@ def test_simple_update(test_repo: Tuple[str, str, str, str]) -> None:
     unique_tag = f"test-simple-update-{uuid.uuid4().hex[:8]}"
     
     # Create four test commits with unique tag in message
-    def make_commit(file: str, content: str, msg: str) -> str:
+    def make_commit(file: str, content: str, msg: str) -> Tuple[str, str]:
+        commit_id = uuid.uuid4().hex[:8]
+        full_msg = f"{msg} [test-tag:{unique_tag}]\n\ncommit-id:{commit_id}"
         with open(file, "w") as f:
             f.write(f"{file}\n{content}\n")
         run_cmd(f"git add {file}")
-        run_cmd(f'git commit -m "{msg} [test-tag:{unique_tag}]"')
-        return git_cmd.must_git("rev-parse HEAD").strip()
+        run_cmd(f'git commit -m "{full_msg}"')
+        commit_hash = git_cmd.must_git("rev-parse HEAD").strip()
+        return commit_hash, commit_id
         
-    commit1_hash = make_commit("test1.txt", "test content 1", "First commit")
-    commit2_hash = make_commit("test2.txt", "test content 2", "Second commit")
-    commit3_hash = make_commit("test3.txt", "test content 3", "Third commit")
-    commit4_hash = make_commit("test4.txt", "test content 4", "Fourth commit")
+    commit1_hash, commit1_id = make_commit("test1.txt", "test content 1", "First commit")
+    commit2_hash, commit2_id = make_commit("test2.txt", "test content 2", "Second commit")
+    commit3_hash, commit3_id = make_commit("test3.txt", "test content 3", "Third commit")
+    commit4_hash, commit4_id = make_commit("test4.txt", "test content 4", "Fourth commit")
     
     # Push branch with commits
     run_cmd(f"git push -u origin {test_branch}")
     
     # Run pyspr update
     run_cmd(f"pyspr update")
-    
-    # Get current commit message after first update (should have commit ID)
-    updated_msg = git_cmd.must_git("show -s --format=%B HEAD").strip()
-    log.info(f"\nTop commit message after first update:\n{updated_msg}")
     
     # Helper to find our test PRs using unique tag
     def get_test_prs() -> List[PullRequest]:
@@ -141,64 +141,71 @@ def test_simple_update(test_repo: Tuple[str, str, str, str]) -> None:
     prs.sort(key=lambda p: p.number)  # Sort by PR number
     pr1, pr2, pr3, pr4 = prs
     
+    # Save PR numbers for later verification
+    pr1_num, pr2_num, pr3_num, pr4_num = pr1.number, pr2.number, pr3.number, pr4.number
+    
     # Verify PR chain
     assert pr1.base_ref == "main", "First PR should target main"
-    assert pr2.base_ref is not None and pr2.base_ref.startswith("spr/main/"), "Second PR should target first PR's branch"
-    assert pr3.base_ref is not None and pr3.base_ref.startswith("spr/main/"), "Third PR should target second PR's branch"
-    assert pr4.base_ref is not None and pr4.base_ref.startswith("spr/main/"), "Fourth PR should target third PR's branch"
+    assert pr2.base_ref == f"spr/main/{commit1_id}", "Second PR should target first PR's branch"
+    assert pr3.base_ref == f"spr/main/{commit2_id}", "Third PR should target second PR's branch"
+    assert pr4.base_ref == f"spr/main/{commit3_id}", "Fourth PR should target third PR's branch"
     
-    # Save the top PR number and commit ID for later verification
-    top_pr_number = pr4.number
-    top_commit_id = pr4.commit.commit_id
-    log.info(f"Top PR #{top_pr_number} initial commit ID: {top_commit_id}")
+    log.info(f"\nInitial PRs created: #{pr1_num}, #{pr2_num}, #{pr3_num}, #{pr4_num}")
     
-    # Now amend the top commit with new content, preserving the unique tag and commit ID
-    log.info("\nAmending top commit...")
-    with open("test4.txt", "a") as f:
-        f.write("additional content\n")
-    run_cmd(f"git add test4.txt")
+    # Now reset and recreate commits but skip commit2
+    log.info("\nRecreating commits without second commit...")
+    run_cmd("git reset --hard HEAD~4")  # Remove all commits
     
-    # Keep the commit-id line from the updated message
-    commit_id_line = None
-    for line in updated_msg.splitlines():
-        if line.startswith("commit-id:"):
-            commit_id_line = line
-            break
-    assert commit_id_line, "Should have found commit-id line in message"
+    # Get the original commit messages
+    c1_msg = git_cmd.must_git(f"show -s --format=%B {commit1_hash}").strip()
+    c3_msg = git_cmd.must_git(f"show -s --format=%B {commit3_hash}").strip()
+    c4_msg = git_cmd.must_git(f"show -s --format=%B {commit4_hash}").strip()
     
-    amended_msg = f"""Fourth commit amended [test-tag:{unique_tag}]
-
-{commit_id_line}"""
-    run_cmd(f"git commit --amend -m '{amended_msg}'")
-    amended_top_hash = git_cmd.must_git("rev-parse HEAD").strip()
-    assert amended_top_hash != commit4_hash, "Amended top commit should have new hash"
+    # Recreate commits preserving commit IDs, but skip commit2
+    run_cmd(f"git cherry-pick {commit1_hash}")
+    run_cmd(f"git cherry-pick {commit3_hash}")
+    run_cmd(f"git cherry-pick {commit4_hash}")
     
-    log.info(f"\nAmended top commit message:\n{git_cmd.must_git('show -s --format=%B HEAD').strip()}")
+    # Push changes
+    run_cmd("git push -f")
     
-    # Run pyspr update again with verbose flag
+    # Run pyspr update again
     run_cmd(f"pyspr update -v")
     
-    log.info(f"\nTop commit message after second update:\n{git_cmd.must_git('show -s --format=%B HEAD').strip()}")
-    
-    # Get PRs after amendment
+    # Get PRs after removing commit2
     prs = get_test_prs()
-    assert len(prs) == 4, f"Should still have 4 PRs after amendment, found {len(prs)}"
-    top_pr = next((pr for pr in prs if pr.number == top_pr_number), None)
-    assert top_pr is not None, f"Top PR #{top_pr_number} should still exist"
+    assert len(prs) == 3, f"Should have 3 PRs after removing commit2, found {len(prs)}"
     
-    # Verify top PR state after amendment
-    assert top_pr.base_ref is not None and top_pr.base_ref.startswith("spr/main/"), "Top PR should still target previous PR's branch"
+    # Get PR numbers that still exist
+    current_pr_nums = {pr.number for pr in prs}
     
-    # Get the final local commit hash after second update
-    final_amended_hash = git_cmd.must_git("rev-parse HEAD").strip()
+    # Verify PR2 is closed while others remain
+    assert pr1_num in current_pr_nums, f"PR1 #{pr1_num} should still exist"
+    assert pr2_num not in current_pr_nums, f"PR2 #{pr2_num} should be closed"
+    assert pr3_num in current_pr_nums, f"PR3 #{pr3_num} should still exist"
+    assert pr4_num in current_pr_nums, f"PR4 #{pr4_num} should still exist"
     
-    # Verify top PR commit hash matches amended commit hash
-    assert top_pr.commit.commit_hash == final_amended_hash, \
-        f"After amendment: Top PR commit hash {top_pr.commit.commit_hash} should match amended commit {final_amended_hash}"
+    # Get PRs by number
+    pr1_after = next((pr for pr in prs if pr.number == pr1_num), None)
+    pr3_after = next((pr for pr in prs if pr.number == pr3_num), None)
+    pr4_after = next((pr for pr in prs if pr.number == pr4_num), None)
     
-    # Verify top commit ID remained the same (preserved through amendment)
-    assert top_pr.commit.commit_id == top_commit_id, \
-        f"Top commit ID should remain {top_commit_id}, got {top_pr.commit.commit_id}"
+    assert pr1_after is not None, f"PR1 #{pr1_num} should exist"
+    assert pr3_after is not None, f"PR3 #{pr3_num} should exist"
+    assert pr4_after is not None, f"PR4 #{pr4_num} should exist"
+    
+    # Verify new PR chain
+    assert pr1_after.base_ref == "main", "First PR should target main"
+    assert pr3_after.base_ref == f"spr/main/{commit1_id}", "Third PR should now target first PR's branch"
+    assert pr4_after.base_ref == f"spr/main/{commit3_id}", "Fourth PR should target third PR's branch"
+    
+    # Verify commit IDs remained the same
+    assert pr1_after.commit.commit_id == commit1_id, f"PR1 commit ID should remain {commit1_id}"
+    assert pr3_after.commit.commit_id == commit3_id, f"PR3 commit ID should remain {commit3_id}"
+    assert pr4_after.commit.commit_id == commit4_id, f"PR4 commit ID should remain {commit4_id}"
+    
+    log.info(f"\nVerified PRs after removing commit2: #{pr1_num} -> #{pr3_num} -> #{pr4_num}")
+    log.info(f"PR2 #{pr2_num} correctly closed")
     
     os.chdir(orig_dir)
 
@@ -690,7 +697,6 @@ def test_repo() -> Generator[Tuple[str, str, str, str], None, None]:
         # Configure git
         run_cmd("git config user.name 'Test User'")
         run_cmd("git config user.email 'test@example.com'")
-        run_cmd("git checkout -b test_local") # Create local branch first
         
         repo_dir = os.path.abspath(os.getcwd())
         os.chdir(orig_dir)
