@@ -70,6 +70,7 @@ log.propagate = False  # Don't double log
 
 def run_cmd(cmd: str) -> None:
     """Run a shell command using subprocess with proper error handling."""
+    log.info(f"Running command: {cmd}")
     subprocess.run(cmd, shell=True, check=True)
 
 def test_wip_behavior(test_repo: Tuple[str, str, str, str], caplog: pytest.LogCaptureFixture) -> None:
@@ -1436,7 +1437,7 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
         test_files = ["stack1a.txt", "stack1b.txt", "stack2a.txt", "stack2b.txt"]
 
         # 1. Create branch1 with 2 connected PRs
-        print("\nCreating branch1 with 2-PR stack...")
+        log.info("Creating branch1 with 2-PR stack...")
         run_cmd("git checkout main")
         run_cmd("git pull")
         branch1 = f"test-stack1-{uuid.uuid4().hex[:7]}"
@@ -1449,13 +1450,13 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
         run_cmd(f"git push -u origin {branch1}")
 
         # Update to create connected PRs 1A and 1B
-        print("Creating stack 1 PRs...")
+        log.info("Creating stack 1 PRs...")
         os.chdir(orig_dir)
         subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
         os.chdir(repo_dir)
 
         # 2. Create branch2 with 2 connected PRs 
-        print("\nCreating branch2 with 2-PR stack...")
+        log.info("Creating branch2 with 2-PR stack...")
         run_cmd("git checkout main")
         branch2 = f"test-stack2-{uuid.uuid4().hex[:7]}"
         run_cmd(f"git checkout -b {branch2}")
@@ -1467,7 +1468,7 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
         run_cmd(f"git push -u origin {branch2}")
 
         # Update to create connected PRs 2A and 2B
-        print("Creating stack 2 PRs...")
+        log.info("Creating stack 2 PRs...")
         os.chdir(orig_dir)
         subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
         os.chdir(repo_dir)
@@ -1488,7 +1489,7 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
             return result
 
         # Verify all 4 PRs exist with correct connections
-        print("\nVerifying initial state of PRs...")
+        log.info("Verifying initial state of PRs...")
         # Find our test PRs
         test_prs = get_test_prs()
         all_prs = {}
@@ -1513,23 +1514,23 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
         assert pr2a.base_ref == "main", "PR2A should target main"
         assert pr2b.base_ref == f"spr/main/{c2a_id}", "PR2B should target PR2A"
 
-        print(f"Created stacks - Stack1: #{pr1a.number} <- #{pr1b.number}, Stack2: #{pr2a.number} <- #{pr2b.number}")
+        log.info(f"Created stacks - Stack1: #{pr1a.number} <- #{pr1b.number}, Stack2: #{pr2a.number} <- #{pr2b.number}")
 
         # 3. Remove commit from branch1
-        print("\nRemoving first commit from branch1...")
+        log.info("Removing first commit from branch1...")
         run_cmd(f"git checkout {branch1}")
         run_cmd("git reset --hard HEAD~2")  # Remove both commits
         run_cmd("git cherry-pick {}".format(c1b_hash))  # Add back just the second commit
-        run_cmd("git push -f origin")  # Force push the change
+        # Removed manual push, let pyspr update handle it
 
         # Run update in branch1
-        print("Running update in branch1...")
+        log.info("Running update in branch1...")
         os.chdir(orig_dir)
         subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
         os.chdir(repo_dir)
 
         # 4. Verify PR1A is closed, PR1B retargeted to main, while PR2A and PR2B remain untouched
-        print("\nVerifying PR state after updates...")
+        log.info("Verifying PR state after updates...")
         test_prs = get_test_prs()
         remaining_prs = {}
         for pr in test_prs:
