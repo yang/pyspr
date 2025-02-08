@@ -78,9 +78,6 @@ def test_delete_insert(test_repo: Tuple[str, str, str, str]) -> None:
     and verifies PR state after each update, including verifying PR hashes match local commit hashes."""
     owner, repo_name, test_branch, repo_dir = test_repo
 
-    orig_dir = os.getcwd()
-    os.chdir(repo_dir)
-
     # Create config for the test repo
     config = Config({
         'repo': {
@@ -226,9 +223,6 @@ def test_delete_insert(test_repo: Tuple[str, str, str, str]) -> None:
 
     log.info(f"\nVerified PRs after removing commit2 and adding c3.5: #{pr1_num} -> #{pr3_num} -> #{pr35.number} -> #{pr4_num}")
     log.info(f"PR2 #{pr2_num} correctly closed")
-    log.info("Verified all PR commit hashes match local commit hashes")
-    
-    os.chdir(orig_dir)
 
 def test_wip_behavior(test_repo: Tuple[str, str, str, str], caplog: pytest.LogCaptureFixture) -> None:
     """Test that WIP commits behave as expected:
@@ -239,9 +233,6 @@ def test_wip_behavior(test_repo: Tuple[str, str, str, str], caplog: pytest.LogCa
     log.info("=== TEST STARTED ===")  # Just to see if test runs at all
     caplog.set_level(logging.INFO)
     owner, repo_name, test_branch, repo_dir = test_repo
-
-    orig_dir = os.getcwd()
-    os.chdir(repo_dir)
 
     # Real config using the test repo
     config = Config({
@@ -398,9 +389,6 @@ def test_wip_behavior(test_repo: Tuple[str, str, str, str], caplog: pytest.LogCa
     assert pr1.base_ref == "main", "First PR should target main"
     assert pr2.base_ref is not None and pr2.base_ref.startswith("spr/main/"), "Second PR should target first PR's branch"
 
-    # Return to original directory
-    os.chdir(orig_dir)
-
 @pytest.fixture
 def test_reviewer_repo() -> Generator[Tuple[str, str, str, str, str], None, None]:
     """Use yang/teststack repo with a temporary test branch."""
@@ -450,9 +438,6 @@ def test_reviewer_functionality_yang(test_reviewer_repo: Tuple[str, str, str, st
     Special case: Since we're using yang's token, test verifies that the attempt
     to add yang as a reviewer is handled properly (can't review your own PR)."""
     owner, repo_name, test_branch, repo_dir, current_owner = test_reviewer_repo
-    
-    orig_dir = os.getcwd()
-    os.chdir(repo_dir)
 
     config = Config({
         'repo': {
@@ -578,15 +563,9 @@ def test_reviewer_functionality_yang(test_reviewer_repo: Tuple[str, str, str, st
 
     log.info(f"Verified PR #{pr1.number} has no reviewer and PR #{pr2.number} has testluser")
 
-    # Return to original directory
-    os.chdir(orig_dir)
-
 def test_reviewer_functionality_testluser(test_reviewer_repo: Tuple[str, str, str, str, str]) -> None:
     """Test that reviewers are correctly added to new PRs when using -r testluser."""
     owner, repo_name, test_branch, repo_dir, current_owner = test_reviewer_repo
-    
-    orig_dir = os.getcwd()
-    os.chdir(repo_dir)
 
     config = Config({
         'repo': {
@@ -688,16 +667,10 @@ def test_reviewer_functionality_testluser(test_reviewer_repo: Tuple[str, str, st
     log.info(f"Verified PR #{pr1.number} has no reviewer and PR #{pr2.number} has no reviewer due to self-review restriction")
     log.info("Successfully verified -r flag handles self-review restriction")
 
-    # Return to original directory
-    os.chdir(orig_dir)
-
 def test_reorder(test_repo: Tuple[str, str, str, str]) -> None:
     """Test that creates four commits, runs update, then recreates commits but reorders c3 and c4,
     and verifies PR state after reordering."""
     owner, repo_name, test_branch, repo_dir = test_repo
-
-    orig_dir = os.getcwd()
-    os.chdir(repo_dir)
 
     # Create config for the test repo
     config = Config({
@@ -817,8 +790,11 @@ def test_reorder(test_repo: Tuple[str, str, str, str]) -> None:
     # Log the final PR numbers in the new order
     pr_chain = f"#{pr1_after.number} -> #{pr2_after.number} -> #{pr4_after.number} -> #{pr3_after.number}"
     log.info(f"\nVerified PRs after reordering: {pr_chain}")
+<<<<<<< HEAD
 
     os.chdir(orig_dir)
+=======
+>>>>>>> 5c894c6 (Remove unnecessary directory changes from test functions)
 
 @pytest.fixture
 def test_repo() -> Generator[Tuple[str, str, str, str], None, None]:
@@ -859,8 +835,224 @@ def test_repo() -> Generator[Tuple[str, str, str, str], None, None]:
         except subprocess.CalledProcessError:
             log.info(f"Failed to delete remote branch {test_branch}, may not exist")
 
+<<<<<<< HEAD
         # Return to original directory
         os.chdir(orig_dir)
+=======
+def test_amend_workflow(test_repo: Tuple[str, str, str, str]) -> None:
+    """Test full amend workflow with real PRs."""
+    owner, repo_name, test_branch, repo_dir = test_repo
+
+    # Create minimal pyproject.toml for rye
+    with open("pyproject.toml", "w") as f:
+        f.write('''[project]
+name = "test_repo"
+version = "0.1.0"
+dependencies = []''')
+
+    # Real config using the test repo
+    config = Config({
+        'repo': {
+            'github_remote': 'origin',
+            'github_branch': 'main', 
+            'github_repo_owner': owner,
+            'github_repo_name': 'teststack', 
+        },
+        'user': {}
+    })
+    git_cmd = RealGit(config)
+    github = GitHubClient(None, config)  # Real GitHub client
+    
+    # Create a unique tag for this test run
+    unique_tag = f"test-amend-{uuid.uuid4().hex[:8]}"
+    
+    # Create 3 commits
+    def make_commit(file: str, line: str, msg: str) -> str:
+        full_msg = f"{msg} [test-tag:{unique_tag}]"
+        with open(file, "w") as f:
+            f.write(f"{file}\n{line}\n")
+        run_cmd(f"git add {file}")
+        run_cmd(f'git commit -m "{full_msg}"')
+        return git_cmd.must_git("rev-parse HEAD").strip()
+        
+    log.info("Creating commits...")
+    c1_hash = make_commit("ta.txt", "line 1", "First commit")
+    c2_hash = make_commit("tb.txt", "line 1", "Second commit")  
+    c3_hash = make_commit("tc.txt", "line 1", "Third commit")
+    c4_hash = make_commit("td.txt", "line 1", "Fourth commit")
+    run_cmd(f"git push -u origin {test_branch}")  # Push branch with commits
+    
+    # Initial update to create PRs
+    log.info("Creating initial PRs...")
+    try:
+        subprocess.run(["rye", "run", "pyspr", "update"], check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as e:
+        if "A pull request already exists" in e.output or "A pull request already exists" in e.stderr:
+            log.info("Ignoring error about PR already existing - GitHub race condition")
+        else:
+            log.error(f"First update failed with exit code {e.returncode}")
+            log.error(f"STDOUT: {e.output}")
+            log.error(f"STDERR: {e.stderr}")
+            raise
+    
+    # Helper to find our test PRs 
+    def get_test_prs() -> list:
+        result = []
+        for pr in github.get_info(None, git_cmd).pull_requests:
+            if pr.from_branch.startswith('spr/main/'):
+                try:
+                    # Look for our unique tag in the commit message
+                    commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
+                    if f"test-tag:{unique_tag}" in commit_msg:
+                        result.append(pr)
+                except:  # Skip failures since we're just filtering
+                    pass
+        return result
+    
+    # Verify PRs created
+    info = github.get_info(None, git_cmd)
+    assert info is not None, "GitHub info should not be None"
+    test_prs = get_test_prs()
+    assert len(test_prs) == 4, f"Should have 4 PRs for our test, found {len(test_prs)}"
+    pr1, pr2, pr3, pr4 = sorted(test_prs, key=lambda pr: pr.number)
+    log.info(f"Created PRs: #{pr1.number}, #{pr2.number}, #{pr3.number}, #{pr4.number}")
+    
+    # Save PR numbers and commit IDs and hashes
+    pr1_num = pr1.number
+    pr2_num = pr2.number
+    pr3_num = pr3.number
+    pr4_num = pr4.number
+    
+    c1_id = pr1.commit.commit_id
+    c2_id = pr2.commit.commit_id
+    c3_id = pr3.commit.commit_id
+    c4_id = pr4.commit.commit_id
+
+    # Store but don't actually use these variables 
+    _ = pr1.commit.commit_hash
+    _ = pr2.commit.commit_hash
+    _ = pr3.commit.commit_hash
+    _ = pr4.commit.commit_hash
+
+    # Debug: Check if commit messages have IDs after first update
+    log.info("\nChecking commit messages after first update:")
+    for c_hash in [c1_hash, c2_hash, c3_hash, c4_hash]:
+        msg = git_cmd.must_git(f"show -s --format=%B {c_hash}").strip()
+        log.info(f"Commit {c_hash[:8]} message:\n{msg}\n")
+
+    # Verify initial PR chain
+    assert pr1.base_ref == "main"
+    assert pr2.base_ref == f"spr/main/{c1_id}"
+    assert pr3.base_ref == f"spr/main/{c2_id}"
+    assert pr4.base_ref == f"spr/main/{c3_id}"
+    
+    log.info("Amending third commit, deleting second, adding new commit...")
+    # Get current messages (which should have IDs from spr update)
+    c1_msg = git_cmd.must_git(f"show -s --format=%B HEAD~3").strip()
+    c3_msg = git_cmd.must_git(f"show -s --format=%B HEAD~1").strip()
+    c4_msg = git_cmd.must_git(f"show -s --format=%B HEAD").strip()
+
+    # Reset and cherry-pick c1, preserving SPR-updated message 
+    # and ensuring test tag remains
+    run_cmd("git reset --hard HEAD~4")
+    run_cmd(f"git cherry-pick {c1_hash}")
+    assert f"test-tag:{unique_tag}" in c1_msg, "Test tag should be preserved in updated message"
+    run_cmd(f'git commit --amend -m "{c1_msg}"')
+    c1_hash_new = git_cmd.must_git("rev-parse HEAD").strip()
+    log1 = git_cmd.must_git(f"show -s --format=%B {c1_hash_new}").strip()
+    log.info(f"Commit 1: old={c1_hash} new={c1_hash_new} id={c1_id}")
+    log.info(f"Log 1:\n{log1}")
+    
+    # Skip c2 entirely - delete it from stack
+    log.info("Skipping c2 - deleting it")
+    
+    # Cherry-pick and amend c3, preserving SPR-updated message
+    # and ensuring test tag remains
+    run_cmd(f"git cherry-pick {c3_hash}")
+    with open("tc.txt", "a") as f:
+        f.write("line 2\n")
+    run_cmd("git add tc.txt")
+    assert f"test-tag:{unique_tag}" in c3_msg, "Test tag should be preserved in updated message"
+    run_cmd(f'git commit --amend -m "{c3_msg}"')
+    c3_hash_new = git_cmd.must_git("rev-parse HEAD").strip()
+    log3 = git_cmd.must_git(f"show -s --format=%B {c3_hash_new}").strip()
+    log.info(f"Commit 3: old={c3_hash} new={c3_hash_new} id={c3_id}")
+    log.info(f"Log 3:\n{log3}")
+    
+    # Insert new c3.5
+    log.info("Inserting new c3.5")
+    # Create new commit with same test tag
+    _new_c35_hash = make_commit("tc5.txt", "line 1", "Commit three point five")
+    
+    # Cherry-pick c4, preserving SPR-updated message
+    # and ensuring test tag remains
+    run_cmd(f"git cherry-pick {c4_hash}")
+    assert f"test-tag:{unique_tag}" in c4_msg, "Test tag should be preserved in updated message"
+    run_cmd(f'git commit --amend -m "{c4_msg}"')
+    c4_hash_new = git_cmd.must_git("rev-parse HEAD").strip()
+    log4 = git_cmd.must_git(f"show -s --format=%B {c4_hash_new}").strip()
+    log.info(f"Commit 4: old={c4_hash} new={c4_hash_new} id={c4_id}")
+    log.info(f"Log 4:\n{log4}")
+    
+    log.info("Updating PRs after amend...")
+    # Run update with amended commits
+    try:
+        subprocess.run(["rye", "run", "pyspr", "update"], check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as e:
+        if "A pull request already exists" in e.output or "A pull request already exists" in e.stderr:
+            log.info("Ignoring error about PR already existing - GitHub race condition")
+        else:
+            log.error(f"Second update failed with exit code {e.returncode}")
+            log.error(f"STDOUT: {e.output}")
+            log.error(f"STDERR: {e.stderr}")
+            raise
+    
+    # Verify PRs updated properly
+    info = github.get_info(None, git_cmd)
+    assert info is not None, "GitHub info should not be None"
+    test_prs = get_test_prs()
+    assert len(test_prs) == 4, f"Should have 4 PRs for our test after amend, found {len(test_prs)}"
+    prs_by_num = {pr.number: pr for pr in test_prs}
+    pr1 = prs_by_num.get(pr1_num)
+    pr3 = prs_by_num.get(pr3_num)
+    pr4 = prs_by_num.get(pr4_num)
+    new_pr = next((pr for pr in test_prs if pr.number not in [pr1_num, pr2_num, pr3_num, pr4_num]), None)
+    
+    # Verify PR1 and PR4 remain, PR2 deleted, PR3 updated, and new PR added
+    assert pr1 is not None, "PR1 should still exist"
+    assert pr2_num not in prs_by_num, "PR2 should be deleted"
+    assert pr3 is not None, "PR3 should still exist" 
+    assert pr4 is not None, "PR4 should still exist"
+    assert new_pr is not None, "New PR for c3.5 should be created"
+    
+    # Verify PR numbers - except PR2 which should be deleted
+    assert pr1.number == pr1_num, f"PR1 number changed from {pr1_num} to {pr1.number}"
+    assert pr3.number == pr3_num, f"PR3 number changed from {pr3_num} to {pr3.number}"
+    assert pr4.number == pr4_num, f"PR4 number changed from {pr4_num} to {pr4.number}"
+    
+    # Verify commit IDs - PR1 and PR4 shouldn't change
+    assert pr1.commit.commit_id == c1_id, f"PR1 commit ID changed from {c1_id} to {pr1.commit.commit_id}"
+    assert pr3.commit.commit_id == c3_id, f"PR3 commit ID changed from {c3_id} to {pr3.commit.commit_id}"
+    assert pr4.commit.commit_id == c4_id, f"PR4 commit ID changed from {c4_id} to {pr4.commit.commit_id}"
+    
+    # Only PR3's hash should change (was amended), PR1 and PR4 hashes shouldn't change
+    assert pr1.commit.commit_hash == c1_hash_new, f"PR1 hash should be {c1_hash_new}"
+    assert pr3.commit.commit_hash == c3_hash_new, f"PR3 hash should be {c3_hash_new}"
+    assert pr4.commit.commit_hash == c4_hash_new, f"PR4 hash should be {c4_hash_new}"
+    
+    # Verify PR targets remained correct
+    assert pr1.base_ref == "main", f"PR1 base ref incorrect: {pr1.base_ref}"
+    assert pr3.base_ref == f"spr/main/{c1_id}", f"PR3 base ref incorrect: {pr3.base_ref}" # PR3 now targets PR1
+    assert new_pr.base_ref == f"spr/main/{c3_id}", f"New PR base ref incorrect: {new_pr.base_ref}"
+    assert pr4.base_ref == f"spr/main/{new_pr.commit.commit_id}", f"PR4 base ref incorrect: {pr4.base_ref}" # PR4 now targets new PR
+
+    # Verify commit IDs exist in messages and are preserved through updates
+    log.info("\nVerifying commit IDs in messages after updates:")
+    for pr in [pr1, pr3, new_pr, pr4]:
+        message = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}").strip()
+        log.info(f"PR #{pr.number} message:\n{message}\n")
+        assert f"commit-id:{pr.commit.commit_id}" in message, f"PR #{pr.number} should have correct commit ID in message"
+>>>>>>> 5c894c6 (Remove unnecessary directory changes from test functions)
 
 def _run_merge_test(
         repo_fixture: Union[Tuple[str, str, str], Tuple[str, str, str, str]], 
@@ -1160,8 +1352,6 @@ def test_replace_commit(test_repo: Tuple[str, str, str, str]) -> None:
     This specifically tests the case where positional matching would be wrong.
     """
     owner, repo_name, _test_branch, repo_dir = test_repo
-    orig_dir = os.getcwd()
-    os.chdir(repo_dir)
 
     config = Config({
         'repo': {
@@ -1320,7 +1510,6 @@ def test_replace_commit(test_repo: Tuple[str, str, str, str]) -> None:
             run_cmd(f"git push origin --delete {branch} || true")  # type: ignore
         except NameError:
             pass # branch may not be defined if test fails early
-        os.chdir(orig_dir)
 
 def test_no_rebase_functionality(test_repo: Tuple[str, str, str, str]) -> None:
     """Test --no-rebase functionality.
@@ -1329,8 +1518,6 @@ def test_no_rebase_functionality(test_repo: Tuple[str, str, str, str]) -> None:
     2. Then update with --no-rebase and verify rebase is skipped
     """
     owner, repo_name, test_branch, repo_dir = test_repo
-    orig_dir = os.getcwd()
-    os.chdir(repo_dir)
 
     config = Config({
         'repo': {
@@ -1460,8 +1647,7 @@ def test_no_rebase_functionality(test_repo: Tuple[str, str, str, str]) -> None:
         assert "DEBUG: no_rebase=True" in no_rebase_output_str, "Should detect no-rebase mode"
         
     finally:
-        # Return to original directory
-        os.chdir(orig_dir)
+        pass
 
 def test_no_rebase_pr_stacking(test_repo: Tuple[str, str, str, str]) -> None:
     """Test stacking new PRs on top without changing earlier PRs using --no-rebase.
@@ -1473,8 +1659,6 @@ def test_no_rebase_pr_stacking(test_repo: Tuple[str, str, str, str]) -> None:
     5. Verify CI not re-triggered (via commit hash check)
     """
     owner, repo_name, test_branch, repo_dir = test_repo
-    orig_dir = os.getcwd()
-    os.chdir(repo_dir)
 
     config = Config({
         'repo': {
@@ -1502,9 +1686,7 @@ def test_no_rebase_pr_stacking(test_repo: Tuple[str, str, str, str]) -> None:
 
         # Create first PR
         print("\nCreating first PR...")
-        os.chdir(orig_dir)
         subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
-        os.chdir(repo_dir)
 
         # Get first PR info
         info = github.get_info(None, git_cmd)
@@ -1524,9 +1706,7 @@ def test_no_rebase_pr_stacking(test_repo: Tuple[str, str, str, str]) -> None:
 
         # Update with --no-rebase
         print("\nUpdating with --no-rebase...")
-        os.chdir(orig_dir)
         subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir, "-nr"], check=True)
-        os.chdir(repo_dir)
 
         # Check PR state after no-rebase update
         info = github.get_info(None, git_cmd)
@@ -1566,7 +1746,7 @@ def test_no_rebase_pr_stacking(test_repo: Tuple[str, str, str, str]) -> None:
         print(f"Successfully verified no-rebase PR stacking: #{pr1_number} <- #{pr2.number}")
 
     finally:
-        os.chdir(orig_dir)
+        pass
 
 def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
     """Test that PRs from different stacks don't interfere with each other.
@@ -1580,8 +1760,6 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
     Then remove PR1A and verify only PR1B gets closed, while stack 2 remains untouched.
     """
     owner, repo_name, _test_branch, repo_dir = test_repo
-    orig_dir = os.getcwd()
-    os.chdir(repo_dir)
 
     # Real config using the test repo
     config = Config({
@@ -1732,4 +1910,3 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
             run_cmd(f"git push origin --delete {branch2} || true")  # type: ignore
         except NameError:
             pass # branches may not be defined if test fails early
-        os.chdir(orig_dir)
