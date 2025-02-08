@@ -262,6 +262,13 @@ class StackedPR:
                     cmd = f"push --force --atomic {remote} " + " ".join(ref_names)
                     self.git_cmd.must_git(cmd)
 
+    from typing import TypedDict
+    
+    class UpdateItem(TypedDict):
+        pr: PullRequest
+        commit: Optional[Commit]
+        prev_commit: Optional[Commit]
+        
     def update_pull_requests(self, ctx: StackedPRContextProtocol, 
                          reviewers: Optional[List[str]] = None, 
                          count: Optional[int] = None) -> None:
@@ -328,13 +335,6 @@ class StackedPR:
             return
 
         # Update PRs
-        from typing import TypedDict
-
-        class UpdateItem(TypedDict):
-            pr: PullRequest
-            commit: Optional[Commit]
-            prev_commit: Optional[Commit]
-
         update_queue: List[UpdateItem] = []
         assignable = None
 
