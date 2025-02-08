@@ -113,9 +113,6 @@ def test_delete_insert(test_repo: Tuple[str, str, str, str]) -> None:
     commit3_hash, commit3_id = make_commit("test3.txt", "test content 3", "Third commit")
     commit4_hash, commit4_id = make_commit("test4.txt", "test content 4", "Fourth commit")
     
-    # Push branch with commits
-    run_cmd(f"git push -u origin {test_branch}")
-    
     # Run pyspr update
     run_cmd(f"pyspr update")
     
@@ -169,9 +166,6 @@ def test_delete_insert(test_repo: Tuple[str, str, str, str]) -> None:
     new_c35_hash, new_c35_id = make_commit("test3_5.txt", "test content 3.5", "Commit three point five")
     
     run_cmd(f"git cherry-pick {commit4_hash}")
-    
-    # Push changes
-    run_cmd("git push -f")
     
     # Run pyspr update again
     run_cmd(f"pyspr update -v")
