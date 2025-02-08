@@ -73,7 +73,7 @@ def run_cmd(cmd: str) -> None:
     log.info(f"Running command: {cmd}")
     subprocess.run(cmd, shell=True, check=True)
 
-def test_simple_update(test_repo: Tuple[str, str, str, str]) -> None:
+def test_delete_insert(test_repo: Tuple[str, str, str, str]) -> None:
     """Test that creates four commits, runs update, then recreates commits but skips the second one,
     and verifies PR state after each update."""
     owner, repo_name, test_branch, repo_dir = test_repo
@@ -668,6 +668,138 @@ def test_reviewer_functionality_testluser(test_reviewer_repo: Tuple[str, str, st
     log.info("Successfully verified -r flag handles self-review restriction")
 
     # Return to original directory
+    os.chdir(orig_dir)
+
+def test_reorder(test_repo: Tuple[str, str, str, str]) -> None:
+    """Test that creates four commits, runs update, then recreates commits but reorders c3 and c4,
+    and verifies PR state after reordering."""
+    owner, repo_name, test_branch, repo_dir = test_repo
+
+    orig_dir = os.getcwd()
+    os.chdir(repo_dir)
+
+    # Create config for the test repo
+    config = Config({
+        'repo': {
+            'github_remote': 'origin',
+            'github_branch': 'main',
+            'github_repo_owner': owner,
+            'github_repo_name': repo_name,
+        },
+        'user': {}
+    })
+    git_cmd = RealGit(config)
+    github = GitHubClient(None, config)
+    
+    # Create a unique tag for this test run
+    unique_tag = f"test-simple-{uuid.uuid4().hex[:8]}"
+    
+    # Create four test commits with unique tag in message
+    def make_commit(file: str, content: str, msg: str) -> Tuple[str, str]:
+        commit_id = uuid.uuid4().hex[:8]
+        full_msg = f"{msg} [test-tag:{unique_tag}]\n\ncommit-id:{commit_id}"
+        with open(file, "w") as f:
+            f.write(f"{file}\n{content}\n")
+        run_cmd(f"git add {file}")
+        run_cmd(f'git commit -m "{full_msg}"')
+        commit_hash = git_cmd.must_git("rev-parse HEAD").strip()
+        return commit_hash, commit_id
+        
+    # Create commits c1, c2, c3, c4
+    commit1_hash, commit1_id = make_commit("test1.txt", "test content 1", "First commit")
+    commit2_hash, commit2_id = make_commit("test2.txt", "test content 2", "Second commit")
+    commit3_hash, commit3_id = make_commit("test3.txt", "test content 3", "Third commit")
+    commit4_hash, commit4_id = make_commit("test4.txt", "test content 4", "Fourth commit")
+    
+    # Push branch with commits
+    run_cmd(f"git push -u origin {test_branch}")
+    
+    # Run pyspr update
+    run_cmd(f"pyspr update")
+    
+    # Helper to find our test PRs using unique tag
+    def get_test_prs() -> List[PullRequest]:
+        log.info("\nLooking for PRs with unique tag...")
+        result = []
+        for pr in github.get_info(None, git_cmd).pull_requests:
+            if pr.from_branch.startswith('spr/main/'):
+                try:
+                    # Look for our unique tag in the commit message
+                    commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
+                    if f"test-tag:{unique_tag}" in commit_msg:
+                        log.info(f"Found PR #{pr.number} with tag and commit ID {pr.commit.commit_id}")
+                        result.append(pr)
+                except:
+                    pass
+        return result
+
+    # Verify initial PRs were created
+    prs = get_test_prs()
+    assert len(prs) == 4, f"Should have created 4 PRs, found {len(prs)}"
+    prs.sort(key=lambda p: p.number)  # Sort by PR number
+    pr1, pr2, pr3, pr4 = prs
+    
+    # Save PR numbers for later verification
+    pr1_num, pr2_num, pr3_num, pr4_num = pr1.number, pr2.number, pr3.number, pr4.number
+    
+    # Verify PR chain
+    assert pr1.base_ref == "main", "First PR should target main"
+    assert pr2.base_ref == f"spr/main/{commit1_id}", "Second PR should target first PR's branch"
+    assert pr3.base_ref == f"spr/main/{commit2_id}", "Third PR should target second PR's branch"
+    assert pr4.base_ref == f"spr/main/{commit3_id}", "Fourth PR should target third PR's branch"
+    
+    log.info(f"\nInitial PRs created: #{pr1_num}, #{pr2_num}, #{pr3_num}, #{pr4_num}")
+    
+    # Now reset and recreate commits but reorder c3 and c4
+    log.info("\nRecreating commits with c3 and c4 reordered...")
+    run_cmd("git reset --hard HEAD~4")  # Remove all commits
+    
+    # Get the original commit messages
+    c1_msg = git_cmd.must_git(f"show -s --format=%B {commit1_hash}").strip()
+    c2_msg = git_cmd.must_git(f"show -s --format=%B {commit2_hash}").strip()
+    c3_msg = git_cmd.must_git(f"show -s --format=%B {commit3_hash}").strip()
+    c4_msg = git_cmd.must_git(f"show -s --format=%B {commit4_hash}").strip()
+    
+    # Recreate commits preserving commit IDs, but with c4 before c3
+    run_cmd(f"git cherry-pick {commit1_hash}")
+    run_cmd(f"git cherry-pick {commit2_hash}")
+    run_cmd(f"git cherry-pick {commit4_hash}")  # c4 now before c3
+    run_cmd(f"git cherry-pick {commit3_hash}")  # c3 now after c4
+    
+    # Push changes
+    run_cmd("git push -f")
+    
+    # Run pyspr update again
+    run_cmd(f"pyspr update -v")
+    
+    # Get PRs after reordering
+    prs = get_test_prs()
+    assert len(prs) == 4, f"Should still have 4 PRs after reordering, found {len(prs)}"
+    
+    # Instead of checking PRs by number, check them by commit ID
+    prs_by_commit_id = {pr.commit.commit_id: pr for pr in prs}
+    
+    # Verify all commits still have PRs
+    assert commit1_id in prs_by_commit_id, f"No PR found for commit 1 ({commit1_id})"
+    assert commit2_id in prs_by_commit_id, f"No PR found for commit 2 ({commit2_id})"
+    assert commit3_id in prs_by_commit_id, f"No PR found for commit 3 ({commit3_id})"
+    assert commit4_id in prs_by_commit_id, f"No PR found for commit 4 ({commit4_id})"
+    
+    pr1_after = prs_by_commit_id[commit1_id]
+    pr2_after = prs_by_commit_id[commit2_id]
+    pr3_after = prs_by_commit_id[commit3_id]
+    pr4_after = prs_by_commit_id[commit4_id]
+    
+    # Verify new PR chain after reordering
+    assert pr1_after.base_ref == "main", "First PR should target main"
+    assert pr2_after.base_ref == f"spr/main/{commit1_id}", "Second PR should target first PR's branch"
+    assert pr4_after.base_ref == f"spr/main/{commit2_id}", "Fourth PR should now target second PR's branch"
+    assert pr3_after.base_ref == f"spr/main/{commit4_id}", "Third PR should now target fourth PR's branch"
+    
+    # Log the final PR numbers in the new order
+    pr_chain = f"#{pr1_after.number} -> #{pr2_after.number} -> #{pr4_after.number} -> #{pr3_after.number}"
+    log.info(f"\nVerified PRs after reordering: {pr_chain}")
+    
     os.chdir(orig_dir)
 
 @pytest.fixture
