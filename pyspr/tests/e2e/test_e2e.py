@@ -406,7 +406,7 @@ def test_reviewer_repo() -> Generator[Tuple[str, str, str, str, str], None, None
         os.chdir(tmpdir)
 
         # Clone the repo
-        subprocess.run(["gh", "repo", "clone", f"{owner}/{repo_name}"], check=True)
+        run_cmd(f"gh repo clone {owner}/{repo_name}")
         os.chdir("teststack")
 
         # Configure git
@@ -467,7 +467,7 @@ def test_reviewer_functionality_yang(test_reviewer_repo: Tuple[str, str, str, st
     make_commit("r_test1.txt", "First commit")
 
     # Create initial PR without reviewer
-    subprocess.run(["pyspr", "update"], check=True)
+    run_cmd("pyspr update")
 
     # Helper to find our test PRs 
     def get_test_prs() -> list:
@@ -512,7 +512,7 @@ def test_reviewer_functionality_yang(test_reviewer_repo: Tuple[str, str, str, st
     make_commit("r_test2.txt", "Second commit")
 
     # Try to add self as reviewer (should be handled gracefully)
-    subprocess.run(["pyspr", "update", "-r", "yang"], check=True)
+    run_cmd("pyspr update -r yang")
 
     # Verify:
     # - First PR still has no reviewer 
@@ -606,7 +606,7 @@ def test_reviewer_functionality_testluser(test_reviewer_repo: Tuple[str, str, st
     make_commit("r_test1.txt", "First commit")
 
     # Create initial PR without reviewer
-    subprocess.run(["pyspr", "update"], check=True)
+    run_cmd("pyspr update")
 
     # Verify first PR
     our_prs = get_test_prs()
@@ -802,7 +802,7 @@ def test_repo() -> Generator[Tuple[str, str, str, str], None, None]:
         os.chdir(tmpdir)
 
         # Clone the repo
-        subprocess.run(["gh", "repo", "clone", repo_name], check=True)
+        run_cmd(f"gh repo clone {repo_name}")
         os.chdir("teststack")
 
         # Create and use test branch
@@ -870,18 +870,15 @@ def _run_merge_test(
             log.info(f"Creating file {file}...")
             run_cmd(f"git add {file}")
             run_cmd("git status")  # Debug: show git status after add
-            result = subprocess.run(f'git commit -m "{full_msg}"', shell=True, check=False,
-                                  stderr=subprocess.PIPE, stdout=subprocess.PIPE,
-                                  universal_newlines=True)
-            if result.returncode != 0:
-                log.info(f"Git commit failed with code {result.returncode}")
-                log.info(f"STDOUT: {result.stdout}")
-                log.info(f"STDERR: {result.stderr}")
+            try:
+                run_cmd(f'git commit -m "{full_msg}"')
+            except subprocess.CalledProcessError as e:
+                log.info(f"Git commit failed with code {e.returncode}")
+                log.info(f"STDOUT: {e.output}")
+                log.info(f"STDERR: {e.stderr}")
                 log.info("Directory contents:")
-                subprocess.run(["ls", "-la"], check=False)
-                raise subprocess.CalledProcessError(result.returncode, result.args,
-                                                   output=result.stdout,
-                                                   stderr=result.stderr)
+                run_cmd("ls -la")
+                raise  # Re-raise the original exception since it has the right error info
         except subprocess.CalledProcessError as e:
             log.info(f"Failed to commit: {e}")
             raise
@@ -905,12 +902,12 @@ def _run_merge_test(
         run_cmd(f"git push -u origin {test_branch}")  # Push branch with commits
     except subprocess.CalledProcessError as e:
         # Get git status for debugging
-        subprocess.run(["git", "status"], check=False)
+        run_cmd("git status")
         raise
 
     # Initial update to create PRs
     log.info("Creating initial PRs...")
-    subprocess.run(["pyspr", "update"], check=True)
+    run_cmd("pyspr update")
 
     # Helper to find our test PRs 
     def get_test_prs() -> list:
@@ -1058,7 +1055,7 @@ def test_mq_repo() -> Generator[Tuple[str, str, str, str], None, None]:
         os.chdir(tmpdir)
 
         # Clone the repo
-        subprocess.run(["gh", "repo", "clone", repo_name], check=True)
+        run_cmd(f"gh repo clone {repo_name}")
         os.chdir("teststack")
 
         # Create and use test branch
@@ -1441,7 +1438,7 @@ def test_no_rebase_pr_stacking(test_repo: Tuple[str, str, str, str]) -> None:
 
         # Create first PR
         print("\nCreating first PR...")
-        subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir], check=True)
+        run_cmd(f"rye run pyspr update -C {repo_dir}")
 
         # Get first PR info
         info = github.get_info(None, git_cmd)
@@ -1461,7 +1458,7 @@ def test_no_rebase_pr_stacking(test_repo: Tuple[str, str, str, str]) -> None:
 
         # Update with --no-rebase
         print("\nUpdating with --no-rebase...")
-        subprocess.run(["rye", "run", "pyspr", "update", "-C", repo_dir, "-nr"], check=True)
+        run_cmd(f"rye run pyspr update -C {repo_dir} -nr")
 
         # Check PR state after no-rebase update
         info = github.get_info(None, git_cmd)
@@ -1567,7 +1564,7 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
 
         # Update to create connected PRs 1A and 1B
         log.info("Creating stack 1 PRs...")
-        subprocess.run(["pyspr", "update"], check=True)
+        run_cmd("pyspr update")
 
         # 2. Create branch2 with 2 connected PRs 
         log.info("Creating branch2 with 2-PR stack...")
@@ -1583,7 +1580,7 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
 
         # Update to create connected PRs 2A and 2B
         log.info("Creating stack 2 PRs...")
-        subprocess.run(["pyspr", "update"], check=True)
+        run_cmd("pyspr update")
 
         # Helper to find our test PRs 
         def get_test_prs() -> list:
@@ -1636,7 +1633,7 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
 
         # Run update in branch1
         log.info("Running update in branch1...")
-        subprocess.run(["pyspr", "update"], check=True)
+        run_cmd("pyspr update")
 
         # 4. Verify PR1A is closed, PR1B retargeted to main, while PR2A and PR2B remain untouched
         log.info("Verifying PR state after updates...")
