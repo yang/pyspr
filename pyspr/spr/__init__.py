@@ -516,7 +516,7 @@ class StackedPR:
 
     def merge_pull_requests(self, ctx: StackedPRContextProtocol, count: Optional[int] = None) -> None:
         """Merge all mergeable pull requests."""
-        github_info = self.github.get_info(ctx, self.git_cmd)
+        github_info = self.fetch_and_get_github_info(ctx)
         if not github_info:
             return
 

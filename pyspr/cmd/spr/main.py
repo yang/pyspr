@@ -96,12 +96,16 @@ def status(ctx: Context, directory: Optional[str], verbose: int) -> None:
               help='Run as if spr was started in DIRECTORY instead of the current working directory')
 @click.option('--count', '-c', type=int,
               help="Merge a specified number of pull requests from the bottom of the stack")
+@click.option('--no-rebase', '-nr', is_flag=True, help="Disable rebasing")
 @click.option('-v', '--verbose', count=True, help="Increase verbosity (can be used multiple times for more verbosity)")
 @click.pass_context
-def merge(ctx: Context, directory: Optional[str], count: Optional[int], verbose: int) -> None:
+def merge(ctx: Context, directory: Optional[str], count: Optional[int], no_rebase: bool, verbose: int) -> None:
     """Merge command."""
     from ... import setup_logging
     setup_logging(verbose)
+    
+    if no_rebase:
+        os.environ["SPR_NOREBASE"] = "true"
     
     config, git_cmd, github = setup_git(directory)
     stackedpr = StackedPR(config, github, git_cmd)
