@@ -1262,12 +1262,19 @@ def test_replace_commit(test_repo: Tuple[str, str, str, str]) -> None:
         except NameError:
             pass # branch may not be defined if test fails early
 
-def test_no_rebase_functionality(test_repo: Tuple[str, str, str, str]) -> None:
+def test_no_rebase_functionality(test_repo: Tuple[str, str, str, str], caplog: pytest.LogCaptureFixture, capsys: pytest.CaptureFixture[str]) -> None:
     """Test --no-rebase functionality.
     
     1. First update normally and verify rebase happens
     2. Then update with --no-rebase and verify rebase is skipped
     """
+    import logging
+
+    # Capture logs from all loggers at INFO level
+    caplog.set_level(logging.INFO, logger=None)  # Root logger 
+    caplog.set_level(logging.INFO, logger="pyspr.tests")  # Test logger
+    caplog.set_level(logging.INFO, logger="pyspr.tests.e2e")  # This test's logger
+
     owner, repo_name, test_branch, repo_dir = test_repo
 
     config = Config({
@@ -1318,27 +1325,25 @@ def test_no_rebase_functionality(test_repo: Tuple[str, str, str, str]) -> None:
 
         # Step 2: Test regular update - should rebase
         log.info("\nRunning regular update logic...")
-        # Test just the rebase part without GitHub API
-        regular_output = io.StringIO()
+        caplog.clear()  # Clear logs before test
+        
         try:
             # Manual simulation of fetch_and_get_github_info without GitHub API
-            with redirect_stdout(regular_output):
-                # Check remote exists
-                remotes = git_cmd.must_git("remote").split()
-                assert 'origin' in remotes, "Test requires origin remote"
+            # Check remote exists
+            remotes = git_cmd.must_git("remote").split()
+            assert 'origin' in remotes, "Test requires origin remote"
 
-                # Simulate fetch by having refs already updated
-                assert git_cmd.must_git("rev-parse --verify origin/main"), "Test requires origin/main ref"
+            # Simulate fetch by having refs already updated
+            assert git_cmd.must_git("rev-parse --verify origin/main"), "Test requires origin/main ref"
 
-                # Do the rebase part we want to test
-                git_cmd.must_git(f"rebase origin/main --autostash")
+            # Do the rebase part we want to test
+            git_cmd.must_git(f"rebase origin/main --autostash")
         except Exception as e:
             log.info(f"ERROR: {e}")
-        regular_output_str = regular_output.getvalue()
         
         # Verify regular update rebased by:
         # 1. Checking git log shows our commit on top of main's commit
-        # 2. Checking the output shows rebase happened
+        # 2. Checking the logs show rebase happened
         
         # Check commit order in git log
         log_output = git_cmd.must_git("log --oneline -n 2")
@@ -1346,54 +1351,57 @@ def test_no_rebase_functionality(test_repo: Tuple[str, str, str, str]) -> None:
         assert len(log_shas) == 2, "Should have at least 2 commits"
         assert log_shas[1].startswith(main_sha[:7]), "Main commit should be second in log after rebase"
         
-        # Check rebase happened
-        assert "git rebase" in regular_output_str, "Regular update should perform rebase"
+        # Check rebase happened by looking in logs
+        assert any("> git rebase" in record.message for record in caplog.records), "Regular update should perform rebase"
         
         # Step 3: Reset to pre-rebase state 
         run_cmd(f"git reset --hard {branch_sha}")
         
         # Step 4: Test update with --no-rebase
         log.info("\nRunning update with --no-rebase logic...")
-        no_rebase_output = io.StringIO()
+        caplog.clear()  # Clear logs before second test
+        caplog.set_level(logging.INFO)  # Make sure we capture INFO level logs
+        
         try:
             # Manual simulation of fetch_and_get_github_info without GitHub API
-            with redirect_stdout(no_rebase_output):
-                # Simulate env var set by CLI 
-                os.environ["SPR_NOREBASE"] = "true"
+            # Simulate env var set by CLI 
+            os.environ["SPR_NOREBASE"] = "true"
 
-                # Check remote exists
-                remotes = git_cmd.must_git("remote").split()
-                assert 'origin' in remotes, "Test requires origin remote"
+            # Check remote exists
+            remotes = git_cmd.must_git("remote").split()
+            assert 'origin' in remotes, "Test requires origin remote"
 
-                # Simulate fetch by having refs already updated
-                assert git_cmd.must_git("rev-parse --verify origin/main"), "Test requires origin/main ref"
+            # Simulate fetch by having refs already updated
+            assert git_cmd.must_git("rev-parse --verify origin/main"), "Test requires origin/main ref"
 
-                # Verify rebase is skipped (the key test)
-                no_rebase = (
-                    os.environ.get("SPR_NOREBASE") == "true" or 
-                    config.user.get('noRebase', False)
-                )
-                log.info(f"DEBUG: no_rebase={no_rebase}")
-                if not no_rebase:
-                    git_cmd.must_git(f"rebase origin/main --autostash")
+            # Verify rebase is skipped (the key test)
+            no_rebase = (
+                os.environ.get("SPR_NOREBASE") == "true" or 
+                config.user.get('noRebase', False)
+            )
+            print(f"DEBUG: no_rebase={no_rebase}")  # Use print instead of log
+            if not no_rebase:
+                git_cmd.must_git(f"rebase origin/main --autostash")
 
-                # Cleanup env var
-                del os.environ["SPR_NOREBASE"]
+            # Cleanup env var
+            del os.environ["SPR_NOREBASE"]
         except Exception as e:
             log.info(f"ERROR: {e}")
-        no_rebase_output_str = no_rebase_output.getvalue()
         
         # Verify no-rebase skipped rebasing by:
         # 1. Checking git log shows our commit is NOT on top of main's commit
-        # 2. Checking the output does NOT show rebase command
+        # 2. Checking the logs do NOT show rebase command
         
         # Check commit order in git log - should still be original commit
         curr_sha = git_cmd.must_git("rev-parse HEAD").strip()
         assert curr_sha == branch_sha, "HEAD should still be at original commit"
         
         # Check rebase was skipped
-        assert "git rebase" not in no_rebase_output_str, "No-rebase update should skip rebase"
-        assert "DEBUG: no_rebase=True" in no_rebase_output_str, "Should detect no-rebase mode"
+        assert not any("> git rebase" in record.message for record in caplog.records), "No-rebase update should skip rebase"
+        # Get captured stdout
+        captured = capsys.readouterr()
+        # Check stdout for debug message 
+        assert "DEBUG: no_rebase=True" in captured.out, "Should detect no-rebase mode"
         
     finally:
         pass
