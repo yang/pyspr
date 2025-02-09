@@ -1276,7 +1276,7 @@ def test_no_rebase_functionality(test_repo: Tuple[str, str, str, str], caplog: p
                 os.environ.get("SPR_NOREBASE") == "true" or 
                 config.user.get('noRebase', False)
             )
-            print(f"DEBUG: no_rebase={no_rebase}")  # Use print instead of log
+            log.info(f"DEBUG: no_rebase={no_rebase}")  # Use log.info instead of log
             if not no_rebase:
                 git_cmd.must_git(f"rebase origin/main --autostash")
 
@@ -1334,11 +1334,11 @@ def test_no_rebase_pr_stacking(test_repo: Tuple[str, str, str, str]) -> None:
         return git_cmd.must_git("rev-parse HEAD").strip()
 
     try:
-        print("\nCreating first commit...")
+        log.info("\nCreating first commit...")
         c1_hash = make_commit("nr_test1.txt", "First commit")
 
         # Create first PR
-        print("\nCreating first PR...")
+        log.info("\nCreating first PR...")
         run_cmd(f"pyspr update -C {repo_dir}")
 
         # Get first PR info
@@ -1350,14 +1350,14 @@ def test_no_rebase_pr_stacking(test_repo: Tuple[str, str, str, str]) -> None:
         pr1_number = pr1.number
         pr1_hash = pr1.commit.commit_hash
         assert pr1_hash is not None, "PR1 commit hash should not be None"
-        print(f"Created PR #{pr1_number} with commit {pr1_hash[:8]}")
+        log.info(f"Created PR #{pr1_number} with commit {pr1_hash[:8]}")
 
         # Create second commit
-        print("\nCreating second commit...")
+        log.info("\nCreating second commit...")
         c2_hash = make_commit("nr_test2.txt", "Second commit")
 
         # Update with --no-rebase
-        print("\nUpdating with --no-rebase...")
+        log.info("\nUpdating with --no-rebase...")
         run_cmd(f"pyspr update -C {repo_dir} -nr")
 
         # Check PR state after no-rebase update
@@ -1372,14 +1372,14 @@ def test_no_rebase_pr_stacking(test_repo: Tuple[str, str, str, str]) -> None:
         assert pr1_after is not None, f"PR #{pr1_number} should still exist"
         assert pr1_after.commit.commit_hash == pr1_hash, \
             f"PR1 commit hash changed: {pr1_hash[:8]} -> {pr1_after.commit.commit_hash[:8]}"
-        print(f"Verified PR #{pr1_number} commit unchanged: {pr1_hash[:8]}")
+        log.info(f"Verified PR #{pr1_number} commit unchanged: {pr1_hash[:8]}")
 
         # Verify new PR created for second commit
         pr2 = next((pr for pr in prs if pr.number != pr1_number), None)
         assert pr2 is not None, "Second PR should exist"
         assert pr2.commit.commit_hash == c2_hash, \
             f"PR2 commit hash wrong: {pr2.commit.commit_hash[:8]} vs {c2_hash[:8]}"
-        print(f"Verified PR #{pr2.number} created with commit {c2_hash[:8]}")
+        log.info(f"Verified PR #{pr2.number} created with commit {c2_hash[:8]}")
 
         # Verify stack links updated
         assert pr1_after.base_ref == "main", f"PR1 should target main, got {pr1_after.base_ref}"
@@ -1395,7 +1395,7 @@ def test_no_rebase_pr_stacking(test_repo: Tuple[str, str, str, str]) -> None:
         assert f"#{pr2.number}" in gh_pr1.body, f"PR1 body should link to PR #{pr2.number}"
         assert f"#{pr1_number}" in gh_pr2.body, f"PR2 body should link to PR #{pr1_number}"
 
-        print(f"Successfully verified no-rebase PR stacking: #{pr1_number} <- #{pr2.number}")
+        log.info(f"Successfully verified no-rebase PR stacking: #{pr1_number} <- #{pr2.number}")
 
     finally:
         pass
