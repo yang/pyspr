@@ -66,7 +66,8 @@ handler = logging.StreamHandler(sys.stderr)
 handler.setFormatter(logging.Formatter('%(asctime)s.%(msecs)03d [%(levelname)s] %(message)s', '%H:%M:%S'))
 log = logging.getLogger(__name__)
 log.addHandler(handler)
-log.propagate = False  # Don't double log
+log.setLevel(logging.INFO)
+log.propagate = True  # Allow logs to propagate to pytest
 
 def run_cmd(cmd: str) -> None:
     """Run a shell command using subprocess with proper error handling."""
