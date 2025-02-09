@@ -4,7 +4,7 @@ import os
 import sys
 import click
 import logging
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict, Mapping
 from click import Context
 
 # Get module logger
@@ -22,7 +22,26 @@ def check(err: Exception) -> None:
         logger.error(f"{err}")
         sys.exit(1)
 
-@click.group()
+class AliasedGroup(click.Group):
+    """Command group with support for aliases."""
+    
+    def __init__(self, *args: List, **kwargs: Dict) -> None:
+        """Initialize with aliases map."""
+        super().__init__(*args, **kwargs)
+        self.aliases: Dict[str, str] = {}
+
+    def add_alias(self, alias: str, command: str) -> None:
+        """Add an alias for a command."""
+        self.aliases[alias] = command
+
+    def get_command(self, ctx: Context, cmd_name: str) -> Optional[click.Command]:
+        """Get a command by name, supporting aliases."""
+        # Check if cmd_name is a registered alias
+        if cmd_name in self.aliases:
+            cmd_name = self.aliases[cmd_name]
+        return super().get_command(ctx, cmd_name)
+
+@click.group(cls=AliasedGroup)
 @click.pass_context
 def cli(ctx: Context) -> None:
     """SPR - Stacked Pull Requests on GitHub."""
@@ -112,8 +131,12 @@ def merge(ctx: Context, directory: Optional[str], count: Optional[int], no_rebas
     stackedpr.merge_pull_requests(ctx, count)
     # Don't update after merge - this would create new PRs
 
+
 def main() -> None:
     """Main entry point."""
+    # Add command aliases
+    cli.aliases['up'] = 'update'
+    cli.aliases['st'] = 'status'
     cli(obj={})
 
 if __name__ == "__main__":
