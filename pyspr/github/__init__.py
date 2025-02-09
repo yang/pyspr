@@ -66,7 +66,7 @@ class GitHubInterface(Protocol):
 
     def update_pull_request(self, ctx: StackedPRContextType, git_cmd: GitInterface, 
                            prs: List[PullRequest], pr: PullRequest, commit: Optional[Commit], 
-                           prev_commit: Optional[Commit]) -> None:
+                           prev_commit: Optional[Commit], labels: Optional[List[str]] = None) -> None:
         """Update pull request."""
         ...
 
@@ -461,13 +461,18 @@ class GitHubClient:
         # Add labels if provided
         if labels:
             logger.debug(f"Adding labels to PR #{pr.number}: {labels}")
-            pr.add_to_labels(*labels)
+            try:
+                pr.add_to_labels(*labels)
+                logger.info(f"> github add labels #{pr.number} : {labels}")
+            except Exception as e:
+                logger.error(f"Failed to add labels to PR #{pr.number}: {e}")
             
         return PullRequest(pr.number, commit, [commit], base_ref=base, title=title, body=body)
 
     def update_pull_request(self, ctx: StackedPRContextType, git_cmd: GitInterface, 
                            prs: List[PullRequest], pr: PullRequest,
-                           commit: Optional[Commit], prev_commit: Optional[Commit]) -> None:
+                           commit: Optional[Commit], prev_commit: Optional[Commit], 
+                           labels: Optional[List[str]] = None) -> None:
         """Update pull request."""
         if not self.repo:
             return
@@ -497,6 +502,15 @@ class GitHubClient:
             logger.debug(f"Updating body for PR #{pr.number}:\n{body}")
             gh_pr.edit(body=body)
             pr.body = body
+
+        # Add labels if provided 
+        if labels:
+            logger.debug(f"Adding labels to PR #{pr.number}: {labels}")
+            try:
+                gh_pr.add_to_labels(*labels)
+                logger.info(f"> github add labels #{pr.number} : {labels}")
+            except Exception as e:
+                logger.error(f"Failed to add labels to PR #{pr.number}: {e}")
 
         # Update base branch to maintain stack, but not if in merge queue
         # PyGithub typing is wrong; auto_merge exists but isn't in stubs

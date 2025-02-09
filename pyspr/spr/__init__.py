@@ -459,7 +459,9 @@ class StackedPR:
                         futures.append(
                             executor.submit(self.github.update_pull_request,
                                         ctx, self.git_cmd, github_info.pull_requests,
-                                        update['pr'], update['commit'], update['prev_commit'])
+                                        update['pr'], update['commit'], update['prev_commit'],
+                                        labels=labels
+                            )
                         )
                     concurrent.futures.wait(futures)
                     # Check for errors
@@ -473,7 +475,8 @@ class StackedPR:
                 for update in update_queue:
                     self.github.update_pull_request(
                         ctx, self.git_cmd, github_info.pull_requests,
-                        update['pr'], update['commit'], update['prev_commit']
+                        update['pr'], update['commit'], update['prev_commit'],
+                        labels=labels
                     )
             end_time = time.time()
             logger.debug(f"PR update operation took {end_time - start_time:.2f} seconds")
