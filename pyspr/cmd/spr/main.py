@@ -58,11 +58,13 @@ def setup_git(directory: Optional[str] = None) -> Tuple[Config, RealGit, GitHubC
 @click.option('--count', '-c', type=int,
               help="Update a specified number of pull requests from the bottom of the stack")
 @click.option('--no-rebase', '-nr', is_flag=True, help="Disable rebasing")
+@click.option('--label', '-l', multiple=True,
+              help="Add the specified label to new pull requests")
 @click.option('-v', '--verbose', count=True, help="Increase verbosity (can be used multiple times for more verbosity)")
 @click.option('--pretend', is_flag=True, help="Don't actually push or create/update pull requests, just show what would happen")
 @click.pass_context
 def update(ctx: Context, directory: Optional[str], reviewer: List[str], 
-          count: Optional[int], no_rebase: bool, verbose: int, pretend: bool) -> None:
+          count: Optional[int], no_rebase: bool, label: List[str], verbose: int, pretend: bool) -> None:
     """Update command."""
     from ... import setup_logging
     setup_logging(verbose)
@@ -73,7 +75,7 @@ def update(ctx: Context, directory: Optional[str], reviewer: List[str],
     config, git_cmd, github = setup_git(directory)
     stackedpr = StackedPR(config, github, git_cmd)
     stackedpr.pretend = pretend  # Set pretend mode
-    stackedpr.update_pull_requests(ctx, reviewer if reviewer else None, count)
+    stackedpr.update_pull_requests(ctx, reviewer if reviewer else None, count, labels=list(label) if label else None)
 
 @cli.command(name="status", help="Show status of open pull requests")
 @click.option('-C', '--directory', type=click.Path(exists=True, file_okay=False, dir_okay=True),

@@ -59,7 +59,8 @@ class GitHubInterface(Protocol):
         ...
 
     def create_pull_request(self, ctx: StackedPRContextType, git_cmd: GitInterface, 
-                           info: GitHubInfo, commit: Commit, prev_commit: Optional[Commit]) -> PullRequest:
+                           info: GitHubInfo, commit: Commit, prev_commit: Optional[Commit], 
+                           labels: Optional[List[str]] = None) -> PullRequest:
         """Create pull request."""
         ...
 
@@ -419,7 +420,8 @@ class GitHubClient:
         return GitHubInfo(local_branch, final_prs)
 
     def create_pull_request(self, ctx: StackedPRContextType, git_cmd: GitInterface, info: GitHubInfo,
-                         commit: Commit, prev_commit: Optional[Commit]) -> PullRequest:
+                         commit: Commit, prev_commit: Optional[Commit], 
+                         labels: Optional[List[str]] = None) -> PullRequest:
         """Create pull request."""
         if not self.repo:
             raise Exception("GitHub repo not initialized - check token and repo owner/name config")
@@ -455,6 +457,12 @@ class GitHubClient:
         
         # Update PR with proper body
         pr.edit(body=body)
+
+        # Add labels if provided
+        if labels:
+            logger.debug(f"Adding labels to PR #{pr.number}: {labels}")
+            pr.add_to_labels(*labels)
+            
         return PullRequest(pr.number, commit, [commit], base_ref=base, title=title, body=body)
 
     def update_pull_request(self, ctx: StackedPRContextType, git_cmd: GitInterface, 

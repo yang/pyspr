@@ -293,7 +293,8 @@ class StackedPR:
 
     def update_pull_requests(self, ctx: StackedPRContextProtocol, 
                          reviewers: Optional[List[str]] = None, 
-                         count: Optional[int] = None) -> None:
+                         count: Optional[int] = None,
+                         labels: Optional[List[str]] = None) -> None:
         """Update pull requests for commits."""
         github_info = self.fetch_and_get_github_info(ctx)
         if not github_info:
@@ -423,7 +424,7 @@ class StackedPR:
                     )
                 else:
                     logger.debug(f"  No matching PR found, creating new PR")
-                    pr = self.github.create_pull_request(ctx, self.git_cmd, github_info, commit, prev_commit)
+                    pr = self.github.create_pull_request(ctx, self.git_cmd, github_info, commit, prev_commit, labels=labels)
                 github_info.pull_requests.append(pr)
                 update_queue.append({
                     'pr': pr,
