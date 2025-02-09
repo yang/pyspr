@@ -279,13 +279,7 @@ def test_wip_behavior(test_repo: Tuple[str, str, str, str], caplog: pytest.LogCa
     c3_hash = make_commit("wip_test3.txt", "WIP Third commit")
     _ = make_commit("wip_test4.txt", "Fourth regular commit")  # Not used but kept for completeness
     
-    log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Pushing branch with commits...")
-    run_cmd(f"git push -u origin {test_branch}")  # Push branch with commits
-    log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Push complete")
-    
     # Run update to create PRs
-    log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Creating PRs...")
-    
     log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Running pyspr update...")
     run_cmd(f"pyspr update")
     log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} pyspr update complete")
@@ -827,7 +821,6 @@ def _run_merge_test(
             c_hash = make_commit(filename, f"line 1 - {unique}", 
                                f"Test {'merge queue' if use_merge_queue else 'multi'} commit {i+1}")
             commit_hashes.append(c_hash)
-        run_cmd(f"git push -u origin {test_branch}")  # Push branch with commits
     except subprocess.CalledProcessError as e:
         # Get git status for debugging
         run_cmd("git status")
@@ -1057,138 +1050,126 @@ def test_replace_commit(test_repo: Tuple[str, str, str, str]) -> None:
         commit_hash = git_cmd.must_git("rev-parse HEAD").strip()
         return commit_hash, commit_id
 
-    try:
-        log.info("\nCreating initial stack of 3 commits...")
-        run_cmd("git checkout main")
-        run_cmd("git pull")
-        branch = f"test-replace-{uuid.uuid4().hex[:7]}"
-        run_cmd(f"git checkout -b {branch}")
+    log.info("\nCreating initial stack of 3 commits...")
+    run_cmd("git checkout main")
+    run_cmd("git pull")
+    branch = f"test-replace-{uuid.uuid4().hex[:7]}"
+    run_cmd(f"git checkout -b {branch}")
 
-        test_files = ["file1.txt", "file2.txt", "file3.txt", "file2_new.txt"]
+    test_files = ["file1.txt", "file2.txt", "file3.txt", "file2_new.txt"]
 
-        # 1. Create stack with commits A -> B -> C
-        c1_hash, c1_id = make_commit("file1.txt", "line 1", "Commit A")
-        c2_hash, c2_id = make_commit("file2.txt", "line 1", "Commit B")
-        c3_hash, c3_id = make_commit("file3.txt", "line 1", "Commit C")
-        run_cmd(f"git push -u origin {branch}")
+    # 1. Create stack with commits A -> B -> C
+    c1_hash, c1_id = make_commit("file1.txt", "line 1", "Commit A")
+    c2_hash, c2_id = make_commit("file2.txt", "line 1", "Commit B")
+    c3_hash, c3_id = make_commit("file3.txt", "line 1", "Commit C")
 
-        # Helper to find our test PRs 
-        def get_test_prs() -> list:
-            result = []
-            for pr in github.get_info(None, git_cmd).pull_requests:
-                if pr.from_branch.startswith('spr/main/'):
-                    try:
-                        # Look for our unique tag in the commit message
-                        commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
-                        if f"test-tag:{unique_tag}" in commit_msg:
-                            result.append(pr)
-                    except:  # Skip failures since we're just filtering
-                        pass
-            return result
+    # Helper to find our test PRs
+    def get_test_prs() -> list:
+        result = []
+        for pr in github.get_info(None, git_cmd).pull_requests:
+            if pr.from_branch.startswith('spr/main/'):
+                try:
+                    # Look for our unique tag in the commit message
+                    commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
+                    if f"test-tag:{unique_tag}" in commit_msg:
+                        result.append(pr)
+                except:  # Skip failures since we're just filtering
+                    pass
+        return result
 
-        log.info("Creating initial PRs...")
-        subprocess.run(["pyspr", "update"], check=True)
+    log.info("Creating initial PRs...")
+    subprocess.run(["pyspr", "update"], check=True)
 
-        # Get initial PR info and filter to our newly created PRs
-        commit_prs = get_test_prs()
-        commit_prs = sorted(commit_prs, key=lambda pr: pr.number)
-        assert len(commit_prs) == 3, f"Should find 3 PRs for our commits, found {len(commit_prs)}"
-        
-        # Verify each commit has a PR
-        prs_by_id = {pr.commit.commit_id: pr for pr in commit_prs}
-        assert c1_id in prs_by_id, f"No PR found for commit A ({c1_id})"
-        assert c2_id in prs_by_id, f"No PR found for commit B ({c2_id})" 
-        assert c3_id in prs_by_id, f"No PR found for commit C ({c3_id})"
-        
-        pr1, pr2, pr3 = prs_by_id[c1_id], prs_by_id[c2_id], prs_by_id[c3_id]
-        log.info(f"Created PRs: #{pr1.number} (A), #{pr2.number} (B), #{pr3.number} (C)")
-        pr2_num = pr2.number  # Remember B's PR number
+    # Get initial PR info and filter to our newly created PRs
+    commit_prs = get_test_prs()
+    commit_prs = sorted(commit_prs, key=lambda pr: pr.number)
+    assert len(commit_prs) == 3, f"Should find 3 PRs for our commits, found {len(commit_prs)}"
 
-        # Verify PR stack
-        assert pr1.base_ref == "main", "PR1 should target main"
-        assert pr2.base_ref == f"spr/main/{c1_id}", "PR2 should target PR1"
-        assert pr3.base_ref == f"spr/main/{c2_id}", "PR3 should target PR2"
+    # Verify each commit has a PR
+    prs_by_id = {pr.commit.commit_id: pr for pr in commit_prs}
+    assert c1_id in prs_by_id, f"No PR found for commit A ({c1_id})"
+    assert c2_id in prs_by_id, f"No PR found for commit B ({c2_id})"
+    assert c3_id in prs_by_id, f"No PR found for commit C ({c3_id})"
 
-        # 2. Replace commit B with new commit D
-        log.info("\nReplacing commit B with new commit D...")
-        run_cmd("git reset --hard HEAD~2")  # Remove B and C
-        _new_c2_hash, new_c2_id = make_commit("file2_new.txt", "line 1", "New Commit D")
-        run_cmd(f"git cherry-pick {c3_hash}")  # Add C back
-        run_cmd("git push -f origin")
+    pr1, pr2, pr3 = prs_by_id[c1_id], prs_by_id[c2_id], prs_by_id[c3_id]
+    log.info(f"Created PRs: #{pr1.number} (A), #{pr2.number} (B), #{pr3.number} (C)")
+    pr2_num = pr2.number  # Remember B's PR number
 
-        # 3. Run update
-        log.info("Running update after replace...")
-        subprocess.run(["pyspr", "update"], check=True)
+    # Verify PR stack
+    assert pr1.base_ref == "main", "PR1 should target main"
+    assert pr2.base_ref == f"spr/main/{c1_id}", "PR2 should target PR1"
+    assert pr3.base_ref == f"spr/main/{c2_id}", "PR3 should target PR2"
 
-        # 4. Verify:
-        log.info("\nVerifying PR handling after replace...")
-        relevant_prs = get_test_prs()
-        pr_nums_to_check: Set[int] = set(pr.number for pr in relevant_prs)
-        if pr2_num not in pr_nums_to_check:
-            # Also check if B's old PR is still open but no longer has our commits
-            for pr in github.get_info(None, git_cmd).pull_requests:
-                if pr.number == pr2_num:
-                    relevant_prs.append(pr)
-                    pr_nums_to_check.add(pr.number)
-                    break
-        
-        # Map of commit IDs to PRs
-        active_pr_ids: Dict[str, PullRequest] = {pr.commit.commit_id: pr for pr in relevant_prs}
-        
-        # - Verify B's PR state
-        if pr2_num in pr_nums_to_check:
-            # If it exists, it should not have B's commit ID anymore
-            reused_pr = next((pr for pr in relevant_prs if pr.number == pr2_num), None)
-            if reused_pr:
-                assert reused_pr.commit.commit_id == new_c2_id, f"PR #{pr2_num} should not retain B's commit - found {reused_pr.commit.commit_id}"
-                log.info(f"Found PR #{pr2_num} reused for commit {new_c2_id}")
-        else:
-            log.info(f"PR #{pr2_num} was properly closed")
-        
-        # - Verify new commit D has a PR
-        assert new_c2_id in active_pr_ids, f"Should have PR for new commit D ({new_c2_id})"
-        new_pr = active_pr_ids[new_c2_id]
-        log.info(f"Found PR #{new_pr.number} for new commit {new_c2_id}")
-        
-        # Key assertions to verify we don't use positional matching:
-        # 1. B's PR should be closed, not reused for any commit
-        assert pr2_num not in pr_nums_to_check, "B's PR should be closed, not reused via position matching"
-        # 2. D's new PR should not reuse B's PR number (which would happen with position matching)
-        assert new_pr.number != pr2_num, "Should not reuse B's PR number for D (no position matching)"
-        # 3. Verify we don't try to match removed commits to any remaining PRs
-        for remaining_pr in relevant_prs:
-            assert remaining_pr.commit.commit_id != c2_id, f"PR #{remaining_pr.number} should not be matched to removed commit B"
+    # 2. Replace commit B with new commit D
+    log.info("\nReplacing commit B with new commit D...")
+    run_cmd("git reset --hard HEAD~2")  # Remove B and C
+    _new_c2_hash, new_c2_id = make_commit("file2_new.txt", "line 1", "New Commit D")
+    run_cmd(f"git cherry-pick {c3_hash}")  # Add C back
 
-        # Check final stack structure
-        stack_prs = sorted([pr for pr in relevant_prs 
-                          if pr.commit.commit_id in [c1_id, new_c2_id, c3_id]],
-                          key=lambda pr: pr.number)
-        assert len(stack_prs) == 3, f"Should have 3 active PRs in stack, found {len(stack_prs)}"
+    # 3. Run update
+    log.info("Running update after replace...")
+    subprocess.run(["pyspr", "update"], check=True)
 
-        # Get PRs by commit ID 
-        prs_by_id = {pr.commit.commit_id: pr for pr in stack_prs}
-        pr1 = prs_by_id.get(c1_id)
-        pr_d = prs_by_id.get(new_c2_id)
-        pr3 = prs_by_id.get(c3_id)
-        
-        assert pr1 is not None, "PR1 should exist"
-        assert pr_d is not None, "PR_D should exist"
-        assert pr3 is not None, "PR3 should exist"
-        
-        log.info(f"Final PR stack: #{pr1.number} <- #{pr_d.number} <- #{pr3.number}")
+    # 4. Verify:
+    log.info("\nVerifying PR handling after replace...")
+    relevant_prs = get_test_prs()
+    pr_nums_to_check: Set[int] = set(pr.number for pr in relevant_prs)
+    if pr2_num not in pr_nums_to_check:
+        # Also check if B's old PR is still open but no longer has our commits
+        for pr in github.get_info(None, git_cmd).pull_requests:
+            if pr.number == pr2_num:
+                relevant_prs.append(pr)
+                pr_nums_to_check.add(pr.number)
+                break
 
-        assert pr1.base_ref == "main", "PR1 should target main"
-        assert pr_d.base_ref == f"spr/main/{c1_id}", "New PR should target PR1" 
-        assert pr3.base_ref == f"spr/main/{new_c2_id}", "PR3 should target new PR"
+    # Map of commit IDs to PRs
+    active_pr_ids: Dict[str, PullRequest] = {pr.commit.commit_id: pr for pr in relevant_prs}
 
-    finally:
-        try:
-            # Cleanup 
-            run_cmd("git checkout main")
-            # Branch name may not be defined if test fails early
-            run_cmd(f"git push origin --delete {branch} || true")  # type: ignore
-        except NameError:
-            pass # branch may not be defined if test fails early
+    # - Verify B's PR state
+    if pr2_num in pr_nums_to_check:
+        # If it exists, it should not have B's commit ID anymore
+        reused_pr = next((pr for pr in relevant_prs if pr.number == pr2_num), None)
+        if reused_pr:
+            assert reused_pr.commit.commit_id == new_c2_id, f"PR #{pr2_num} should not retain B's commit - found {reused_pr.commit.commit_id}"
+            log.info(f"Found PR #{pr2_num} reused for commit {new_c2_id}")
+    else:
+        log.info(f"PR #{pr2_num} was properly closed")
+
+    # - Verify new commit D has a PR
+    assert new_c2_id in active_pr_ids, f"Should have PR for new commit D ({new_c2_id})"
+    new_pr = active_pr_ids[new_c2_id]
+    log.info(f"Found PR #{new_pr.number} for new commit {new_c2_id}")
+
+    # Key assertions to verify we don't use positional matching:
+    # 1. B's PR should be closed, not reused for any commit
+    assert pr2_num not in pr_nums_to_check, "B's PR should be closed, not reused via position matching"
+    # 2. D's new PR should not reuse B's PR number (which would happen with position matching)
+    assert new_pr.number != pr2_num, "Should not reuse B's PR number for D (no position matching)"
+    # 3. Verify we don't try to match removed commits to any remaining PRs
+    for remaining_pr in relevant_prs:
+        assert remaining_pr.commit.commit_id != c2_id, f"PR #{remaining_pr.number} should not be matched to removed commit B"
+
+    # Check final stack structure
+    stack_prs = sorted([pr for pr in relevant_prs
+                      if pr.commit.commit_id in [c1_id, new_c2_id, c3_id]],
+                      key=lambda pr: pr.number)
+    assert len(stack_prs) == 3, f"Should have 3 active PRs in stack, found {len(stack_prs)}"
+
+    # Get PRs by commit ID
+    prs_by_id = {pr.commit.commit_id: pr for pr in stack_prs}
+    pr1 = prs_by_id.get(c1_id)
+    pr_d = prs_by_id.get(new_c2_id)
+    pr3 = prs_by_id.get(c3_id)
+
+    assert pr1 is not None, "PR1 should exist"
+    assert pr_d is not None, "PR_D should exist"
+    assert pr3 is not None, "PR3 should exist"
+
+    log.info(f"Final PR stack: #{pr1.number} <- #{pr_d.number} <- #{pr3.number}")
+
+    assert pr1.base_ref == "main", "PR1 should target main"
+    assert pr_d.base_ref == f"spr/main/{c1_id}", "New PR should target PR1"
+    assert pr3.base_ref == f"spr/main/{new_c2_id}", "PR3 should target new PR"
 
 def test_no_rebase_functionality(test_repo: Tuple[str, str, str, str], caplog: pytest.LogCaptureFixture, capsys: pytest.CaptureFixture[str]) -> None:
     """Test --no-rebase functionality.
@@ -1241,9 +1222,11 @@ def test_no_rebase_functionality(test_repo: Tuple[str, str, str, str], caplog: p
         run_cmd(f"echo 'origin change' > {main_file}")
         run_cmd(f"git add {main_file}")
         run_cmd('git commit -m "Origin change"')
-        # Simulate remote by updating origin/main refs 
+        # Simulate remote by updating origin/main refs
         run_cmd("git update-ref refs/remotes/origin/main HEAD")
         main_sha = git_cmd.must_git("rev-parse HEAD").strip()
+        # This is OK since we actually do want to update the main branch for the test branch to rebase on.
+        run_cmd('git push')
 
         # Go back to test branch
         run_cmd("git checkout test-branch")
@@ -1255,20 +1238,6 @@ def test_no_rebase_functionality(test_repo: Tuple[str, str, str, str], caplog: p
         log.info("\nRunning regular update logic...")
         caplog.clear()  # Clear logs before test
         
-        try:
-            # Manual simulation of fetch_and_get_github_info without GitHub API
-            # Check remote exists
-            remotes = git_cmd.must_git("remote").split()
-            assert 'origin' in remotes, "Test requires origin remote"
-
-            # Simulate fetch by having refs already updated
-            assert git_cmd.must_git("rev-parse --verify origin/main"), "Test requires origin/main ref"
-
-            # Do the rebase part we want to test
-            git_cmd.must_git(f"rebase origin/main --autostash")
-        except Exception as e:
-            log.info(f"ERROR: {e}")
-        
         # Verify regular update rebased by:
         # 1. Checking git log shows our commit on top of main's commit
         # 2. Checking the logs show rebase happened
@@ -1278,7 +1247,7 @@ def test_no_rebase_functionality(test_repo: Tuple[str, str, str, str], caplog: p
         log_shas = [line.split()[0] for line in log_output.splitlines()]
         assert len(log_shas) == 2, "Should have at least 2 commits"
         assert log_shas[1].startswith(main_sha[:7]), "Main commit should be second in log after rebase"
-        
+
         # Check rebase happened by looking in logs
         assert any("> git rebase" in record.message for record in caplog.records), "Regular update should perform rebase"
         
@@ -1367,7 +1336,6 @@ def test_no_rebase_pr_stacking(test_repo: Tuple[str, str, str, str]) -> None:
     try:
         print("\nCreating first commit...")
         c1_hash = make_commit("nr_test1.txt", "First commit")
-        run_cmd(f"git push -u origin {test_branch}")
 
         # Create first PR
         print("\nCreating first PR...")
@@ -1387,7 +1355,6 @@ def test_no_rebase_pr_stacking(test_repo: Tuple[str, str, str, str]) -> None:
         # Create second commit
         print("\nCreating second commit...")
         c2_hash = make_commit("nr_test2.txt", "Second commit")
-        run_cmd("git push")
 
         # Update with --no-rebase
         print("\nUpdating with --no-rebase...")
@@ -1475,123 +1442,110 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
         commit_hash = git_cmd.must_git("rev-parse HEAD").strip()
         return commit_hash, commit_id
 
-    try:
-        # Initialize branch names 
-        branch1: str = ""
-        branch2: str = ""
+    # Initialize branch names
+    branch1: str = ""
+    branch2: str = ""
 
-        test_files = ["stack1a.txt", "stack1b.txt", "stack2a.txt", "stack2b.txt"]
+    test_files = ["stack1a.txt", "stack1b.txt", "stack2a.txt", "stack2b.txt"]
 
-        # 1. Create branch1 with 2 connected PRs
-        log.info("Creating branch1 with 2-PR stack...")
-        run_cmd("git checkout main")
-        run_cmd("git pull")
-        branch1 = f"test-stack1-{uuid.uuid4().hex[:7]}"
-        run_cmd(f"git checkout -b {branch1}")
+    # 1. Create branch1 with 2 connected PRs
+    log.info("Creating branch1 with 2-PR stack...")
+    run_cmd("git checkout main")
+    run_cmd("git pull")
+    branch1 = f"test-stack1-{uuid.uuid4().hex[:7]}"
+    run_cmd(f"git checkout -b {branch1}")
 
-        # First commit for PR1A
-        c1a_hash, c1a_id = make_commit("stack1a.txt", "line 1", "Stack 1 commit A", 1)
-        # Second commit for PR1B
-        c1b_hash, c1b_id = make_commit("stack1b.txt", "line 1", "Stack 1 commit B", 1)
-        run_cmd(f"git push -u origin {branch1}")
+    # First commit for PR1A
+    c1a_hash, c1a_id = make_commit("stack1a.txt", "line 1", "Stack 1 commit A", 1)
+    # Second commit for PR1B
+    c1b_hash, c1b_id = make_commit("stack1b.txt", "line 1", "Stack 1 commit B", 1)
 
-        # Update to create connected PRs 1A and 1B
-        log.info("Creating stack 1 PRs...")
-        run_cmd("pyspr update")
+    # Update to create connected PRs 1A and 1B
+    log.info("Creating stack 1 PRs...")
+    run_cmd("pyspr update")
 
-        # 2. Create branch2 with 2 connected PRs 
-        log.info("Creating branch2 with 2-PR stack...")
-        run_cmd("git checkout main")
-        branch2 = f"test-stack2-{uuid.uuid4().hex[:7]}"
-        run_cmd(f"git checkout -b {branch2}")
+    # 2. Create branch2 with 2 connected PRs
+    log.info("Creating branch2 with 2-PR stack...")
+    run_cmd("git checkout main")
+    branch2 = f"test-stack2-{uuid.uuid4().hex[:7]}"
+    run_cmd(f"git checkout -b {branch2}")
 
-        # First commit for PR2A
-        _c2a_hash, c2a_id = make_commit("stack2a.txt", "line 1", "Stack 2 commit A", 2)
-        # Second commit for PR2B
-        _c2b_hash, c2b_id = make_commit("stack2b.txt", "line 1", "Stack 2 commit B", 2)
-        run_cmd(f"git push -u origin {branch2}")
+    # First commit for PR2A
+    _c2a_hash, c2a_id = make_commit("stack2a.txt", "line 1", "Stack 2 commit A", 2)
+    # Second commit for PR2B
+    _c2b_hash, c2b_id = make_commit("stack2b.txt", "line 1", "Stack 2 commit B", 2)
 
-        # Update to create connected PRs 2A and 2B
-        log.info("Creating stack 2 PRs...")
-        run_cmd("pyspr update")
+    # Update to create connected PRs 2A and 2B
+    log.info("Creating stack 2 PRs...")
+    run_cmd("pyspr update")
 
-        # Helper to find our test PRs 
-        def get_test_prs() -> list:
-            result = []
-            for pr in github.get_info(None, git_cmd).pull_requests:
-                if pr.from_branch.startswith('spr/main/'):
-                    try:
-                        # Look for our unique tags in the commit message
-                        commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
-                        if f"test-tag:{unique_tag1}" in commit_msg or f"test-tag:{unique_tag2}" in commit_msg:
-                            result.append(pr)
-                    except:  # Skip failures since we're just filtering
-                        pass
-            return result
+    # Helper to find our test PRs
+    def get_test_prs() -> list:
+        result = []
+        for pr in github.get_info(None, git_cmd).pull_requests:
+            if pr.from_branch.startswith('spr/main/'):
+                try:
+                    # Look for our unique tags in the commit message
+                    commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
+                    if f"test-tag:{unique_tag1}" in commit_msg or f"test-tag:{unique_tag2}" in commit_msg:
+                        result.append(pr)
+                except:  # Skip failures since we're just filtering
+                    pass
+        return result
 
-        # Verify all 4 PRs exist with correct connections
-        log.info("Verifying initial state of PRs...")
-        # Find our test PRs
-        test_prs = get_test_prs()
-        all_prs = {}
-        for pr in test_prs:
-            for cid in [c1a_id, c1b_id, c2a_id, c2b_id]:
-                if pr.commit.commit_id == cid:
-                    all_prs[cid] = pr
+    # Verify all 4 PRs exist with correct connections
+    log.info("Verifying initial state of PRs...")
+    # Find our test PRs
+    test_prs = get_test_prs()
+    all_prs = {}
+    for pr in test_prs:
+        for cid in [c1a_id, c1b_id, c2a_id, c2b_id]:
+            if pr.commit.commit_id == cid:
+                all_prs[cid] = pr
 
-        # Check we found all PRs
-        for label, cid in [("PR1A", c1a_id), ("PR1B", c1b_id), 
-                           ("PR2A", c2a_id), ("PR2B", c2b_id)]:
-            assert cid in all_prs, f"{label} is missing"
+    # Check we found all PRs
+    for label, cid in [("PR1A", c1a_id), ("PR1B", c1b_id),
+                       ("PR2A", c2a_id), ("PR2B", c2b_id)]:
+        assert cid in all_prs, f"{label} is missing"
 
-        pr1a, pr1b = all_prs[c1a_id], all_prs[c1b_id]
-        pr2a, pr2b = all_prs[c2a_id], all_prs[c2b_id]
+    pr1a, pr1b = all_prs[c1a_id], all_prs[c1b_id]
+    pr2a, pr2b = all_prs[c2a_id], all_prs[c2b_id]
 
-        # Verify stack 1 connections
-        assert pr1a.base_ref == "main", "PR1A should target main"
-        assert pr1b.base_ref == f"spr/main/{c1a_id}", "PR1B should target PR1A"
+    # Verify stack 1 connections
+    assert pr1a.base_ref == "main", "PR1A should target main"
+    assert pr1b.base_ref == f"spr/main/{c1a_id}", "PR1B should target PR1A"
 
-        # Verify stack 2 connections
-        assert pr2a.base_ref == "main", "PR2A should target main"
-        assert pr2b.base_ref == f"spr/main/{c2a_id}", "PR2B should target PR2A"
+    # Verify stack 2 connections
+    assert pr2a.base_ref == "main", "PR2A should target main"
+    assert pr2b.base_ref == f"spr/main/{c2a_id}", "PR2B should target PR2A"
 
-        log.info(f"Created stacks - Stack1: #{pr1a.number} <- #{pr1b.number}, Stack2: #{pr2a.number} <- #{pr2b.number}")
+    log.info(f"Created stacks - Stack1: #{pr1a.number} <- #{pr1b.number}, Stack2: #{pr2a.number} <- #{pr2b.number}")
 
-        # 3. Remove commit from branch1
-        log.info("Removing first commit from branch1...")
-        run_cmd(f"git checkout {branch1}")
-        run_cmd("git reset --hard HEAD~2")  # Remove both commits
-        run_cmd("git cherry-pick {}".format(c1b_hash))  # Add back just the second commit
-        # Removed manual push, let pyspr update handle it
+    # 3. Remove commit from branch1
+    log.info("Removing first commit from branch1...")
+    run_cmd(f"git checkout {branch1}")
+    run_cmd("git reset --hard HEAD~2")  # Remove both commits
+    run_cmd("git cherry-pick {}".format(c1b_hash))  # Add back just the second commit
+    # Removed manual push, let pyspr update handle it
 
-        # Run update in branch1
-        log.info("Running update in branch1...")
-        run_cmd("pyspr update")
+    # Run update in branch1
+    log.info("Running update in branch1...")
+    run_cmd("pyspr update")
 
-        # 4. Verify PR1A is closed, PR1B retargeted to main, while PR2A and PR2B remain untouched
-        log.info("Verifying PR state after updates...")
-        test_prs = get_test_prs()
-        remaining_prs = {}
-        for pr in test_prs:
-            remaining_prs[pr.number] = pr.base_ref
-        
-        # Stack 1: PR1A should be closed, PR1B retargeted to main
-        assert pr1a.number not in remaining_prs, f"PR1A #{pr1a.number} should be closed"
-        assert pr1b.number in remaining_prs, f"PR1B #{pr1b.number} should still exist"
-        assert remaining_prs[pr1b.number] == "main", f"PR1B should be retargeted to main, got {remaining_prs[pr1b.number]}"
-        
-        # Stack 2 should remain untouched
-        assert pr2a.number in remaining_prs, f"PR2A #{pr2a.number} should still exist"
-        assert pr2b.number in remaining_prs, f"PR2B #{pr2b.number} should still exist"
-        assert remaining_prs[pr2a.number] == "main", f"PR2A should target main, got {remaining_prs[pr2a.number]}"
-        assert remaining_prs[pr2b.number] == f"spr/main/{c2a_id}", f"PR2B should target PR2A, got {remaining_prs[pr2b.number]}"
+    # 4. Verify PR1A is closed, PR1B retargeted to main, while PR2A and PR2B remain untouched
+    log.info("Verifying PR state after updates...")
+    test_prs = get_test_prs()
+    remaining_prs = {}
+    for pr in test_prs:
+        remaining_prs[pr.number] = pr.base_ref
 
-    finally:
-        try:
-            # Cleanup 
-            run_cmd("git checkout main")
-            # Branch names may not be defined if test fails early
-            run_cmd(f"git push origin --delete {branch1} || true")  # type: ignore
-            run_cmd(f"git push origin --delete {branch2} || true")  # type: ignore
-        except NameError:
-            pass # branches may not be defined if test fails early
+    # Stack 1: PR1A should be closed, PR1B retargeted to main
+    assert pr1a.number not in remaining_prs, f"PR1A #{pr1a.number} should be closed"
+    assert pr1b.number in remaining_prs, f"PR1B #{pr1b.number} should still exist"
+    assert remaining_prs[pr1b.number] == "main", f"PR1B should be retargeted to main, got {remaining_prs[pr1b.number]}"
+
+    # Stack 2 should remain untouched
+    assert pr2a.number in remaining_prs, f"PR2A #{pr2a.number} should still exist"
+    assert pr2b.number in remaining_prs, f"PR2B #{pr2b.number} should still exist"
+    assert remaining_prs[pr2a.number] == "main", f"PR2A should target main, got {remaining_prs[pr2a.number]}"
+    assert remaining_prs[pr2b.number] == f"spr/main/{c2a_id}", f"PR2B should target PR2A, got {remaining_prs[pr2b.number]}"
