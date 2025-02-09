@@ -1,3 +1,11 @@
-# pyspr3
+# pyspr: stacked pull requests for github
 
-Minimal Python port of spr with just the update command functionality.
+```
+alias pr=.../bin/pyspr
+
+pr up
+pr st
+```
+
+Minimal Python port of [spr](https://github.com/ejoffe/spr).
+See its docs.
