@@ -46,69 +46,30 @@ log.addHandler(handler)
 log.setLevel(logging.INFO)
 log.propagate = True  # Allow logs to propagate to pytest
 
-from pyspr.tests.e2e.test_helpers import run_cmd
+from pyspr.tests.e2e.test_helpers import run_cmd, RepoContext, test_repo_ctx
 
-def test_delete_insert(test_repo: Tuple[str, str, str, str]) -> None:
+def test_delete_insert(test_repo_ctx: RepoContext) -> None:
     """Test that creates four commits, runs update, then recreates commits but skips the second one,
     and verifies PR state after each update, including verifying PR hashes match local commit hashes."""
-    owner, repo_name, test_branch, repo_dir = test_repo
+    ctx = test_repo_ctx
 
-    # Create config for the test repo
-    config = Config({
-        'repo': {
-            'github_remote': 'origin',
-            'github_branch': 'main',
-            'github_repo_owner': owner,
-            'github_repo_name': repo_name,
-        },
-        'user': {}
-    })
-    git_cmd = RealGit(config)
-    github = GitHubClient(None, config)
-    
-    # Create a unique tag for this test run
-    unique_tag = f"test-simple-update-{uuid.uuid4().hex[:8]}"
-    
     # Create four test commits with unique tag in message
-    def make_commit(file: str, content: str, msg: str) -> None:
-        full_msg = f"{msg} [test-tag:{unique_tag}]"
-        with open(file, "w") as f:
-            f.write(f"{file}\n{content}\n")
-        run_cmd(f"git add {file}")
-        run_cmd(f'git commit -m "{full_msg}"')
-
-    make_commit("test1.txt", "test content 1", "First commit")
-    make_commit("test2.txt", "test content 2", "Second commit")
-    make_commit("test3.txt", "test content 3", "Third commit")
-    make_commit("test4.txt", "test content 4", "Fourth commit")
+    ctx.make_commit("test1.txt", "test content 1", "First commit")
+    ctx.make_commit("test2.txt", "test content 2", "Second commit")
+    ctx.make_commit("test3.txt", "test content 3", "Third commit")
+    ctx.make_commit("test4.txt", "test content 4", "Fourth commit")
     
     # Run pyspr update
-    run_cmd(f"pyspr update")
+    run_cmd("pyspr update")
     
     # Get commit hashes after update 
-    commit1_hash = git_cmd.must_git("rev-parse HEAD~3").strip()
-    commit2_hash = git_cmd.must_git("rev-parse HEAD~2").strip()
-    commit3_hash = git_cmd.must_git("rev-parse HEAD~1").strip() 
-    commit4_hash = git_cmd.must_git("rev-parse HEAD").strip()
-    
-    # Helper to find our test PRs using unique tag
-    def get_test_prs() -> List[PullRequest]:
-        log.info("\nLooking for PRs with unique tag...")
-        result = []
-        for pr in github.get_info(None, git_cmd).pull_requests:
-            if pr.from_branch.startswith('spr/main/'):
-                try:
-                    # Look for our unique tag in the commit message
-                    commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
-                    if f"test-tag:{unique_tag}" in commit_msg:
-                        log.info(f"Found PR #{pr.number} with tag and commit ID {pr.commit.commit_id}")
-                        result.append(pr)
-                except:
-                    pass
-        return result
+    commit1_hash = ctx.git_cmd.must_git("rev-parse HEAD~3").strip()
+    commit2_hash = ctx.git_cmd.must_git("rev-parse HEAD~2").strip()
+    commit3_hash = ctx.git_cmd.must_git("rev-parse HEAD~1").strip() 
+    commit4_hash = ctx.git_cmd.must_git("rev-parse HEAD").strip()
 
     # Verify initial PRs were created
-    prs = get_test_prs()
+    prs = ctx.get_test_prs()
     assert len(prs) == 4, f"Should have created 4 PRs, found {len(prs)}"
     prs.sort(key=lambda p: p.number)  # Sort by PR number
     pr1, pr2, pr3, pr4 = prs
@@ -135,24 +96,24 @@ def test_delete_insert(test_repo: Tuple[str, str, str, str]) -> None:
     run_cmd("git reset --hard HEAD~4")  # Remove all commits
 
     # Get the original commit messages
-    c1_msg = git_cmd.must_git(f"show -s --format=%B {commit1_hash}").strip()
-    c3_msg = git_cmd.must_git(f"show -s --format=%B {commit3_hash}").strip()
-    c4_msg = git_cmd.must_git(f"show -s --format=%B {commit4_hash}").strip()
+    c1_msg = ctx.git_cmd.must_git(f"show -s --format=%B {commit1_hash}").strip()
+    c3_msg = ctx.git_cmd.must_git(f"show -s --format=%B {commit3_hash}").strip()
+    c4_msg = ctx.git_cmd.must_git(f"show -s --format=%B {commit4_hash}").strip()
     
     # Recreate commits but skip commit2 and add c3.5
     run_cmd(f"git cherry-pick {commit1_hash}")
     run_cmd(f"git cherry-pick {commit3_hash}")
     
     # Add new c3.5 commit
-    make_commit("test3_5.txt", "test content 3.5", "Commit three point five")
+    ctx.make_commit("test3_5.txt", "test content 3.5", "Commit three point five")
 
     run_cmd(f"git cherry-pick {commit4_hash}")
 
     # Run pyspr update again
-    run_cmd(f"pyspr update -v")
+    run_cmd("pyspr update -v")
     
     # Get PRs after removing commit2 and adding c3.5
-    prs = get_test_prs()
+    prs = ctx.get_test_prs()
     assert len(prs) == 4, f"Should have 4 PRs after removing commit2 and adding c3.5, found {len(prs)}"
 
     # Get PR numbers that still exist
@@ -184,10 +145,10 @@ def test_delete_insert(test_repo: Tuple[str, str, str, str]) -> None:
     
     # Verify PR order and proper chain connectivity
     current_shas = {
-        "first": git_cmd.must_git("rev-parse HEAD~3").strip(),
-        "third": git_cmd.must_git("rev-parse HEAD~2").strip(),
-        "three_five": git_cmd.must_git("rev-parse HEAD~1").strip(),
-        "fourth": git_cmd.must_git("rev-parse HEAD").strip()
+        "first": ctx.git_cmd.must_git("rev-parse HEAD~3").strip(),
+        "third": ctx.git_cmd.must_git("rev-parse HEAD~2").strip(),
+        "three_five": ctx.git_cmd.must_git("rev-parse HEAD~1").strip(),
+        "fourth": ctx.git_cmd.must_git("rev-parse HEAD").strip()
     }
     
     # Verify PR hashes match new local commit hashes after update
