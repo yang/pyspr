@@ -307,6 +307,8 @@ class StackedPR:
         """Update pull requests for commits."""
         # Combine CLI labels with config labels
         config_labels: List[str] = self.config.repo.get('labels', [])
+        # pyright: reportUnnecessaryIsInstance=false
+        # This check is needed because config can contain str or list
         if isinstance(config_labels, str):
             config_labels = [config_labels]
         elif not isinstance(config_labels, list):

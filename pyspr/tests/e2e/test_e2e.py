@@ -352,7 +352,7 @@ def test_reviewer_functionality(test_repo_ctx: RepoContext) -> None:
         def get_test_prs(tag: str) -> list:
             result = []
             for pr in github.get_info(None, git_cmd).pull_requests:
-                if pr.from_branch.startswith('spr/main/'):
+                if pr.from_branch and pr.from_branch.startswith('spr/main/'):
                     try:
                         # Look for our unique tag in the commit message
                         commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
@@ -526,7 +526,7 @@ def test_reorder(test_repo_ctx: RepoContext) -> None:
         log.info("\nLooking for PRs with unique tag...")
         result = []
         for pr in github.get_info(None, git_cmd).pull_requests:
-            if pr.from_branch.startswith('spr/main/'):
+            if pr.from_branch and pr.from_branch.startswith('spr/main/'):
                 try:
                     # Look for our unique tag in the commit message
                     commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
@@ -702,7 +702,7 @@ def _run_merge_test(
     def get_test_prs() -> list:
         result = []
         for pr in github.get_info(None, git_cmd).pull_requests:
-            if pr.from_branch.startswith('spr/main/'):
+            if pr.from_branch and pr.from_branch.startswith('spr/main/'):
                 try:
                     # Look for our unique tag in the commit message
                     commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
@@ -895,7 +895,7 @@ def test_replace_commit(test_repo_ctx: RepoContext) -> None:
     def get_test_prs() -> list:
         result = []
         for pr in github.get_info(None, git_cmd).pull_requests:
-            if pr.from_branch.startswith('spr/main/'):
+            if pr.from_branch and pr.from_branch.startswith('spr/main/'):
                 try:
                     # Look for our unique tag in the commit message
                     commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
@@ -1243,7 +1243,7 @@ def test_no_rebase_pr_stacking(test_repo_ctx: RepoContext) -> None:
     # Verify stack structure
     assert pr1_after.base_ref == "main", f"PR1 should target main, got {pr1_after.base_ref}"
     assert pr2.base_ref.startswith('spr/main/'), f"PR2 should target PR1's branch, got {pr2.base_ref}"
-    assert pr1_after.commit.commit_id in pr2.base_ref, "PR2 should target PR1's branch"
+    assert pr2.base_ref and pr1_after.commit.commit_id in pr2.base_ref, "PR2 should target PR1's branch"
     log.info(f"Verified stack structure: #{pr1_number} <- #{pr2.number}")
 
     # Print final git log
@@ -1338,7 +1338,7 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
     def get_test_prs() -> list:
         result = []
         for pr in github.get_info(None, git_cmd).pull_requests:
-            if pr.from_branch.startswith('spr/main/'):
+            if pr.from_branch and pr.from_branch.startswith('spr/main/'):
                 try:
                     # Look for our unique tags in the commit message
                     commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")

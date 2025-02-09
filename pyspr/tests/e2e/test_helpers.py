@@ -185,7 +185,7 @@ def create_repo_context(owner: str, name: str, test_name: str) -> Generator[Repo
     # Get token
     token = get_gh_token()
     os.environ["GITHUB_TOKEN"] = token
-    ctx: RepoContext | None = None
+    ctx: Union[RepoContext, None] = None
 
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -247,13 +247,15 @@ def create_repo_context(owner: str, name: str, test_name: str) -> Generator[Repo
         os.chdir(orig_dir)
 
 @pytest.fixture
-def test_repo_ctx(request) -> Generator[RepoContext, None, None]:
+def test_repo_ctx(request: pytest.FixtureRequest) -> Generator[RepoContext, None, None]:
     """Regular test repo fixture using yang/teststack."""
+    # request.node is typed by pytest so we can directly use it
     yield from create_repo_context("yang", "teststack", request.node.name)
 
 @pytest.fixture
-def test_mq_repo_ctx(request) -> Generator[RepoContext, None, None]:
+def test_mq_repo_ctx(request: pytest.FixtureRequest) -> Generator[RepoContext, None, None]:
     """Merge queue test repo fixture using yangenttest1/teststack."""
+    # request.node is typed by pytest so we can directly use it
     yield from create_repo_context("yangenttest1", "teststack", request.node.name)
 
 def create_test_repo(owner: str, name: str) -> Generator[Tuple[str, str, str, str], None, None]:
