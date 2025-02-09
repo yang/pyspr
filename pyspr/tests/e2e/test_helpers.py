@@ -153,6 +153,7 @@ def create_repo_context(owner: str, name: str, test_name: str) -> Generator[Repo
     # Get token
     token = get_gh_token()
     os.environ["GITHUB_TOKEN"] = token
+    ctx: RepoContext | None = None
 
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -173,18 +174,6 @@ def create_repo_context(owner: str, name: str, test_name: str) -> Generator[Repo
             
             repo_dir = os.path.abspath(os.getcwd())
             
-            # Copy pyproject.toml from main project for rye to work
-            try:
-                project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-                src_pyproject = os.path.join(project_root, 'pyproject.toml')
-                dst_pyproject = os.path.join(repo_dir, 'pyproject.toml')
-                if os.path.exists(src_pyproject) and not os.path.exists(dst_pyproject):
-                    import shutil
-                    shutil.copy2(src_pyproject, dst_pyproject)
-                    log.info(f"Copied pyproject.toml from {src_pyproject} to {dst_pyproject}")
-            except Exception as e:
-                log.info(f"Error copying pyproject.toml: {e}")
-
             # Create context objects
             config = Config({
                 'repo': {
@@ -217,6 +206,11 @@ def create_repo_context(owner: str, name: str, test_name: str) -> Generator[Repo
                 run_cmd(f"git push origin --delete {test_branch}")
             except subprocess.CalledProcessError:
                 log.info(f"Failed to delete remote branch {test_branch}, may not exist")
+    except Exception as e:
+        log.error(f"Test failed: {e}")
+        if ctx:
+            log_output = ctx.git_cmd.must_git("log --oneline -n 3")
+            log.error(f"Git log at failure:\n{log_output}")
     finally:
         os.chdir(orig_dir)
 
@@ -230,69 +224,21 @@ def test_mq_repo_ctx(request) -> Generator[RepoContext, None, None]:
     """Merge queue test repo fixture using yangenttest1/teststack."""
     yield from create_repo_context("yangenttest1", "teststack", request.node.name)
 
-def create_test_repo(owner: str, name: str, use_temp_branch: bool = True) -> Generator[Tuple[str, str, str, str], None, None]:
-    """Legacy test repo fixture for backward compatibility.
-    Args:
-        owner: Repo owner
-        name: Repo name
-        use_temp_branch: Whether to create a unique test branch
-    """
-    orig_dir = os.getcwd()
-    repo_name = f"{owner}/{name}"
-    test_branch = f"test-spr-{uuid.uuid4().hex[:7]}" if use_temp_branch else None
-    log.info(f"Using {'test branch ' + str(test_branch) if use_temp_branch else 'main branch'} in {repo_name}")
-    
-    # Get token
-    token = get_gh_token()
-    os.environ["GITHUB_TOKEN"] = token
-
-    try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            os.chdir(tmpdir)
-            
-            # Clone via SSH to avoid hangs
-            ssh_url = f"git@github.com:{repo_name}.git"
-            run_cmd(f"git clone {ssh_url}")
-            os.chdir(name)
-
-            # Branch setup
-            if use_temp_branch:
-                run_cmd(f"git checkout -b {test_branch}")
-            run_cmd("git checkout -b test_local")  # Local branch for tests
-
-            # Git config
-            run_cmd("git config user.name 'Test User'")
-            run_cmd("git config user.email 'test@example.com'")
-            
-            repo_dir = os.path.abspath(os.getcwd())
-            yield owner, name, test_branch if test_branch else "main", repo_dir
-
-            # Cleanup
-            if use_temp_branch and test_branch:
-                run_cmd("git checkout main")
-                run_cmd(f"git branch -D {test_branch}")
-                try:
-                    run_cmd(f"git push origin --delete {test_branch}")
-                except subprocess.CalledProcessError:
-                    log.info(f"Failed to delete remote branch {test_branch}, may not exist")
-    finally:
-        os.chdir(orig_dir)
-
 def create_test_repo(owner: str, name: str) -> Generator[Tuple[str, str, str, str], None, None]:
     """Legacy test repo fixture factory for tests that haven't been migrated to RepoContext yet.
     This provides the same tuple output as the old fixture for compatibility.
-    
+
     Args:
         owner: Repo owner
         name: Repo name
-    
+
     Returns:
         Tuple of (owner, name, test_branch, repo_dir)
     """
     orig_dir = os.getcwd()
     repo_name = f"{owner}/{name}"
-    test_branch = f"test-spr-{uuid.uuid4().hex[:7]}" 
-    
+    test_branch = f"test-spr-{uuid.uuid4().hex[:7]}"
+
     # Get token
     token = get_gh_token()
     os.environ["GITHUB_TOKEN"] = token
@@ -300,7 +246,7 @@ def create_test_repo(owner: str, name: str) -> Generator[Tuple[str, str, str, st
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             os.chdir(tmpdir)
-            
+
             # Clone via SSH to avoid hangs
             ssh_url = f"git@github.com:{repo_name}.git"
             run_cmd(f"git clone {ssh_url}")
@@ -313,9 +259,9 @@ def create_test_repo(owner: str, name: str) -> Generator[Tuple[str, str, str, st
             # Git config
             run_cmd("git config user.name 'Test User'")
             run_cmd("git config user.email 'test@example.com'")
-            
+
             repo_dir = os.path.abspath(os.getcwd())
-            
+
             yield owner, name, test_branch, repo_dir
 
             # Cleanup

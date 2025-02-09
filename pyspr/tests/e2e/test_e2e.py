@@ -622,8 +622,6 @@ def test_reorder(test_repo_ctx: RepoContext) -> None:
     pr_chain = f"#{pr1_after.number} -> #{pr2_after.number} -> #{pr4_after.number} -> #{pr3_after.number}"
     log.info(f"\nVerified PRs after reordering: {pr_chain}")
 
-from pyspr.tests.e2e.test_helpers import create_test_repo
-
 @pytest.fixture
 def test_repo() -> Generator[Tuple[str, str, str, str], None, None]:
     """Regular test repo fixture using yang/teststack."""
@@ -735,8 +733,8 @@ def _run_merge_test(
         assert prs[i].base_ref == f"spr/main/{prs[i-1].commit.commit_id}", \
             f"PR #{prs[i].number} should target PR #{prs[i-1].number}, got {prs[i].base_ref}"
 
-    # Run merge for all or some PRs using rye run
-    merge_cmd = ["rye", "run", "pyspr", "merge", "-C", repo_dir]
+    # Run merge for all or some PRs
+    merge_cmd = ["pyspr", "merge", "-C", repo_dir]
     if count is not None:
         merge_cmd.extend(["-c", str(count)])
     log.info(f"\nMerging {'to queue' if use_merge_queue else 'all'} PRs{' (partial)' if count else ''}...")
@@ -1028,9 +1026,6 @@ def test_no_rebase_functionality(test_repo_ctx: RepoContext, caplog: pytest.LogC
     caplog.set_level(logging.INFO, logger="pyspr.tests.e2e")  # This test's logger
 
     ctx = test_repo_ctx
-    git_cmd = ctx.git_cmd
-    github = ctx.github
-    repo_dir = ctx.repo_dir
 
     # Add git command logging
     config = Config({
@@ -1183,101 +1178,91 @@ def test_no_rebase_pr_stacking(test_repo_ctx: RepoContext) -> None:
     initial_hash = git_cmd.must_git("rev-parse HEAD").strip()
     log.info(f"Initial commit: {initial_hash[:8]}")
 
-    try:
-        # Create first commit & PR
-        log.info("\nCreating first commit...")
-        make_commit("nr_test1.txt", "First commit")
-        c1_hash = git_cmd.must_git("rev-parse HEAD").strip()
-        log.info(f"First commit: {c1_hash[:8]}")
+    # Create first commit & PR
+    log.info("\nCreating first commit...")
+    make_commit("nr_test1.txt", "First commit")
+    c1_hash = git_cmd.must_git("rev-parse HEAD").strip()
+    log.info(f"First commit: {c1_hash[:8]}")
 
-        # Create first PR and get its hash
-        run_cmd(f"pyspr update -C {repo_dir}")
-        pr1_hash = git_cmd.must_git("rev-parse HEAD").strip()
-        log.info(f"After update commit: {pr1_hash[:8]}")
+    # Create first PR and get its hash
+    run_cmd(f"pyspr update -C {repo_dir}")
+    pr1_hash = git_cmd.must_git("rev-parse HEAD").strip()
+    log.info(f"After update commit: {pr1_hash[:8]}")
 
-        # Get PR info more efficiently
-        info = github.get_info(None, git_cmd)
-        assert info is not None, "GitHub info should not be None"
-        pr1 = info.pull_requests[0] if info.pull_requests else None
-        assert pr1 is not None, "First PR should exist"
-        pr1_number = pr1.number
-        log.info(f"Created PR #{pr1_number} with commit {pr1.commit.commit_hash[:8]}")
+    # Get PR info more efficiently
+    info = github.get_info(None, git_cmd)
+    assert info is not None, "GitHub info should not be None"
+    pr1 = info.pull_requests[0] if info.pull_requests else None
+    assert pr1 is not None, "First PR should exist"
+    pr1_number = pr1.number
+    log.info(f"Created PR #{pr1_number} with commit {pr1.commit.commit_hash[:8]}")
 
-        # Create second commit
-        log.info("\nCreating second commit...")
-        make_commit("nr_test2.txt", "Second commit")
-        c2_hash = git_cmd.must_git("rev-parse HEAD").strip()
-        log.info(f"Second commit: {c2_hash[:8]}")
+    # Create second commit
+    log.info("\nCreating second commit...")
+    make_commit("nr_test2.txt", "Second commit")
+    c2_hash = git_cmd.must_git("rev-parse HEAD").strip()
+    log.info(f"Second commit: {c2_hash[:8]}")
 
-        # Create .spr.yaml with noRebase: true
-        import yaml
-        spr_yaml_path = os.path.join(repo_dir, ".spr.yaml")
-        spr_config = {
-            'repo': {
-                'github_remote': 'origin',
-                'github_branch': 'main',
-                'github_repo_owner': ctx.owner,
-                'github_repo_name': ctx.name,
-            },
-            'user': {
-                'noRebase': True
-            }
+    # Create .spr.yaml with noRebase: true
+    import yaml
+    spr_yaml_path = os.path.join(repo_dir, ".spr.yaml")
+    spr_config = {
+        'repo': {
+            'github_remote': 'origin',
+            'github_branch': 'main',
+            'github_repo_owner': ctx.owner,
+            'github_repo_name': ctx.name,
+        },
+        'user': {
+            'noRebase': True
         }
-        with open(spr_yaml_path, 'w') as f:
-            yaml.dump(spr_config, f)
+    }
+    with open(spr_yaml_path, 'w') as f:
+        yaml.dump(spr_config, f)
 
-        # Update with --no-rebase and verify output
-        log.info("\nUpdating with --no-rebase...")
-        update_output = run_cmd(f"pyspr update -C {repo_dir} -nr -v")
-        log.info(f"Update output:\n{update_output}")
-        assert update_output is not None, "Update output should not be None"
-        assert "DEBUG: no_rebase=True" in update_output or \
-               "Skipping rebase" in update_output or \
-               "> git rebase" not in update_output, \
-            "Update output should indicate rebase was skipped"
+    # Update with --no-rebase and verify output
+    log.info("\nUpdating with --no-rebase...")
+    update_output = run_cmd(f"pyspr update -C {repo_dir} -nr -v")
+    log.info(f"Update output:\n{update_output}")
+    assert update_output is not None, "Update output should not be None"
+    assert "DEBUG: no_rebase=True" in update_output or \
+           "Skipping rebase" in update_output or \
+           "> git rebase" not in update_output, \
+        "Update output should indicate rebase was skipped"
 
-        # Get updated PR info using the no_rebase config
-        info = github.get_info(None, git_cmd)
-        assert info is not None, "GitHub info should not be None"
-        prs = sorted(info.pull_requests, key=lambda pr: pr.number)
-        assert len(prs) == 2, f"Should have 2 PRs, found {len(prs)}"
+    # Get updated PR info using the no_rebase config
+    info = github.get_info(None, git_cmd)
+    assert info is not None, "GitHub info should not be None"
+    prs = sorted(info.pull_requests, key=lambda pr: pr.number)
+    assert len(prs) == 2, f"Should have 2 PRs, found {len(prs)}"
 
-        # Extract PRs by number
-        pr1_after = next((pr for pr in prs if pr.number == pr1_number), None)
-        pr2 = next((pr for pr in prs if pr.number != pr1_number), None)
-        assert pr1_after is not None, f"PR #{pr1_number} should exist"
-        assert pr2 is not None, "Second PR should exist"
+    # Extract PRs by number
+    pr1_after = next((pr for pr in prs if pr.number == pr1_number), None)
+    pr2 = next((pr for pr in prs if pr.number != pr1_number), None)
+    assert pr1_after is not None, f"PR #{pr1_number} should exist"
+    assert pr2 is not None, "Second PR should exist"
 
-        # Verify PR1 hash unchanged
-        log.info(f"PR1 hash comparison: {pr1_hash[:8]} vs {pr1_after.commit.commit_hash[:8]}")
-        assert pr1_after.commit.commit_hash == pr1_hash, \
-            f"PR1 hash changed: {pr1_hash[:8]} -> {pr1_after.commit.commit_hash[:8]}"
-        log.info(f"Verified PR #{pr1_number} hash unchanged")
+    # Verify PR1 hash unchanged
+    log.info(f"PR1 hash comparison: {pr1_hash[:8]} vs {pr1_after.commit.commit_hash[:8]}")
+    assert pr1_after.commit.commit_hash == pr1_hash, \
+        f"PR1 hash changed: {pr1_hash[:8]} -> {pr1_after.commit.commit_hash[:8]}"
+    log.info(f"Verified PR #{pr1_number} hash unchanged")
 
-        # Verify PR2 hash matches c2_hash
-        log.info(f"PR2 hash comparison: {c2_hash[:8]} vs {pr2.commit.commit_hash[:8]}")
-        assert pr2.commit.commit_hash == c2_hash, \
-            f"PR2 hash wrong: {pr2.commit.commit_hash[:8]} vs {c2_hash[:8]}"
-        log.info(f"Verified PR #{pr2.number} hash correct")
+    # Verify PR2 hash matches c2_hash
+    log.info(f"PR2 hash comparison: {c2_hash[:8]} vs {pr2.commit.commit_hash[:8]}")
+    assert pr2.commit.commit_hash == c2_hash, \
+        f"PR2 hash wrong: {pr2.commit.commit_hash[:8]} vs {c2_hash[:8]}"
+    log.info(f"Verified PR #{pr2.number} hash correct")
 
-        # Verify stack structure
-        assert pr1_after.base_ref == "main", f"PR1 should target main, got {pr1_after.base_ref}"
-        assert pr2.base_ref.startswith('spr/main/'), f"PR2 should target PR1's branch, got {pr2.base_ref}"
-        assert pr1_after.commit.commit_id in pr2.base_ref, "PR2 should target PR1's branch"
-        log.info(f"Verified stack structure: #{pr1_number} <- #{pr2.number}")
+    # Verify stack structure
+    assert pr1_after.base_ref == "main", f"PR1 should target main, got {pr1_after.base_ref}"
+    assert pr2.base_ref.startswith('spr/main/'), f"PR2 should target PR1's branch, got {pr2.base_ref}"
+    assert pr1_after.commit.commit_id in pr2.base_ref, "PR2 should target PR1's branch"
+    log.info(f"Verified stack structure: #{pr1_number} <- #{pr2.number}")
 
-        # Print final git log
-        log_output = git_cmd.must_git("log --oneline -n 3")
-        log.info(f"Final git log:\n{log_output}")
-
-    except Exception as e:
-        log.error(f"Test failed: {e}")
-        log_output = git_cmd.must_git("log --oneline -n 3")
-        log.error(f"Git log at failure:\n{log_output}")
-        raise
-
-    finally:
-        pass
+    # Print final git log
+    log_output = git_cmd.must_git("log --oneline -n 3")
+    log.info(f"Final git log:\n{log_output}")
 
 def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
     """Test that PRs from different stacks don't interfere with each other.
