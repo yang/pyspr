@@ -1,19 +1,31 @@
 """Unit test for --no-rebase functionality."""
 
 import os
+import pytest
 import io
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, redirect_stderr
 from unittest.mock import MagicMock, patch
+from dataclasses import dataclass
 
 from pyspr.config import Config
 from pyspr.spr import StackedPR
-from pyspr.typing import StackedPRContextType
+from pyspr.github import GitHubInfo
 
-def test_no_rebase_functionality():
+@dataclass
+class MockGithubInfo:
+    local_branch: str = "feature-branch"
+    pull_requests: list = None
+    def key(self):
+        return "mock-key"
+
+def test_no_rebase_functionality(caplog):
     """Test that --no-rebase properly skips rebasing.
     
     Mock all external dependencies to test only the core logic.
     """
+    import logging
+    caplog.set_level(logging.DEBUG)
+    
     # Create config
     config = Config({
         'repo': {
@@ -25,36 +37,48 @@ def test_no_rebase_functionality():
         }
     })
 
-    # Mock git and github
+    # Mock git and github 
     git_mock = MagicMock()
     github_mock = MagicMock()
-    ctx: StackedPRContextType = MagicMock()
+    github_mock.get_info.return_value = MockGithubInfo()
+
+    # Setup git mock for successful checks
+    git_mock.must_git.side_effect = lambda cmd, *args, **kwargs: {
+        "remote": "origin",
+        "fetch": "",
+        "rev-parse --verify origin/main": "",
+        "rebase origin/main --autostash": ""
+    }.get(cmd, "")
 
     # Test regular update - should rebase
     with patch.dict(os.environ, {}, clear=True):  # Ensure no SPR_NOREBASE
-        f = io.StringIO()
-        with redirect_stdout(f):
-            spr = StackedPR(config, github_mock, git_mock)
-            spr.fetch_and_get_github_info(ctx)
-        regular_update_log = f.getvalue()
+        spr = StackedPR(config, github_mock, git_mock)
+        spr.fetch_and_get_github_info(None)
 
     # Verify rebase was attempted
-    assert "DEBUG: no_rebase=False" in regular_update_log
+    assert any("DEBUG: no_rebase=False" in record.message 
+               for record in caplog.records)
     git_mock.must_git.assert_any_call("rebase origin/main --autostash")
 
-    # Reset mock
+    # Reset mock and clear logs
     git_mock.reset_mock()
+    caplog.clear()
 
+    # Reset git mock for no-rebase test
+    git_mock.must_git.side_effect = lambda cmd, *args, **kwargs: {
+        "remote": "origin",
+        "fetch": "",
+        "rev-parse --verify origin/main": "",
+    }.get(cmd, "")
+    
     # Test no-rebase update
     with patch.dict(os.environ, {"SPR_NOREBASE": "true"}):
-        f = io.StringIO()
-        with redirect_stdout(f):
-            spr = StackedPR(config, github_mock, git_mock)
-            spr.fetch_and_get_github_info(ctx)
-        no_rebase_log = f.getvalue()
+        spr = StackedPR(config, github_mock, git_mock)
+        spr.fetch_and_get_github_info(None)
 
     # Verify rebase was skipped
-    assert "DEBUG: no_rebase=True" in no_rebase_log
+    assert any("DEBUG: no_rebase=True" in record.message 
+               for record in caplog.records)
     
     # Check that rebase was never called
     rebase_calls = [call for call in git_mock.must_git.call_args_list 
