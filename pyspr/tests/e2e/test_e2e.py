@@ -461,14 +461,8 @@ def test_reviewer_functionality(test_repo_ctx: RepoContext) -> None:
         log.info("\nCreating second commit with testluser reviewer...")
         make_commit_2("test_r2.txt", "Second testluser commit")
 
-        # Add testluser as reviewer and capture output
-        result = subprocess.run(
-            ["pyspr", "update", "-r", "testluser"],
-            check=True,
-            capture_output=True,
-            text=True
-        )
-        update_output = result.stdout + result.stderr
+        # Add testluser as reviewer and capture output with verbose mode
+        update_output = run_cmd("pyspr update -r testluser -v", cwd=repo_dir)
 
         # Find our PRs again
         our_prs = get_test_prs(unique_tag2)
@@ -734,22 +728,18 @@ def _run_merge_test(
             f"PR #{prs[i].number} should target PR #{prs[i-1].number}, got {prs[i].base_ref}"
 
     # Run merge for all or some PRs
-    merge_cmd = ["pyspr", "merge", "-C", repo_dir]
+    merge_cmd = f"pyspr merge -C {repo_dir}"
     if count is not None:
-        merge_cmd.extend(["-c", str(count)])
+        merge_cmd += f" -c {count}"
     log.info(f"\nMerging {'to queue' if use_merge_queue else 'all'} PRs{' (partial)' if count else ''}...")
+    
     try:
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        merge_output = subprocess.check_output(
-            merge_cmd,
-            stderr=subprocess.STDOUT,
-            universal_newlines=True,
-            cwd=project_root
-        )
+        # No need for manually finding project root since run_cmd handles that
+        merge_output = run_cmd(merge_cmd)
         log.info(merge_output)
     except subprocess.CalledProcessError as e:
         info = github.get_info(None, git_cmd)
-        assert info is not None, "GitHub info should not be None"
+        assert info is not None, "GitHub info should not be None" 
         log.info("\nFinal PR state after merge attempt:")
         for pr in sorted(info.pull_requests, key=lambda pr: pr.number):
             if github.repo:
@@ -762,7 +752,7 @@ def _run_merge_test(
                 if use_merge_queue:
                     log.info(f"  Mergeable state: {gh_pr.mergeable_state}")
                     log.info(f"  Auto merge: {getattr(gh_pr, 'auto_merge', None)}")
-        log.info(f"Merge failed with output:\n{e.output}")
+        # Don't need to log e.output since run_cmd already did
         raise
 
     # For partial merges, find the top PR number differently based on count
@@ -894,7 +884,7 @@ def test_replace_commit(test_repo_ctx: RepoContext) -> None:
 
     # Run initial update
     log.info("Creating initial PRs...")
-    subprocess.run(["pyspr", "update"], check=True)
+    run_cmd("pyspr update")
 
     # Get hashes after update for verification
     c1_hash = git_cmd.must_git("rev-parse HEAD~2").strip()
@@ -952,7 +942,7 @@ def test_replace_commit(test_repo_ctx: RepoContext) -> None:
 
     # 3. Run update
     log.info("Running update after replace...")
-    subprocess.run(["pyspr", "update"], check=True)
+    run_cmd("pyspr update")
 
     # 4. Verify:
     log.info("\nVerifying PR handling after replace...")
@@ -1080,15 +1070,11 @@ def test_no_rebase_functionality(test_repo_ctx: RepoContext, caplog: pytest.LogC
         log.info("\nRunning regular update logic...")
         caplog.clear()  # Clear logs before test
         
-        # Actually run the update and capture output
+        # Actually run the update and capture output 
         try:
-            update_output = subprocess.check_output(
-                ["pyspr", "update"],
-                stderr=subprocess.STDOUT,
-                universal_newlines=True
-            )
+            update_output = run_cmd("pyspr update")
         except subprocess.CalledProcessError as e:
-            update_output = e.output
+            update_output = e.stdout + e.stderr if hasattr(e, 'stdout') else str(e)
         
         # Verify regular update rebased by:
         # 1. Checking git log shows our commit on top of main's commit

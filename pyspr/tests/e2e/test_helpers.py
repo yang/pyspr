@@ -57,8 +57,13 @@ class RepoContext:
 def get_gh_token() -> str:
     """Get GitHub token from gh CLI config."""
     try:
-        result = subprocess.run(['gh', 'auth', 'token'], check=True, capture_output=True, text=True)
-        token = result.stdout.strip()
+        # Need custom run_cmd call since we can't use shell=True with array command
+        token = subprocess.run(
+            ['gh', 'auth', 'token'], 
+            check=True, 
+            capture_output=True, 
+            text=True
+        ).stdout.strip()
         if token:
             return token
     except subprocess.CalledProcessError:
@@ -78,15 +83,28 @@ def get_gh_token() -> str:
 
     raise Exception("Could not get GitHub token from gh CLI")
 
-def run_cmd(cmd: str, cwd: Optional[str] = None) -> Optional[str]:
-    """Run a shell command using subprocess with proper error handling."""
+def run_cmd(cmd: str, cwd: Optional[str] = None, check: bool = True, capture_output: bool = True) -> str:
+    """Run a shell command using subprocess with consistent output capture and logging.
+    
+    Args:
+        cmd: The command to run
+        cwd: Working directory. If None, uses current directory
+        check: If True, raises CalledProcessError on non-zero exit
+        capture_output: If True, captures and returns stdout
+        
+    Returns:
+        The command's stdout output as string if capture_output=True
+        
+    Raises:
+        subprocess.CalledProcessError: If command fails and check=True
+    """
     # Find project root for rye commands
     project_root = None
     orig_cwd = os.getcwd()
     try:
         # Try to find project root by looking for pyproject.toml
         test_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        while test_dir != '/':
+        while test_dir != '/' and test_dir != '':  # Empty check for Windows
             if os.path.exists(os.path.join(test_dir, 'pyproject.toml')):
                 project_root = test_dir
                 break
@@ -103,18 +121,32 @@ def run_cmd(cmd: str, cwd: Optional[str] = None) -> Optional[str]:
             cmd = f"cd {actual_cwd} && {cmd} -C {cwd}" if cwd else f"cd {actual_cwd} && {cmd} -C {orig_cwd}"
         
     log.info(f"Running command: {cmd}")
+    result = None
     try:
-        result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True, cwd=actual_cwd)
-        if result.stdout.strip():
+        result = subprocess.run(
+            cmd, 
+            shell=True, 
+            check=check, 
+            capture_output=capture_output, 
+            text=True, 
+            cwd=actual_cwd
+        )
+        # Always log stdout and stderr
+        if result.stdout and result.stdout.strip():
             log.info(f"STDOUT: {result.stdout.strip()}")
-        return result.stdout
+        if result.stderr and result.stderr.strip():
+            log.info(f"STDERR: {result.stderr.strip()}")
+        return result.stdout or ""
     except subprocess.CalledProcessError as e:
         log.error(f"Command failed with exit code {e.returncode}")
-        if e.stdout:
-            log.error(f"STDOUT: {e.stdout}")
-        if e.stderr:
-            log.error(f"STDERR: {e.stderr}")
+        if e.stdout and e.stdout.strip():
+            log.error(f"STDOUT: {e.stdout.strip()}")
+        if e.stderr and e.stderr.strip():
+            log.error(f"STDERR: {e.stderr.strip()}")
         raise
+    finally:
+        if result and not capture_output:
+            return ""  # Return empty string for non-captured output
 
 def get_test_prs(git_cmd: RealGit, github: GitHubClient, unique_tag: str) -> List[PullRequest]:
     """Get test PRs filtered by unique tag."""
