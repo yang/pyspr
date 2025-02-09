@@ -300,14 +300,14 @@ class StackedPR:
             return
 
         # Log all pull requests from GitHub
-        logger.debug("All PRs from GitHub:")
+        logger.debug("All PRs from GitHub BEFORE any filtering:")
         for pr in github_info.pull_requests:
             logger.debug(f"  PR #{pr.number}: commit_id={pr.commit.commit_id}, branch={pr.from_branch}")
 
         all_local_commits = get_local_commit_stack(self.config, self.git_cmd)
         logger.debug("All local commits:")
         for commit in all_local_commits:
-            logger.debug(f"  {commit.commit_hash[:8]}: id={commit.commit_id}")
+            logger.debug(f"  {commit.commit_hash[:8]}: id={commit.commit_id} subject='{commit.subject}'")
 
         local_commits = self.align_local_commits(all_local_commits, github_info.pull_requests)
         logger.debug("Aligned local commits:")
@@ -326,17 +326,22 @@ class StackedPR:
         for pr in github_info.pull_requests:
             logger.debug(f"  PR #{pr.number}: commit_id={pr.commit.commit_id}, branch={pr.from_branch}")
 
-        # Close PRs for deleted commits, but only within the stack
+        # Close PRs for deleted commits, but only if auto_close_prs is enabled
         valid_pull_requests: List[PullRequest] = []
         local_commit_map: Dict[str, Commit] = {commit.commit_id: commit for commit in local_commits}
+        auto_close = self.config.repo.get('auto_close_prs', False)
         for pr in github_info.pull_requests:
             if pr.commit.commit_id not in local_commit_map:
-                if self.pretend:
-                    logger.info(f"[PRETEND] Would close PR #{pr.number} - commit {pr.commit.commit_id} has gone away")
+                if auto_close:
+                    if self.pretend:
+                        logger.info(f"[PRETEND] Would close PR #{pr.number} - commit {pr.commit.commit_id} has gone away")
+                    else:
+                        logger.info(f"Closing PR #{pr.number} - commit {pr.commit.commit_id} has gone away")
+                        self.github.comment_pull_request(ctx, pr, "Closing pull request: commit has gone away")
+                        self.github.close_pull_request(ctx, pr)
                 else:
-                    logger.info(f"Closing PR #{pr.number} - commit {pr.commit.commit_id} has gone away")
-                    self.github.comment_pull_request(ctx, pr, "Closing pull request: commit has gone away")
-                    self.github.close_pull_request(ctx, pr)
+                    logger.debug(f"Not closing PR #{pr.number} - auto_close_prs is disabled")
+                    valid_pull_requests.append(pr)
             else:
                 valid_pull_requests.append(pr)
         github_info.pull_requests = valid_pull_requests
