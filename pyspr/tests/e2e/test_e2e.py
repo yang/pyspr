@@ -46,7 +46,7 @@ log.addHandler(handler)
 log.setLevel(logging.INFO)
 log.propagate = True  # Allow logs to propagate to pytest
 
-from pyspr.tests.e2e.test_helpers import run_cmd, RepoContext, test_repo_ctx
+from pyspr.tests.e2e.test_helpers import run_cmd, RepoContext, test_repo_ctx, create_test_repo
 
 def test_delete_insert(test_repo_ctx: RepoContext) -> None:
     """Test that creates four commits, runs update, then recreates commits but skips the second one,
@@ -160,7 +160,7 @@ def test_delete_insert(test_repo_ctx: RepoContext) -> None:
     log.info(f"\nVerified PRs after removing commit2 and adding c3.5: #{pr1_num} -> #{pr3_num} -> #{pr35.number} -> #{pr4_num}")
     log.info(f"PR2 #{pr2_num} correctly closed")
 
-def test_wip_behavior(test_repo: Tuple[str, str, str, str], caplog: pytest.LogCaptureFixture) -> None:
+def test_wip_behavior(test_repo_ctx: RepoContext, caplog: pytest.LogCaptureFixture) -> None:
     """Test that WIP commits behave as expected:
     - Regular commits before WIP are converted to PRs
     - WIP commits are not converted to PRs
@@ -168,28 +168,14 @@ def test_wip_behavior(test_repo: Tuple[str, str, str, str], caplog: pytest.LogCa
     """
     log.info("=== TEST STARTED ===")  # Just to see if test runs at all
     caplog.set_level(logging.INFO)
-    owner, repo_name, test_branch, repo_dir = test_repo
-
-    # Real config using the test repo
-    config = Config({
-        'repo': {
-            'github_remote': 'origin',
-            'github_branch': 'main',
-            'github_repo_owner': owner,
-            'github_repo_name': repo_name,
-        },
-        'user': {}
-    })
-    git_cmd = RealGit(config)
-    github = GitHubClient(None, config)  # Real GitHub client
-    
-    # Create a unique tag for this test run
-    unique_tag = f"test-wip-{uuid.uuid4().hex[:8]}"
+    ctx = test_repo_ctx
+    git_cmd = ctx.git_cmd
+    github = ctx.github
     
     # Create 4 commits: 2 regular, 1 WIP, 1 regular
     def make_commit(file: str, msg: str) -> None:
         log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Creating commit for {file} - {msg}")
-        full_msg = f"{msg} [test-tag:{unique_tag}]"
+        full_msg = f"{msg} [test-tag:{ctx.tag}]"
         with open(file, "w") as f:
             f.write(f"{file}\n")
         run_cmd(f"git add {file}")
@@ -247,7 +233,7 @@ def test_wip_behavior(test_repo: Tuple[str, str, str, str], caplog: pytest.LogCa
                     if pr.from_branch is not None and pr.from_branch.startswith('spr/main/') and pr.commit is not None:
                         # Look for our unique tag in the commit message
                         commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
-                        if f"test-tag:{unique_tag}" in commit_msg:
+                        if f"test-tag:{ctx.tag}" in commit_msg:
                             log.info(f"Found matching PR #{pr.number}")
                             result.append(pr)
                 except Exception as e:  # Log any failures
@@ -324,7 +310,7 @@ def test_wip_behavior(test_repo: Tuple[str, str, str, str], caplog: pytest.LogCa
     assert pr2.base_ref is not None and pr2.base_ref.startswith("spr/main/"), "Second PR should target first PR's branch"
 
 
-def test_reviewer_functionality(test_repo: Tuple[str, str, str, str]) -> None:
+def test_reviewer_functionality(test_repo_ctx: RepoContext) -> None:
     """Test reviewer functionality, verifying:
     1. Self-review attempts are handled properly (can't review your own PR)
     2. Other user review requests work properly
@@ -333,32 +319,30 @@ def test_reviewer_functionality(test_repo: Tuple[str, str, str, str]) -> None:
     - First part tests yang token case (can't self-review)
     - Second part tests testluser case (verify request handling)
     """
-    owner, repo_name, test_branch, repo_dir = test_repo
-
-    config = Config({
-        'repo': {
-            'github_remote': 'origin',
-            'github_branch': 'main',
-            'github_repo_owner': owner,
-            'github_repo_name': repo_name,
-        },
-        'user': {}
-    })
-    git_cmd = RealGit(config)
-    github = GitHubClient(None, config)
+    ctx = test_repo_ctx
+    git_cmd = ctx.git_cmd
+    github = ctx.github
+    repo_dir = ctx.repo_dir
 
     # Save current directory and change to repo_dir
     original_dir = os.getcwd()
     os.chdir(repo_dir)
 
     try:
-        # Create unique tags for each part of the test
-        unique_tag1 = f"test-reviewer-yang-{uuid.uuid4().hex[:8]}"
+        # Create unique tag pattern for part 2 (we use ctx.tag for part 1)
         unique_tag2 = f"test-reviewer-testluser-{uuid.uuid4().hex[:8]}"
 
-        # Helper to make commits
-        def make_commit(file: str, msg: str, tag: str) -> None:
-            full_msg = f"{msg} [test-tag:{tag}]"
+        # Helper to make commits for part 1 (uses ctx.tag)
+        def make_commit_1(file: str, msg: str) -> None:
+            full_msg = f"{msg} [test-tag:{ctx.tag}]"
+            with open(file, "w") as f:
+                f.write(f"{file}\n{msg}\n")
+            run_cmd(f"git add {file}")
+            run_cmd(f'git commit -m "{full_msg}"')
+
+        # Helper to make commits for part 2
+        def make_commit_2(file: str, msg: str) -> None:
+            full_msg = f"{msg} [test-tag:{unique_tag2}]"
             with open(file, "w") as f:
                 f.write(f"{file}\n{msg}\n")
             run_cmd(f"git add {file}")
@@ -382,7 +366,7 @@ def test_reviewer_functionality(test_repo: Tuple[str, str, str, str]) -> None:
         log.info("\n=== Part 1: Testing self-review handling ===")
         log.info("Creating first commit without reviewer...")
         log.info(f"Current working directory: {os.getcwd()}")
-        make_commit("r_test1.txt", "First commit", unique_tag1)
+        make_commit_1("r_test1.txt", "First commit")
 
         # Create initial PR without reviewer
         run_cmd("pyspr update")
@@ -390,7 +374,7 @@ def test_reviewer_functionality(test_repo: Tuple[str, str, str, str]) -> None:
         # Verify first PR exists with no reviewer
         info = github.get_info(None, git_cmd)
         assert info is not None, "GitHub info should not be None"
-        our_prs = get_test_prs(unique_tag1)
+        our_prs = get_test_prs(ctx.tag)
         assert len(our_prs) == 1, f"Should have 1 PR for our test, found {len(our_prs)}"
         pr1 = our_prs[0]
         assert github.repo is not None, "GitHub repo should be available"
@@ -412,13 +396,13 @@ def test_reviewer_functionality(test_repo: Tuple[str, str, str, str]) -> None:
 
         # Create second commit and try self-review
         log.info("\nCreating second commit with self-reviewer...")
-        make_commit("r_test2.txt", "Second commit", unique_tag1)
+        make_commit_1("r_test2.txt", "Second commit")
         run_cmd("pyspr update -r yang")
 
         # Verify no self-review was added
         info = github.get_info(None, git_cmd)
         assert info is not None, "GitHub info should not be None"
-        our_prs = get_test_prs(unique_tag1)
+        our_prs = get_test_prs(ctx.tag)
         assert len(our_prs) == 2, f"Should have 2 PRs for our test, found {len(our_prs)}"
         prs_by_num = {pr.number: pr for pr in our_prs}
         assert pr1.number in prs_by_num, "First PR should still exist"
@@ -457,7 +441,7 @@ def test_reviewer_functionality(test_repo: Tuple[str, str, str, str]) -> None:
         
         # Create first commit and PR
         log.info("Creating first commit without reviewer...")
-        make_commit("test_r1.txt", "First testluser commit", unique_tag2)
+        make_commit_2("test_r1.txt", "First testluser commit")
         run_cmd("pyspr update")
 
         # Verify first PR
@@ -475,7 +459,7 @@ def test_reviewer_functionality(test_repo: Tuple[str, str, str, str]) -> None:
         # Switch to SPR branch and add second commit with testluser reviewer
         run_cmd(f"git checkout {pr1.from_branch}")
         log.info("\nCreating second commit with testluser reviewer...")
-        make_commit("test_r2.txt", "Second testluser commit", unique_tag2)
+        make_commit_2("test_r2.txt", "Second testluser commit")
 
         # Add testluser as reviewer and capture output
         result = subprocess.run(
@@ -513,30 +497,16 @@ def test_reviewer_functionality(test_repo: Tuple[str, str, str, str]) -> None:
         # Change back to original directory
         os.chdir(original_dir)
 
-def test_reorder(test_repo: Tuple[str, str, str, str]) -> None:
+def test_reorder(test_repo_ctx: RepoContext) -> None:
     """Test that creates four commits, runs update, then recreates commits but reorders c3 and c4,
     and verifies PR state after reordering."""
-    owner, repo_name, test_branch, repo_dir = test_repo
-
-    # Create config for the test repo
-    config = Config({
-        'repo': {
-            'github_remote': 'origin',
-            'github_branch': 'main',
-            'github_repo_owner': owner,
-            'github_repo_name': repo_name,
-        },
-        'user': {}
-    })
-    git_cmd = RealGit(config)
-    github = GitHubClient(None, config)
-
-    # Create a unique tag for this test run
-    unique_tag = f"test-simple-{uuid.uuid4().hex[:8]}"
+    ctx = test_repo_ctx
+    git_cmd = ctx.git_cmd
+    github = ctx.github
 
     # Create four test commits with unique tag in message
     def make_commit(file: str, content: str, msg: str) -> None:
-        full_msg = f"{msg} [test-tag:{unique_tag}]"
+        full_msg = f"{msg} [test-tag:{ctx.tag}]"
         with open(file, "w") as f:
             f.write(f"{file}\n{content}\n")
         run_cmd(f"git add {file}")
@@ -549,7 +519,7 @@ def test_reorder(test_repo: Tuple[str, str, str, str]) -> None:
     make_commit("test4.txt", "test content 4", "Fourth commit")
 
     # Run pyspr update
-    run_cmd(f"pyspr update")
+    run_cmd("pyspr update")
 
     # Get commit hashes after update
     commit1_hash = git_cmd.must_git("rev-parse HEAD~3").strip()
@@ -566,7 +536,7 @@ def test_reorder(test_repo: Tuple[str, str, str, str]) -> None:
                 try:
                     # Look for our unique tag in the commit message
                     commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
-                    if f"test-tag:{unique_tag}" in commit_msg:
+                    if f"test-tag:{ctx.tag}" in commit_msg:
                         log.info(f"Found PR #{pr.number} with tag and commit ID {pr.commit.commit_id}")
                         result.append(pr)
                 except:
@@ -660,43 +630,43 @@ def test_repo() -> Generator[Tuple[str, str, str, str], None, None]:
     yield from create_test_repo("yang", "teststack")
 
 def _run_merge_test(
-        repo_fixture: Union[Tuple[str, str, str], Tuple[str, str, str, str]], 
-        owner: str, use_merge_queue: bool, num_commits: int, 
+        repo_ctx: RepoContext, 
+        use_merge_queue: bool, 
+        num_commits: int, 
         count: Optional[int] = None) -> None:
     """Common test logic for merge workflows.
     
     Args:
-        repo_fixture: Test repo fixture
-        owner: GitHub repo owner
+        repo_ctx: Repository context
         use_merge_queue: Whether to use merge queue or not
         num_commits: Number of commits to create in test
         count: If set, merge only this many PRs from the bottom of stack (-c flag)
     """
-    if len(repo_fixture) == 3:
-        repo_name, test_branch, repo_dir = repo_fixture
-    else:
-        owner, repo_name, test_branch, repo_dir = repo_fixture
+    # Get context values
+    owner = repo_ctx.owner
+    repo_name = repo_ctx.name  
+    repo_dir = repo_ctx.repo_dir
+    git_cmd = repo_ctx.git_cmd
+    github = repo_ctx.github
 
-    # Config based on parameters
-    config = Config({
-        'repo': {
-            'github_remote': 'origin',
-            'github_branch': 'main',
-            'github_repo_owner': owner,
-            'github_repo_name': repo_name,
-            'merge_queue': use_merge_queue,
-        },
-        'user': {}
-    })
-    git_cmd = RealGit(config)
-    github = GitHubClient(None, config)  # Real GitHub client
-
-    # Create a unique tag for this test run
-    unique_tag = f"test-merge-{uuid.uuid4().hex[:8]}"
+    # Add merge queue config if needed
+    if use_merge_queue:
+        config = Config({
+            'repo': {
+                'github_remote': 'origin',
+                'github_branch': 'main',
+                'github_repo_owner': owner,
+                'github_repo_name': repo_name,
+                'merge_queue': True,
+            },
+            'user': {}
+        })
+        git_cmd = RealGit(config)
+        github = GitHubClient(None, config)
     
     # Create commits
     def make_commit(file: str, line: str, msg: str) -> None:
-        full_msg = f"{msg} [test-tag:{unique_tag}]"
+        full_msg = f"{msg} [test-tag:{repo_ctx.tag}]"
         with open(file, "w") as f:
             f.write(f"{file}\n{line}\n")
         try:
@@ -736,7 +706,7 @@ def _run_merge_test(
     log.info("Creating initial PRs...")
     run_cmd("pyspr update")
 
-    # Helper to find our test PRs 
+    # Helper to find our test PRs
     def get_test_prs() -> list:
         result = []
         for pr in github.get_info(None, git_cmd).pull_requests:
@@ -744,7 +714,7 @@ def _run_merge_test(
                 try:
                     # Look for our unique tag in the commit message
                     commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
-                    if f"test-tag:{unique_tag}" in commit_msg:
+                    if f"test-tag:{repo_ctx.tag}" in commit_msg:
                         result.append(pr)
                 except:  # Skip failures since we're just filtering
                     pass
@@ -863,28 +833,27 @@ def _run_merge_test(
         for pr in to_remain:
             assert pr.number in prs_by_num, f"PR #{pr.number} should remain open"
 
-def test_merge_workflow(test_repo: Tuple[str, str, str, str]) -> None:
+def test_merge_workflow(test_repo_ctx: RepoContext) -> None:
     """Test full merge workflow with real PRs."""
-    owner, _name, _test_branch, _repo_dir = test_repo
-    _run_merge_test(test_repo, owner, False, 3)
+    _run_merge_test(test_repo_ctx, False, 3)
 
 @pytest.fixture
-def test_mq_repo() -> Generator[Tuple[str, str, str, str], None, None]:
-    """Merge queue test repo fixture using yangenttest1/teststack."""  
-    yield from create_test_repo("yangenttest1", "teststack")
+def test_mq_repo_ctx() -> Generator[RepoContext, None, None]:
+    """Merge queue test repo fixture using yangenttest1/teststack."""
+    from pyspr.tests.e2e.test_helpers import create_repo_context
+    yield from create_repo_context("yangenttest1", "teststack", "test_merge_queue_workflow")
 
-def test_merge_queue_workflow(test_mq_repo: Tuple[str, str, str, str]) -> None:
+def test_merge_queue_workflow(test_mq_repo_ctx: RepoContext) -> None:
     """Test merge queue workflow with real PRs."""
-    _run_merge_test(test_mq_repo, "yangenttest1", True, 2)
+    _run_merge_test(test_mq_repo_ctx, True, 2)
 
-def test_partial_merge_workflow(test_repo: Tuple[str, str, str, str]) -> None:
+def test_partial_merge_workflow(test_repo_ctx: RepoContext) -> None:
     """Test partial merge workflow, merging only 2 of 3 PRs."""
-    owner, _name, _test_branch, _repo_dir = test_repo
-    _run_merge_test(test_repo, owner, False, 3, count=2)
+    _run_merge_test(test_repo_ctx, False, 3, count=2)
 
-def test_partial_merge_queue_workflow(test_mq_repo: Tuple[str, str, str, str]) -> None:
+def test_partial_merge_queue_workflow(test_mq_repo_ctx: RepoContext) -> None:
     """Test partial merge queue workflow, merging only 2 of 3 PRs to queue."""
-    _run_merge_test(test_mq_repo, "yangenttest1", True, 3, count=2)
+    _run_merge_test(test_mq_repo_ctx, True, 3, count=2)
 
 def test_replace_commit(test_repo: Tuple[str, str, str, str]) -> None:
     """Test replacing a commit in the middle of stack with new commit.
