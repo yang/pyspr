@@ -1371,7 +1371,7 @@ def test_no_rebase_pr_stacking(test_repo: Tuple[str, str, str, str]) -> None:
 
         # Create first PR
         print("\nCreating first PR...")
-        run_cmd(f"rye run pyspr update -C {repo_dir}")
+        run_cmd(f"pyspr update -C {repo_dir}")
 
         # Get first PR info
         info = github.get_info(None, git_cmd)
@@ -1391,7 +1391,7 @@ def test_no_rebase_pr_stacking(test_repo: Tuple[str, str, str, str]) -> None:
 
         # Update with --no-rebase
         print("\nUpdating with --no-rebase...")
-        run_cmd(f"rye run pyspr update -C {repo_dir} -nr")
+        run_cmd(f"pyspr update -C {repo_dir} -nr")
 
         # Check PR state after no-rebase update
         info = github.get_info(None, git_cmd)
