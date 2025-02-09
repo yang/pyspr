@@ -25,12 +25,22 @@ cryptography==44.0.0
     # via pyjwt
 deprecated==1.2.18
     # via pygithub
+exceptiongroup==1.2.2
+    # via pytest
+execnet==2.1.1
+    # via pytest-xdist
 gitdb==4.0.12
     # via gitpython
 gitpython==3.1.44
     # via pyspr
 idna==3.10
     # via requests
+iniconfig==2.0.0
+    # via pytest
+packaging==24.2
+    # via pytest
+pluggy==1.5.0
+    # via pytest
 pycparser==2.22
     # via cffi
 pydantic==2.10.6
@@ -43,6 +53,10 @@ pyjwt==2.9.0
     # via pygithub
 pynacl==1.5.0
     # via pygithub
+pytest==8.3.4
+    # via pytest-xdist
+pytest-xdist==3.6.1
+    # via pyspr
 pyyaml==6.0.2
     # via pyspr
 requests==2.32.3
@@ -51,6 +65,7 @@ smmap==5.0.2
     # via gitdb
 tomli==2.2.1
     # via pyspr
+    # via pytest
 typing-extensions==4.12.2
     # via annotated-types
     # via pydantic
