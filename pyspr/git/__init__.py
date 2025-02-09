@@ -215,13 +215,13 @@ class RealGit:
         cmd_str = command.strip()
         
         # Check for no-rebase flag
-        no_rebase = self.config.user.get('no_rebase', False) or os.environ.get("SPR_NOREBASE") == "true"
+        no_rebase = self.config.user.get('noRebase', False) or os.environ.get("SPR_NOREBASE") == "true"
         if no_rebase:
             # Skip any commands that could modify commit hashes
             if any(cmd_str.startswith(cmd) for cmd in ("rebase", "cherry-pick", "reset", "merge")):
                 logger.debug(f"Skipping command '{cmd_str}' due to --no-rebase")
                 return ""
-            
+
         # Always log git commands
         logger.info(f"> git {cmd_str}")
         try:

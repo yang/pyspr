@@ -173,6 +173,18 @@ def create_repo_context(owner: str, name: str, test_name: str) -> Generator[Repo
             
             repo_dir = os.path.abspath(os.getcwd())
             
+            # Copy pyproject.toml from main project for rye to work
+            try:
+                project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+                src_pyproject = os.path.join(project_root, 'pyproject.toml')
+                dst_pyproject = os.path.join(repo_dir, 'pyproject.toml')
+                if os.path.exists(src_pyproject) and not os.path.exists(dst_pyproject):
+                    import shutil
+                    shutil.copy2(src_pyproject, dst_pyproject)
+                    log.info(f"Copied pyproject.toml from {src_pyproject} to {dst_pyproject}")
+            except Exception as e:
+                log.info(f"Error copying pyproject.toml: {e}")
+
             # Create context objects
             config = Config({
                 'repo': {

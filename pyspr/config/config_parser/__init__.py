@@ -48,13 +48,17 @@ def parse_config(git_cmd: GitInterface) -> Config:
     # Try to load .spr.yaml from repository root
     try:
         with open('.spr.yaml', 'r') as f:
+            logger.info("Found .spr.yaml, loading...")
             repo_config = yaml.safe_load(f)
+            logger.info(f"Config from .spr.yaml: {repo_config}")
             if repo_config:
                 if 'repo' in repo_config and isinstance(repo_config['repo'], dict):
                     config['repo'].update(repo_config['repo'])
                 if 'user' in repo_config and isinstance(repo_config['user'], dict):
+                    logger.info(f"Adding user config: {repo_config['user']}")
                     config['user'].update(repo_config['user'])
     except FileNotFoundError:
+        logger.info("No .spr.yaml found, using defaults")
         pass  # No .spr.yaml is fine
             
     # Try to extract repo owner/name from git remote if not in config
