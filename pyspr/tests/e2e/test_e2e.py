@@ -106,22 +106,26 @@ def test_delete_insert(test_repo: Tuple[str, str, str, str]) -> None:
     unique_tag = f"test-simple-update-{uuid.uuid4().hex[:8]}"
     
     # Create four test commits with unique tag in message
-    def make_commit(file: str, content: str, msg: str) -> str:
+    def make_commit(file: str, content: str, msg: str) -> None:
         full_msg = f"{msg} [test-tag:{unique_tag}]"
         with open(file, "w") as f:
             f.write(f"{file}\n{content}\n")
         run_cmd(f"git add {file}")
         run_cmd(f'git commit -m "{full_msg}"')
-        commit_hash = git_cmd.must_git("rev-parse HEAD").strip()
-        return commit_hash
 
-    commit1_hash = make_commit("test1.txt", "test content 1", "First commit")
-    commit2_hash = make_commit("test2.txt", "test content 2", "Second commit")
-    commit3_hash = make_commit("test3.txt", "test content 3", "Third commit")
-    commit4_hash = make_commit("test4.txt", "test content 4", "Fourth commit")
+    make_commit("test1.txt", "test content 1", "First commit")
+    make_commit("test2.txt", "test content 2", "Second commit")
+    make_commit("test3.txt", "test content 3", "Third commit")
+    make_commit("test4.txt", "test content 4", "Fourth commit")
     
     # Run pyspr update
     run_cmd(f"pyspr update")
+    
+    # Get commit hashes after update 
+    commit1_hash = git_cmd.must_git("rev-parse HEAD~3").strip()
+    commit2_hash = git_cmd.must_git("rev-parse HEAD~2").strip()
+    commit3_hash = git_cmd.must_git("rev-parse HEAD~1").strip() 
+    commit4_hash = git_cmd.must_git("rev-parse HEAD").strip()
     
     # Helper to find our test PRs using unique tag
     def get_test_prs() -> List[PullRequest]:
@@ -176,14 +180,9 @@ def test_delete_insert(test_repo: Tuple[str, str, str, str]) -> None:
     run_cmd(f"git cherry-pick {commit3_hash}")
     
     # Add new c3.5 commit
-    new_c35_hash = make_commit("test3_5.txt", "test content 3.5", "Commit three point five")
+    make_commit("test3_5.txt", "test content 3.5", "Commit three point five")
 
     run_cmd(f"git cherry-pick {commit4_hash}")
-
-    # Capture current commit hashes after reconstruction
-    new_commit1_hash = git_cmd.must_git("rev-parse HEAD~3").strip()
-    new_commit3_hash = git_cmd.must_git("rev-parse HEAD~2").strip()
-    new_commit4_hash = git_cmd.must_git("rev-parse HEAD").strip()
 
     # Run pyspr update again
     run_cmd(f"pyspr update -v")
@@ -219,14 +218,19 @@ def test_delete_insert(test_repo: Tuple[str, str, str, str]) -> None:
     assert pr35.base_ref == f"spr/main/{pr3_after.commit.commit_id}", "New PR should target third PR's branch"
     assert pr4_after.base_ref == f"spr/main/{pr35.commit.commit_id}", "Fourth PR should target new PR's branch"
     
-    # No need to verify commit IDs remained the same since we're not manually setting them anymore.
-    # Instead, verify PR order and proper chain connectivity
+    # Verify PR order and proper chain connectivity
+    current_shas = {
+        "first": git_cmd.must_git("rev-parse HEAD~3").strip(),
+        "third": git_cmd.must_git("rev-parse HEAD~2").strip(),
+        "three_five": git_cmd.must_git("rev-parse HEAD~1").strip(),
+        "fourth": git_cmd.must_git("rev-parse HEAD").strip()
+    }
     
-    # Verify PR hashes match new local commit hashes
-    assert pr1_after.commit.commit_hash == new_commit1_hash, f"PR1 hash {pr1_after.commit.commit_hash} should match new local commit hash {new_commit1_hash}"
-    assert pr3_after.commit.commit_hash == new_commit3_hash, f"PR3 hash {pr3_after.commit.commit_hash} should match new local commit hash {new_commit3_hash}"
-    assert pr35.commit.commit_hash == new_c35_hash, f"PR35 hash {pr35.commit.commit_hash} should match local commit hash {new_c35_hash}"
-    assert pr4_after.commit.commit_hash == new_commit4_hash, f"PR4 hash {pr4_after.commit.commit_hash} should match new local commit hash {new_commit4_hash}"
+    # Verify PR hashes match new local commit hashes after update
+    assert pr1_after.commit.commit_hash == current_shas["first"], f"PR1 hash {pr1_after.commit.commit_hash} should match new local commit hash {current_shas['first']}"
+    assert pr3_after.commit.commit_hash == current_shas["third"], f"PR3 hash {pr3_after.commit.commit_hash} should match new local commit hash {current_shas['third']}"
+    assert pr35.commit.commit_hash == current_shas["three_five"], f"PR35 hash {pr35.commit.commit_hash} should match local commit hash {current_shas['three_five']}"
+    assert pr4_after.commit.commit_hash == current_shas["fourth"], f"PR4 hash {pr4_after.commit.commit_hash} should match new local commit hash {current_shas['fourth']}"
 
     log.info(f"\nVerified PRs after removing commit2 and adding c3.5: #{pr1_num} -> #{pr3_num} -> #{pr35.number} -> #{pr4_num}")
     log.info(f"PR2 #{pr2_num} correctly closed")
@@ -258,7 +262,7 @@ def test_wip_behavior(test_repo: Tuple[str, str, str, str], caplog: pytest.LogCa
     unique_tag = f"test-wip-{uuid.uuid4().hex[:8]}"
     
     # Create 4 commits: 2 regular, 1 WIP, 1 regular
-    def make_commit(file: str, msg: str) -> str:
+    def make_commit(file: str, msg: str) -> None:
         log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Creating commit for {file} - {msg}")
         full_msg = f"{msg} [test-tag:{unique_tag}]"
         with open(file, "w") as f:
@@ -267,18 +271,22 @@ def test_wip_behavior(test_repo: Tuple[str, str, str, str], caplog: pytest.LogCa
         run_cmd(f'git commit -m "{full_msg}"')
         result = git_cmd.must_git("rev-parse HEAD").strip()
         log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Created commit {result[:8]}")
-        return result
         
     log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Creating commits...")
-    c1_hash = make_commit("wip_test1.txt", "First regular commit")
-    c2_hash = make_commit("wip_test2.txt", "Second regular commit")
-    c3_hash = make_commit("wip_test3.txt", "WIP Third commit")
-    _ = make_commit("wip_test4.txt", "Fourth regular commit")  # Not used but kept for completeness
+    make_commit("wip_test1.txt", "First regular commit")
+    make_commit("wip_test2.txt", "Second regular commit")
+    make_commit("wip_test3.txt", "WIP Third commit")
+    make_commit("wip_test4.txt", "Fourth regular commit")  # Not used but kept for completeness
     
     # Run update to create PRs
     log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Running pyspr update...")
     run_cmd(f"pyspr update")
     log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} pyspr update complete")
+    
+    # Get commit hashes after update
+    c1_hash = git_cmd.must_git("rev-parse HEAD~3").strip()
+    c2_hash = git_cmd.must_git("rev-parse HEAD~2").strip()
+    c3_hash = git_cmd.must_git("rev-parse HEAD~1").strip()
     
     # Let GitHub process the PRs
     log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Waiting for PRs to be available in GitHub...")
@@ -424,13 +432,12 @@ def test_reviewer_functionality(test_repo: Tuple[str, str, str, str]) -> None:
         unique_tag2 = f"test-reviewer-testluser-{uuid.uuid4().hex[:8]}"
 
         # Helper to make commits
-        def make_commit(file: str, msg: str, tag: str) -> str:
+        def make_commit(file: str, msg: str, tag: str) -> None:
             full_msg = f"{msg} [test-tag:{tag}]"
             with open(file, "w") as f:
                 f.write(f"{file}\n{msg}\n")
             run_cmd(f"git add {file}")
             run_cmd(f'git commit -m "{full_msg}"')
-            return git_cmd.must_git("rev-parse HEAD").strip()
 
         # Helper to find test PRs by tag
         def get_test_prs(tag: str) -> list:
@@ -603,23 +610,27 @@ def test_reorder(test_repo: Tuple[str, str, str, str]) -> None:
     unique_tag = f"test-simple-{uuid.uuid4().hex[:8]}"
 
     # Create four test commits with unique tag in message
-    def make_commit(file: str, content: str, msg: str) -> str:
+    def make_commit(file: str, content: str, msg: str) -> None:
         full_msg = f"{msg} [test-tag:{unique_tag}]"
         with open(file, "w") as f:
             f.write(f"{file}\n{content}\n")
         run_cmd(f"git add {file}")
         run_cmd(f'git commit -m "{full_msg}"')
-        commit_hash = git_cmd.must_git("rev-parse HEAD").strip()
-        return commit_hash
 
     # Create commits c1, c2, c3, c4
-    commit1_hash = make_commit("test1.txt", "test content 1", "First commit")
-    commit2_hash = make_commit("test2.txt", "test content 2", "Second commit")
-    commit3_hash = make_commit("test3.txt", "test content 3", "Third commit")
-    commit4_hash = make_commit("test4.txt", "test content 4", "Fourth commit")
+    make_commit("test1.txt", "test content 1", "First commit")
+    make_commit("test2.txt", "test content 2", "Second commit")
+    make_commit("test3.txt", "test content 3", "Third commit")
+    make_commit("test4.txt", "test content 4", "Fourth commit")
 
     # Run pyspr update
     run_cmd(f"pyspr update")
+
+    # Get commit hashes after update
+    commit1_hash = git_cmd.must_git("rev-parse HEAD~3").strip()
+    commit2_hash = git_cmd.must_git("rev-parse HEAD~2").strip()
+    commit3_hash = git_cmd.must_git("rev-parse HEAD~1").strip()
+    commit4_hash = git_cmd.must_git("rev-parse HEAD").strip()
 
     # Helper to find our test PRs using unique tag
     def get_test_prs() -> List[PullRequest]:
@@ -794,7 +805,7 @@ def _run_merge_test(
     unique_tag = f"test-merge-{uuid.uuid4().hex[:8]}"
     
     # Create commits
-    def make_commit(file: str, line: str, msg: str) -> str:
+    def make_commit(file: str, line: str, msg: str) -> None:
         full_msg = f"{msg} [test-tag:{unique_tag}]"
         with open(file, "w") as f:
             f.write(f"{file}\n{line}\n")
@@ -814,23 +825,18 @@ def _run_merge_test(
         except subprocess.CalledProcessError as e:
             log.info(f"Failed to commit: {e}")
             raise
-        result = git_cmd.must_git("rev-parse HEAD").strip()
-        assert result is not None, "Commit hash should not be None"
-        return result
         
     log.info("Creating commits...")
     try:
         # Use static filenames but unique content
         unique = str(uuid.uuid4())[:8]
-        commit_hashes: List[str] = []
         test_files: List[str] = []
         for i in range(num_commits):
             prefix = "test_merge" if not use_merge_queue else "mq_test"
             filename = f"{prefix}{i+1}.txt"
             test_files.append(filename)
-            c_hash = make_commit(filename, f"line 1 - {unique}", 
-                               f"Test {'merge queue' if use_merge_queue else 'multi'} commit {i+1}")
-            commit_hashes.append(c_hash)
+            make_commit(filename, f"line 1 - {unique}", 
+                      f"Test {'merge queue' if use_merge_queue else 'multi'} commit {i+1}")
     except subprocess.CalledProcessError as e:
         # Get git status for debugging
         run_cmd("git status")
@@ -1050,14 +1056,12 @@ def test_replace_commit(test_repo: Tuple[str, str, str, str]) -> None:
     # Create a unique tag for this test run
     unique_tag = f"test-replace-{uuid.uuid4().hex[:8]}"
 
-    def make_commit(file: str, line: str, msg: str) -> str:
+    def make_commit(file: str, line: str, msg: str) -> None:
         full_msg = f"{msg} [test-tag:{unique_tag}]"
         with open(file, "w") as f:
             f.write(f"{file}\n{line}\n")
         run_cmd(f"git add {file}")
         run_cmd(f'git commit -m "{full_msg}"')
-        commit_hash = git_cmd.must_git("rev-parse HEAD").strip()
-        return commit_hash
 
     log.info("\nCreating initial stack of 3 commits...")
     run_cmd("git checkout main")
@@ -1068,9 +1072,23 @@ def test_replace_commit(test_repo: Tuple[str, str, str, str]) -> None:
     test_files = ["file1.txt", "file2.txt", "file3.txt", "file2_new.txt"]
 
     # 1. Create stack with commits A -> B -> C
-    c1_hash = make_commit("file1.txt", "line 1", "Commit A")
-    c2_hash = make_commit("file2.txt", "line 1", "Commit B")
-    c3_hash = make_commit("file3.txt", "line 1", "Commit C")
+    make_commit("file1.txt", "line 1", "Commit A")
+    make_commit("file2.txt", "line 1", "Commit B")
+    make_commit("file3.txt", "line 1", "Commit C")
+
+    # Get original commit hashes - needed for cherry-pick operations
+    orig_c1_hash = git_cmd.must_git("rev-parse HEAD~2").strip()
+    orig_c2_hash = git_cmd.must_git("rev-parse HEAD~1").strip()
+    orig_c3_hash = git_cmd.must_git("rev-parse HEAD").strip()
+
+    # Run initial update
+    log.info("Creating initial PRs...")
+    subprocess.run(["pyspr", "update"], check=True)
+
+    # Get hashes after update for verification
+    c1_hash = git_cmd.must_git("rev-parse HEAD~2").strip()
+    c2_hash = git_cmd.must_git("rev-parse HEAD~1").strip()
+    c3_hash = git_cmd.must_git("rev-parse HEAD").strip()
 
     # Helper to find our test PRs
     def get_test_prs() -> list:
@@ -1085,9 +1103,6 @@ def test_replace_commit(test_repo: Tuple[str, str, str, str]) -> None:
                 except:  # Skip failures since we're just filtering
                     pass
         return result
-
-    log.info("Creating initial PRs...")
-    subprocess.run(["pyspr", "update"], check=True)
 
     # Get initial PR info and filter to our newly created PRs
     commit_prs = get_test_prs()
@@ -1121,8 +1136,8 @@ def test_replace_commit(test_repo: Tuple[str, str, str, str]) -> None:
     # 2. Replace commit B with new commit D
     log.info("\nReplacing commit B with new commit D...")
     run_cmd("git reset --hard HEAD~2")  # Remove B and C
-    _new_c2_hash = make_commit("file2_new.txt", "line 1", "New Commit D")
-    run_cmd(f"git cherry-pick {c3_hash}")  # Add C back
+    make_commit("file2_new.txt", "line 1", "New Commit D")
+    run_cmd(f"git cherry-pick {orig_c3_hash}")  # Add C back using original hash
 
     # 3. Run update
     log.info("Running update after replace...")
@@ -1341,16 +1356,15 @@ def test_no_rebase_pr_stacking(test_repo: Tuple[str, str, str, str]) -> None:
     git_cmd = RealGit(config)
     github = GitHubClient(None, config)
 
-    def make_commit(file: str, msg: str) -> str:
+    def make_commit(file: str, msg: str) -> None:
         with open(file, "w") as f:
             f.write(f"{file}\n{msg}\n")
         run_cmd(f"git add {file}")
         run_cmd(f'git commit -m "{msg}"')
-        return git_cmd.must_git("rev-parse HEAD").strip()
 
     try:
         log.info("\nCreating first commit...")
-        c1_hash = make_commit("nr_test1.txt", "First commit")
+        make_commit("nr_test1.txt", "First commit")
 
         # Create first PR
         log.info("\nCreating first PR...")
@@ -1367,9 +1381,15 @@ def test_no_rebase_pr_stacking(test_repo: Tuple[str, str, str, str]) -> None:
         assert pr1_hash is not None, "PR1 commit hash should not be None"
         log.info(f"Created PR #{pr1_number} with commit {pr1_hash[:8]}")
 
+        # Get first commit's hash after update for comparison
+        c1_hash = git_cmd.must_git("rev-parse HEAD").strip()
+
         # Create second commit
         log.info("\nCreating second commit...")
-        c2_hash = make_commit("nr_test2.txt", "Second commit")
+        make_commit("nr_test2.txt", "Second commit")
+
+        # Get commit hash before second update
+        c2_hash = git_cmd.must_git("rev-parse HEAD").strip()
 
         # Update with --no-rebase
         log.info("\nUpdating with --no-rebase...")
@@ -1446,15 +1466,13 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
     unique_tag2 = f"test-stack2-{uuid.uuid4().hex[:8]}"
 
     # Helper to make commit with unique test tag
-    def make_commit(file: str, line: str, msg: str, stack_num: int) -> str:
+    def make_commit(file: str, line: str, msg: str, stack_num: int) -> None:
         tag = unique_tag1 if stack_num == 1 else unique_tag2
         full_msg = f"{msg} [test-tag:{tag}]"
         with open(file, "w") as f:
             f.write(f"{file}\n{line}\n")
         run_cmd(f"git add {file}")
         run_cmd(f'git commit -m "{full_msg}"')
-        commit_hash = git_cmd.must_git("rev-parse HEAD").strip()
-        return commit_hash
 
     # Initialize branch names
     branch1: str = ""
@@ -1470,13 +1488,21 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
     run_cmd(f"git checkout -b {branch1}")
 
     # First commit for PR1A
-    c1a_hash = make_commit("stack1a.txt", "line 1", "Stack 1 commit A", 1)
+    make_commit("stack1a.txt", "line 1", "Stack 1 commit A", 1)
     # Second commit for PR1B
-    c1b_hash = make_commit("stack1b.txt", "line 1", "Stack 1 commit B", 1)
+    make_commit("stack1b.txt", "line 1", "Stack 1 commit B", 1)
+
+    # Save original hashes for cherry-pick operations
+    orig_c1a_hash = git_cmd.must_git("rev-parse HEAD~1").strip()
+    orig_c1b_hash = git_cmd.must_git("rev-parse HEAD").strip()
 
     # Update to create connected PRs 1A and 1B
     log.info("Creating stack 1 PRs...")
     run_cmd("pyspr update")
+
+    # Save hashes after update for verification
+    c1a_hash = git_cmd.must_git("rev-parse HEAD~1").strip()
+    c1b_hash = git_cmd.must_git("rev-parse HEAD").strip()
 
     # 2. Create branch2 with 2 connected PRs
     log.info("Creating branch2 with 2-PR stack...")
@@ -1485,9 +1511,9 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
     run_cmd(f"git checkout -b {branch2}")
 
     # First commit for PR2A
-    _c2a_hash = make_commit("stack2a.txt", "line 1", "Stack 2 commit A", 2)
+    make_commit("stack2a.txt", "line 1", "Stack 2 commit A", 2)
     # Second commit for PR2B
-    _c2b_hash = make_commit("stack2b.txt", "line 1", "Stack 2 commit B", 2)
+    make_commit("stack2b.txt", "line 1", "Stack 2 commit B", 2)
 
     # Update to create connected PRs 2A and 2B
     log.info("Creating stack 2 PRs...")
@@ -1542,7 +1568,7 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
     log.info("Removing first commit from branch1...")
     run_cmd(f"git checkout {branch1}")
     run_cmd("git reset --hard HEAD~2")  # Remove both commits
-    run_cmd("git cherry-pick {}".format(c1b_hash))  # Add back just the second commit
+    run_cmd(f"git cherry-pick {orig_c1b_hash}")  # Add back just the second commit using original hash
     # Removed manual push, let pyspr update handle it
 
     # Run update in branch1
