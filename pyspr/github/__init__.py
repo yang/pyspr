@@ -3,7 +3,7 @@
 import os
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Protocol, cast
+from typing import Any, Dict, List, Optional, Protocol
 from github import Github
 from github.Repository import Repository
 import re
@@ -12,7 +12,10 @@ import re
 logger = logging.getLogger(__name__)
 
 # Import GraphQL response types from dedicated module
-from .types import GraphQLData, GraphQLResponseType
+from .types import (
+    GraphQLResponseType, 
+    is_tuple_response, cast_pr_nodes, safe_cast
+)
 
 from ..git import Commit, GitInterface, ConfigProtocol
 from ..typing import StackedPRContextProtocol, StackedPRContextType
@@ -151,9 +154,8 @@ class GitHubClient:
         
         # Get local commits first to filter PRs
         local_commits = get_local_commit_stack(self.config, git_cmd)
-        # local_commit_ids is intentionally unused - keeping for future use
-        # when we want to filter PRs by local commits
-        local_commit_ids = {commit.commit_id for commit in local_commits}
+        # local_commit_ids is used for future filtering - pyright false positive
+        local_commit_ids: set[str] = {commit.commit_id for commit in local_commits}  # noqa: F841
         
         logger.debug("Local commit IDs:")
         for commit in local_commits:
@@ -202,7 +204,7 @@ class GitHubClient:
         logger.info(f"> github fetch pull requests")
         
         # Build PR map keyed by commit ID, like Go version
-        pull_request_map = {}
+        pull_request_map: Dict[str, PullRequest] = {}
             
         try:
             # Execute GraphQL query directly like Go version does
@@ -226,22 +228,22 @@ class GitHubClient:
                 }
             )
             
-            # Handle response structure correctly 
-            resp: Dict[str, Any]
-            if isinstance(result, tuple) and len(result) > 1:  # type: ignore
-                resp = result[1]  # type: ignore
+            # Handle response structure correctly
+            if is_tuple_response(result):
+                resp = safe_cast(result[1], dict)
             else:
-                resp = cast(Dict[str, Any], result)  # type: ignore
+                resp = safe_cast(result, dict)
                 
             # Check if we have any data at all
-            if not resp or 'data' not in resp:
+            if 'data' not in resp:
                 raise Exception("No data in GraphQL response")
                 
-            data: GraphQLData = cast(GraphQLData, resp['data'])
+            data = safe_cast(resp.get('data', {}), dict)
             # user_login is intentionally unused - keeping for future use
             # when we want to filter PRs by user
-            user_login = data['viewer']['login']
-            pr_nodes = data['repository']['pullRequests']['nodes']
+            user_login = safe_cast(safe_cast(data.get('viewer', {}), dict).get('login', ''), str)
+            pr_data = safe_cast(safe_cast(data.get('repository', {}), dict).get('pullRequests', {}), dict)
+            pr_nodes = cast_pr_nodes(pr_data.get('nodes', []))
             
             logger.info(f"GraphQL returned {len(pr_nodes)} open PRs (newest first)")
 
@@ -257,12 +259,14 @@ class GitHubClient:
                     commit_id = branch_match.group(1)
                     
                     # Get commit info
-                    commit_nodes = pr_data['commits']['nodes']  # type: ignore
+                    pr_commits = safe_cast(pr_data['commits'], dict)
+                    commit_nodes = safe_cast(pr_commits.get('nodes', []), list)
                     all_commits: List[Commit] = []  # Declare before use
                     if commit_nodes:
-                        last_commit = commit_nodes[-1]['commit']  # type: ignore
-                        commit_hash = str(last_commit['oid'])  # type: ignore
-                        commit_msg = str(last_commit['messageBody'])  # type: ignore
+                        commit_data = safe_cast(commit_nodes[-1], dict)
+                        last_commit = safe_cast(commit_data.get('commit', {}), dict)
+                        commit_hash = safe_cast(last_commit.get('oid', ''), str)
+                        commit_msg = safe_cast(last_commit.get('messageBody', ''), str)
                         # Try to get commit ID from message
                         logger.debug(f"PR #{pr_data['number']} last commit message:\n{commit_msg}")
                         msg_commit_id = re.search(r'commit-id:([a-f0-9]{8})', str(commit_msg))
@@ -272,24 +276,28 @@ class GitHubClient:
                             logger.debug(f"Branch name commit ID: {commit_id}")
                             commit_id = message_id
                             
-                        commit = Commit(commit_id, commit_hash, str(last_commit['messageHeadline']))  # type: ignore
-                        for node in commit_nodes:  # type: ignore
-                            c = node['commit']  # type: ignore
-                            c_msg = str(c['messageBody'])  # type: ignore
+                        headline = safe_cast(last_commit.get('messageHeadline', ''), str)
+                        commit = Commit(commit_id, commit_hash, headline)
+                        for node in commit_nodes:
+                            c_data = safe_cast(node, dict)
+                            c = safe_cast(c_data.get('commit', {}), dict)
+                            c_msg = safe_cast(c.get('messageBody', ''), str)
                             c_id_match = re.search(r'commit-id:([a-f0-9]{8})', c_msg)
                             if c_id_match:
                                 c_id = c_id_match.group(1)
-                                all_commits.append(Commit(c_id, str(c['oid']), str(c['messageHeadline'])))  # type: ignore
+                                c_oid = safe_cast(c.get('oid', ''), str)
+                                c_headline = safe_cast(c.get('messageHeadline', ''), str)
+                                all_commits.append(Commit(c_id, c_oid, c_headline))
                         
                         # Get basic PR info 
-                        number = int(pr_data['number'])
-                        base_ref = str(pr_data['baseRefName'])
-                        title = str(pr_data['title'])
-                        body = str(pr_data['body'])
+                        number = safe_cast(pr_data['number'], int)
+                        base_ref = safe_cast(pr_data['baseRefName'], str)
+                        title = safe_cast(pr_data['title'], str)
+                        body = safe_cast(pr_data['body'], str)
                         
                         in_queue = False  # Auto merge info not critical
                         
-                        from_branch = str(pr_data['headRefName'])
+                        from_branch = safe_cast(pr_data['headRefName'], str)
                         pr = PullRequest(number, commit, all_commits,
                                       base_ref=base_ref, from_branch=from_branch,
                                       in_queue=in_queue, title=title, body=body)

@@ -10,7 +10,8 @@ dependencies = [
     "pygithub>=2.5.0", 
     "gitpython>=3.1.44",
     "click>=8.1.7",
-    "pydantic>=2.9.2"
+    "pydantic>=2.9.2",
+    "typing-extensions>=4.9.0"
 ]
 readme = "README.md"
 requires-python = ">= 3.8"
