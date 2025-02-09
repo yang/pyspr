@@ -27,32 +27,7 @@ from contextlib import redirect_stdout
 from typing import Dict, Generator, List, Optional, Set, Tuple, Union
 import pytest
 
-def get_gh_token() -> str:
-    """Get GitHub token from gh CLI config."""
-    # First try using gh auth token
-    try:
-        result = subprocess.run(['gh', 'auth', 'token'], check=True, capture_output=True, text=True)
-        token = result.stdout.strip()
-        if token:
-            return token
-    except subprocess.CalledProcessError:
-        pass
-
-    # Fallback to reading gh config file
-    try:
-        gh_config_path = Path.home() / ".config" / "gh" / "hosts.yml"
-        if gh_config_path.exists():
-            with open(gh_config_path) as f:
-                config = yaml.safe_load(f)
-                if config and "github.com" in config:
-                    github_config = config["github.com"]
-                    if "oauth_token" in github_config:
-                        return github_config["oauth_token"]
-    except Exception as e:
-        log.info(f"Error reading gh config: {e}")
-
-    raise Exception("Could not get GitHub token from gh CLI")
-
+from pyspr.tests.e2e.test_helpers import get_gh_token
 from pyspr.config import Config
 from pyspr.git import RealGit, Commit 
 from pyspr.github import GitHubClient, PullRequest
@@ -71,18 +46,7 @@ log.addHandler(handler)
 log.setLevel(logging.INFO)
 log.propagate = True  # Allow logs to propagate to pytest
 
-def run_cmd(cmd: str) -> None:
-    """Run a shell command using subprocess with proper error handling."""
-    log.info(f"Running command: {cmd}")
-    try:
-        subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
-    except subprocess.CalledProcessError as e:
-        log.error(f"Command failed with exit code {e.returncode}")
-        if e.stdout:
-            log.error(f"STDOUT: {e.stdout}")
-        if e.stderr:
-            log.error(f"STDERR: {e.stderr}")
-        raise
+from pyspr.tests.e2e.test_helpers import run_cmd
 
 def test_delete_insert(test_repo: Tuple[str, str, str, str]) -> None:
     """Test that creates four commits, runs update, then recreates commits but skips the second one,
@@ -727,47 +691,12 @@ def test_reorder(test_repo: Tuple[str, str, str, str]) -> None:
     pr_chain = f"#{pr1_after.number} -> #{pr2_after.number} -> #{pr4_after.number} -> #{pr3_after.number}"
     log.info(f"\nVerified PRs after reordering: {pr_chain}")
 
+from pyspr.tests.e2e.test_helpers import create_test_repo
+
 @pytest.fixture
 def test_repo() -> Generator[Tuple[str, str, str, str], None, None]:
-    """Use yang/teststack repo with a temporary test branch."""
-    orig_dir = os.getcwd()
-    owner = "yang"
-    name = "teststack"
-    repo_name = f"{owner}/{name}"  # Used in log.info and subprocess call
-    test_branch = f"test-spr-amend-{uuid.uuid4().hex[:7]}"
-    log.info(f"Using test branch {test_branch} in {repo_name}")
-    
-    # Use gh CLI token
-    token = get_gh_token()
-    os.environ["GITHUB_TOKEN"] = token
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        os.chdir(tmpdir)
-
-        # Clone the repo
-        run_cmd(f"gh repo clone {repo_name}")
-        os.chdir("teststack")
-
-        # Create and use test branch
-        run_cmd(f"git checkout -b {test_branch}")
-
-        # Configure git
-        run_cmd("git config user.name 'Test User'")
-        run_cmd("git config user.email 'test@example.com'")
-        
-        repo_dir = os.path.abspath(os.getcwd())
-        yield owner, name, test_branch, repo_dir
-
-        # Cleanup - delete branch
-        run_cmd("git checkout main")
-        run_cmd(f"git branch -D {test_branch}")
-        try:
-            run_cmd(f"git push origin --delete {test_branch}")
-        except subprocess.CalledProcessError:
-            log.info(f"Failed to delete remote branch {test_branch}, may not exist")
-
-        # Return to original directory
-        os.chdir(orig_dir)
+    """Regular test repo fixture using yang/teststack."""
+    yield from create_test_repo("yang", "teststack")
 
 def _run_merge_test(
         repo_fixture: Union[Tuple[str, str, str], Tuple[str, str, str, str]], 
@@ -875,16 +804,18 @@ def _run_merge_test(
         assert prs[i].base_ref == f"spr/main/{prs[i-1].commit.commit_id}", \
             f"PR #{prs[i].number} should target PR #{prs[i-1].number}, got {prs[i].base_ref}"
 
-    # Run merge for all or some PRs
-    merge_cmd = ["pyspr", "merge"]
+    # Run merge for all or some PRs using rye run
+    merge_cmd = ["rye", "run", "pyspr", "merge", "-C", repo_dir]
     if count is not None:
         merge_cmd.extend(["-c", str(count)])
     log.info(f"\nMerging {'to queue' if use_merge_queue else 'all'} PRs{' (partial)' if count else ''}...")
     try:
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         merge_output = subprocess.check_output(
             merge_cmd,
             stderr=subprocess.STDOUT,
-            universal_newlines=True
+            universal_newlines=True,
+            cwd=project_root
         )
         log.info(merge_output)
     except subprocess.CalledProcessError as e:
@@ -978,43 +909,8 @@ def test_merge_workflow(test_repo: Tuple[str, str, str, str]) -> None:
 
 @pytest.fixture
 def test_mq_repo() -> Generator[Tuple[str, str, str, str], None, None]:
-    """Use yangenttest1/teststack repo with a temporary test branch."""
-    orig_dir = os.getcwd()
-    repo_name = "yangenttest1/teststack"
-    test_branch = f"test-spr-mq-{uuid.uuid4().hex[:7]}"
-    log.info(f"Using test branch {test_branch} in {repo_name}")
-    
-    # Use gh CLI token
-    token = get_gh_token()
-    os.environ["GITHUB_TOKEN"] = token
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        os.chdir(tmpdir)
-
-        # Clone the repo
-        run_cmd(f"gh repo clone {repo_name}")
-        os.chdir("teststack")
-
-        # Create and use test branch
-        run_cmd(f"git checkout -b {test_branch}")
-
-        # Configure git
-        run_cmd("git config user.name 'Test User'")
-        run_cmd("git config user.email 'test@example.com'")
-        run_cmd("git checkout -b test_local") # Create local branch first
-        
-        repo_dir = os.path.abspath(os.getcwd())
-        yield "yangenttest1", "teststack", test_branch, repo_dir
-
-        run_cmd("git checkout main")
-        run_cmd(f"git branch -D {test_branch}")
-        try:
-            run_cmd(f"git push origin --delete {test_branch}")
-        except subprocess.CalledProcessError:
-            log.info(f"Failed to delete remote branch {test_branch}, may not exist")
-
-        # Return to original directory
-        os.chdir(orig_dir)
+    """Merge queue test repo fixture using yangenttest1/teststack."""  
+    yield from create_test_repo("yangenttest1", "teststack")
 
 def test_merge_queue_workflow(test_mq_repo: Tuple[str, str, str, str]) -> None:
     """Test merge queue workflow with real PRs."""
