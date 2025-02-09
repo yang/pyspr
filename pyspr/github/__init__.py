@@ -513,15 +513,27 @@ class GitHubClient:
                 gh_pr.edit(base=desired_base)
 
     def add_reviewers(self, ctx: StackedPRContextType, pr: PullRequest, user_ids: List[str]) -> None:
-        """Add reviewers to pull request."""
+        """Add reviewers to pull request.
+        
+        Handles self-review attempts gracefully as GitHub doesn't allow requesting 
+        reviews from yourself.
+        """
         if not self.repo:
             return
             
         logger.info(f"> github add reviewers #{pr.number} : {pr.title} - {user_ids}")
             
         gh_pr = self.repo.get_pull(pr.number)
-        # PyGithub typing is wrong; it actually accepts a list of strings
-        gh_pr.create_review_request(reviewers=user_ids)  # type: ignore
+        try:
+            # PyGithub typing is wrong; it actually accepts a list of strings
+            gh_pr.create_review_request(reviewers=user_ids)  # type: ignore
+        except Exception as e:
+            if "Review cannot be requested from pull request author" in str(e):
+                # This is expected when trying to add self as reviewer
+                logger.warning(f"Skipping adding author as reviewer for PR #{pr.number}")
+            else:
+                raise # Re-raise other errors
+                
         logger.debug(f"Called add_reviewers for PR #{pr.number} with IDs: {user_ids}")
 
     def comment_pull_request(self, ctx: StackedPRContextType, pr: PullRequest, comment: str) -> None:

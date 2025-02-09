@@ -71,7 +71,15 @@ log.propagate = False  # Don't double log
 def run_cmd(cmd: str) -> None:
     """Run a shell command using subprocess with proper error handling."""
     log.info(f"Running command: {cmd}")
-    subprocess.run(cmd, shell=True, check=True)
+    try:
+        subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as e:
+        log.error(f"Command failed with exit code {e.returncode}")
+        if e.stdout:
+            log.error(f"STDOUT: {e.stdout}")
+        if e.stderr:
+            log.error(f"STDERR: {e.stderr}")
+        raise
 
 def test_delete_insert(test_repo: Tuple[str, str, str, str]) -> None:
     """Test that creates four commits, runs update, then recreates commits but skips the second one,
@@ -451,115 +459,125 @@ def test_reviewer_functionality_yang(test_reviewer_repo: Tuple[str, str, str, st
     git_cmd = RealGit(config)
     github = GitHubClient(None, config)
 
-    # Create a unique tag for this test run
-    unique_tag = f"test-reviewer-yang-{uuid.uuid4().hex[:8]}"
+    # Save current directory and change to repo_dir
+    original_dir = os.getcwd()
+    os.chdir(repo_dir)
 
-    # Create first commit and PR without reviewer
-    def make_commit(file: str, msg: str) -> str:
-        full_msg = f"{msg} [test-tag:{unique_tag}]"
-        with open(file, "w") as f:
-            f.write(f"{file}\n{msg}\n")
-        run_cmd(f"git add {file}")
-        run_cmd(f'git commit -m "{full_msg}"')
-        return git_cmd.must_git("rev-parse HEAD").strip()
-
-    log.info("Creating first commit without reviewer...")
-    make_commit("r_test1.txt", "First commit")
-
-    # Create initial PR without reviewer
-    run_cmd("pyspr update")
-
-    # Helper to find our test PRs 
-    def get_test_prs() -> list:
-        result = []
-        for pr in github.get_info(None, git_cmd).pull_requests:
-            if pr.from_branch.startswith('spr/main/'):
-                try:
-                    # Look for our unique tag in the commit message
-                    commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
-                    if f"test-tag:{unique_tag}" in commit_msg:
-                        result.append(pr)
-                except:  # Skip failures since we're just filtering
-                    pass
-        return result
-
-    # Verify first PR exists with no reviewer
-    info = github.get_info(None, git_cmd)
-    assert info is not None, "GitHub info should not be None"
-    our_prs = get_test_prs()
-    assert len(our_prs) == 1, f"Should have 1 PR for our test, found {len(our_prs)}"
-    pr1 = our_prs[0]
-    assert github.repo is not None, "GitHub repo should be available"
-    gh_pr1 = github.repo.get_pull(pr1.number)
-    
-    # Debug review requests for first PR
-    log.info("\nDEBUG: First PR review requests")
     try:
-        # Get requested reviewers directly
-        requested_users, requested_teams = gh_pr1.get_review_requests()
-        requested_logins = [u.login.lower() for u in requested_users]
-        log.info(f"Requested Users: {requested_logins}")
-        log.info(f"Requested Teams: {list(requested_teams)}")
-    except Exception as e:
-        log.info(f"Error getting review data: {e}")
-        requested_logins = []
-    
-    assert current_owner.lower() not in requested_logins, f"First PR correctly has no {current_owner} reviewer (can't review own PR)"
-    log.info(f"Created PR #{pr1.number} with no {current_owner} reviewer")
+        # Create a unique tag for this test run
+        unique_tag = f"test-reviewer-yang-{uuid.uuid4().hex[:8]}"
 
-    # Create second commit and PR with reviewer
-    log.info("\nCreating second commit with reviewer...")
-    make_commit("r_test2.txt", "Second commit")
+        # Create first commit and PR without reviewer
+        def make_commit(file: str, msg: str) -> str:
+            full_msg = f"{msg} [test-tag:{unique_tag}]"
+            with open(file, "w") as f:
+                f.write(f"{file}\n{msg}\n")
+            run_cmd(f"git add {file}")
+            run_cmd(f'git commit -m "{full_msg}"')
+            return git_cmd.must_git("rev-parse HEAD").strip()
 
-    # Try to add self as reviewer (should be handled gracefully)
-    run_cmd("pyspr update -r yang")
+        log.info("Creating first commit without reviewer...")
+        log.info(f"Current working directory: {os.getcwd()}")
+        make_commit("r_test1.txt", "First commit")
 
-    # Verify:
-    # - First PR still has no reviewer 
-    # - Second PR also has no reviewer (because we can't review our own PRs)
-    info = github.get_info(None, git_cmd)
-    assert info is not None, "GitHub info should not be None"
-    our_prs = get_test_prs()
-    assert len(our_prs) == 2, f"Should have 2 PRs for our test, found {len(our_prs)}"
-    prs_by_num = {pr.number: pr for pr in our_prs}
-    assert pr1.number in prs_by_num, "First PR should still exist"
-    
-    # Debug first PR reviews - verify still no reviewer
-    assert github.repo is not None, "GitHub repo should be available"
-    gh_pr1 = github.repo.get_pull(pr1.number)
-    log.info("\nDEBUG: First PR review requests after update")
-    try:
-        requested_users, requested_teams = gh_pr1.get_review_requests()
-        requested_logins1 = [u.login.lower() for u in requested_users]
-        log.info(f"Requested Users: {requested_logins1}")
-        log.info(f"Requested Teams: {list(requested_teams)}")
-    except Exception as e:
-        log.info(f"Error getting review data: {e}")
-        requested_logins1 = []
+        # Create initial PR without reviewer
+        run_cmd("pyspr update")
+
+        # Helper to find our test PRs 
+        def get_test_prs() -> list:
+            result = []
+            for pr in github.get_info(None, git_cmd).pull_requests:
+                if pr.from_branch.startswith('spr/main/'):
+                    try:
+                        # Look for our unique tag in the commit message
+                        commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
+                        if f"test-tag:{unique_tag}" in commit_msg:
+                            result.append(pr)
+                    except:  # Skip failures since we're just filtering
+                        pass
+            return result
+
+        # Verify first PR exists with no reviewer
+        info = github.get_info(None, git_cmd)
+        assert info is not None, "GitHub info should not be None"
+        our_prs = get_test_prs()
+        assert len(our_prs) == 1, f"Should have 1 PR for our test, found {len(our_prs)}"
+        pr1 = our_prs[0]
+        assert github.repo is not None, "GitHub repo should be available"
+        gh_pr1 = github.repo.get_pull(pr1.number)
         
-    assert current_owner.lower() not in requested_logins1, f"First PR correctly has no {current_owner} reviewer"
-    
-    pr2 = [pr for pr in info.pull_requests if pr.number != pr1.number][0]
-    gh_pr2 = github.repo.get_pull(pr2.number)
-    
-    # Debug second PR reviews - verify has no reviewer (can't add self)
-    log.info("\nDEBUG: Second PR review requests")
-    try:
-        requested_users, requested_teams = gh_pr2.get_review_requests()
-        requested_logins2 = [u.login.lower() for u in requested_users]
-        log.info(f"Requested Users: {requested_logins2}")
-        log.info(f"Requested Teams: {list(requested_teams)}")
-    except Exception as e:
-        log.info(f"Error getting review data: {e}")
-        requested_logins2 = []
+        # Debug review requests for first PR
+        log.info("\nDEBUG: First PR review requests")
+        try:
+            # Get requested reviewers directly
+            requested_users, requested_teams = gh_pr1.get_review_requests()
+            requested_logins = [u.login.lower() for u in requested_users]
+            log.info(f"Requested Users: {requested_logins}")
+            log.info(f"Requested Teams: {list(requested_teams)}")
+        except Exception as e:
+            log.info(f"Error getting review data: {e}")
+            requested_logins = []
         
-    # This assertion is the key difference - we expect no reviewer because GitHub
-    # doesn't allow you to request reviews from yourself
-    assert current_owner.lower() not in requested_logins2, f"Second PR correctly has no {current_owner} reviewer (can't review own PR)"
-    
-    log.info(f"Successfully verified -r flag handling with self-review attempt")
+        assert current_owner.lower() not in requested_logins, f"First PR correctly has no {current_owner} reviewer (can't review own PR)"
+        log.info(f"Created PR #{pr1.number} with no {current_owner} reviewer")
 
-    log.info(f"Verified PR #{pr1.number} has no reviewer and PR #{pr2.number} has testluser")
+        # Create second commit and PR with reviewer
+        log.info("\nCreating second commit with reviewer...")
+        make_commit("r_test2.txt", "Second commit")
+
+        # Try to add self as reviewer (should be handled gracefully)
+        run_cmd("pyspr update -r yang")
+
+        # Verify:
+        # - First PR still has no reviewer 
+        # - Second PR also has no reviewer (because we can't review our own PRs)
+        info = github.get_info(None, git_cmd)
+        assert info is not None, "GitHub info should not be None"
+        our_prs = get_test_prs()
+        assert len(our_prs) == 2, f"Should have 2 PRs for our test, found {len(our_prs)}"
+        prs_by_num = {pr.number: pr for pr in our_prs}
+        assert pr1.number in prs_by_num, "First PR should still exist"
+        
+        # Debug first PR reviews - verify still no reviewer
+        assert github.repo is not None, "GitHub repo should be available"
+        gh_pr1 = github.repo.get_pull(pr1.number)
+        log.info("\nDEBUG: First PR review requests after update")
+        try:
+            requested_users, requested_teams = gh_pr1.get_review_requests()
+            requested_logins1 = [u.login.lower() for u in requested_users]
+            log.info(f"Requested Users: {requested_logins1}")
+            log.info(f"Requested Teams: {list(requested_teams)}")
+        except Exception as e:
+            log.info(f"Error getting review data: {e}")
+            requested_logins1 = []
+            
+        assert current_owner.lower() not in requested_logins1, f"First PR correctly has no {current_owner} reviewer"
+        
+        pr2 = [pr for pr in info.pull_requests if pr.number != pr1.number][0]
+        gh_pr2 = github.repo.get_pull(pr2.number)
+        
+        # Debug second PR reviews - verify has no reviewer (can't add self)
+        log.info("\nDEBUG: Second PR review requests")
+        try:
+            requested_users, requested_teams = gh_pr2.get_review_requests()
+            requested_logins2 = [u.login.lower() for u in requested_users]
+            log.info(f"Requested Users: {requested_logins2}")
+            log.info(f"Requested Teams: {list(requested_teams)}")
+        except Exception as e:
+            log.info(f"Error getting review data: {e}")
+            requested_logins2 = []
+            
+        # This assertion is the key difference - we expect no reviewer because GitHub
+        # doesn't allow you to request reviews from yourself
+        assert current_owner.lower() not in requested_logins2, f"Second PR correctly has no {current_owner} reviewer (can't review own PR)"
+        
+        log.info(f"Successfully verified -r flag handling with self-review attempt")
+
+        log.info(f"Verified PR #{pr1.number} has no reviewer and PR #{pr2.number} has testluser")
+
+    finally:
+        # Change back to original directory
+        os.chdir(original_dir)
 
 def test_reviewer_functionality_testluser(test_reviewer_repo: Tuple[str, str, str, str, str]) -> None:
     """Test that reviewers are correctly added to new PRs when using -r testluser."""
