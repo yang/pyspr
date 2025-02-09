@@ -1,6 +1,20 @@
 """Config module."""
 
-from typing import Dict, Any
+from typing import Dict, Any, Protocol, TypeVar, overload, Union, Optional
+
+T = TypeVar('T')
+
+class ConfigProtocol(Protocol):
+    """Protocol for config objects."""
+    repo: Dict[str, Any]
+    user: Dict[str, Any]
+    tool: Dict[str, Any]
+    state: Optional[Dict[str, Any]]
+    @overload
+    def get(self, key: str) -> Any: ...
+    @overload
+    def get(self, key: str, default: T) -> Union[Any, T]: ...
+    def get(self, key: str, default: Any = None) -> Any: ...
 
 class Config:
     """Config object holding repository and user config."""
@@ -12,6 +26,7 @@ class Config:
         self.repo: Dict[str, Any] = {k.lower(): v for k, v in repo_config.items()} 
         self.user: Dict[str, Any] = {k.lower(): v for k, v in user_config.items()}
         self.tool: Dict[str, Any] = {k.lower(): v for k, v in tool_config.items()}
+        self.state: Optional[Dict[str, Any]] = None
 
         # Convert concurrency to int if present
         if 'concurrency' in self.tool:

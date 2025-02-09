@@ -5,9 +5,11 @@ import re
 import uuid
 import logging
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Any, Dict, Protocol
+from typing import List, Optional, Tuple, Any, Dict, Protocol, TypeVar, overload, Union
 import git
 from git.exc import GitCommandError, InvalidGitRepositoryError
+
+T = TypeVar('T')
 
 # Get module logger
 logger = logging.getLogger(__name__)
@@ -33,9 +35,16 @@ class GitInterface(Protocol):
         ...
 
 class ConfigProtocol(Protocol):
-    """Protocol for config objects used in git module."""
+    """Protocol for config objects."""
     repo: Dict[str, Any]
     user: Dict[str, Any]
+    tool: Dict[str, Any]
+    state: Optional[Dict[str, Any]]
+    @overload
+    def get(self, key: str) -> Any: ...
+    @overload
+    def get(self, key: str, default: T) -> Union[Any, T]: ...
+    def get(self, key: str, default: Any = None) -> Any: ...
 
 def get_local_commit_stack(config: ConfigProtocol, git_cmd: GitInterface) -> List[Commit]:
     """Get local commit stack. Returns commits ordered with bottom commit first."""

@@ -5,8 +5,9 @@ import os
 import sys
 import re
 import logging
-from typing import Dict, List, Optional, TypedDict
+from typing import Dict, List, Optional, TypedDict, cast
 import time
+from concurrent.futures import Future
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ class StackedPR:
         self.output = sys.stdout
         self.input = sys.stdin
         self.pretend = False  # Default to not pretend mode
-        self.concurrency = config.get('concurrency', 0)  # Get from tool.pyspr config
+        self.concurrency: int = cast(int, config.get('concurrency', 0))  # Get from tool.pyspr config
 
     def align_local_commits(self, commits: List[Commit], prs: List[PullRequest]) -> List[Commit]:
         """Align local commits with pull requests."""
@@ -268,7 +269,7 @@ class StackedPR:
                     if self.concurrency > 0 and len(ref_names) > 1:
                         # Push branches in parallel with specified concurrency
                         with concurrent.futures.ThreadPoolExecutor(max_workers=self.concurrency) as executor:
-                            futures = []
+                            futures: List[Future[str]] = []
                             for ref_name in ref_names:
                                 futures.append(
                                     executor.submit(self.git_cmd.must_git, f"push --force {remote} {ref_name}")

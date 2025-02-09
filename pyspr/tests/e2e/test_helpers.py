@@ -5,7 +5,7 @@ import uuid
 import tempfile
 import yaml
 import logging
-from typing import Generator, List, Tuple
+from typing import Generator, List, Tuple, Optional
 
 from pyspr.git import RealGit
 from pyspr.github import GitHubClient, PullRequest
@@ -36,7 +36,7 @@ def get_gh_token() -> str:
 
     raise Exception("Could not get GitHub token from gh CLI")
 
-def run_cmd(cmd: str, cwd: str = None) -> None:
+def run_cmd(cmd: str, cwd: Optional[str] = None) -> Optional[str]:
     """Run a shell command using subprocess with proper error handling."""
     # Find project root for rye commands
     project_root = None
@@ -77,8 +77,11 @@ def run_cmd(cmd: str, cwd: str = None) -> None:
 def get_test_prs(git_cmd: RealGit, github: GitHubClient, unique_tag: str) -> List[PullRequest]:
     """Get test PRs filtered by unique tag."""
     log.info(f"Looking for PRs with tag: {unique_tag}")
-    result = []
-    for pr in github.get_info(None, git_cmd).pull_requests:
+    result: List[PullRequest] = []
+    github_info = github.get_info(None, git_cmd)
+    if not github_info:
+        return result
+    for pr in github_info.pull_requests:
         if pr.from_branch and pr.from_branch.startswith('spr/main/'):
             try:
                 commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
@@ -99,7 +102,7 @@ def create_test_repo(owner: str, name: str, use_temp_branch: bool = True) -> Gen
     orig_dir = os.getcwd()
     repo_name = f"{owner}/{name}"
     test_branch = f"test-spr-{uuid.uuid4().hex[:7]}" if use_temp_branch else None
-    log.info(f"Using {'test branch ' + test_branch if use_temp_branch else 'main branch'} in {repo_name}")
+    log.info(f"Using {'test branch ' + str(test_branch) if use_temp_branch else 'main branch'} in {repo_name}")
     
     # Get token
     token = get_gh_token()

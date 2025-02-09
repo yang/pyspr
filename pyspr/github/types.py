@@ -100,8 +100,9 @@ def cast_pr_nodes(nodes: Any) -> List[PRNode]:
     if not isinstance(nodes, Sequence):
         raise TypeError("Not a valid list of PRNodes")
     cast_nodes: List[PRNode] = []
+    nodes_seq: Sequence[Any] = nodes  # Explicitly type the sequence
     try:
-        nodes_list = list(nodes)
+        nodes_list: List[Any] = list(nodes_seq)
         for item in nodes_list:
             try:
                 node = safe_cast(item, dict)
