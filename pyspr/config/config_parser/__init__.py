@@ -26,6 +26,7 @@ def parse_config(git_cmd: GitInterface) -> Config:
             'require_approval': True,
             'github_host': 'github.com',
             'show_pr_titles_in_stack': False,
+            'labels': [],  # Default empty list for auto-labels
         },
         'user': {},
         'tool': {

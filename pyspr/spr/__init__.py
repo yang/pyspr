@@ -297,6 +297,16 @@ class StackedPR:
                          count: Optional[int] = None,
                          labels: Optional[List[str]] = None) -> None:
         """Update pull requests for commits."""
+        # Combine CLI labels with config labels
+        config_labels: List[str] = self.config.repo.get('labels', [])
+        if isinstance(config_labels, str):
+            config_labels = [config_labels]
+        elif not isinstance(config_labels, list):
+            config_labels = []
+            
+        all_labels = list(config_labels)
+        if labels:
+            all_labels.extend(labels)
         github_info = self.fetch_and_get_github_info(ctx)
         if not github_info:
             return
@@ -425,7 +435,7 @@ class StackedPR:
                     )
                 else:
                     logger.debug(f"  No matching PR found, creating new PR")
-                    pr = self.github.create_pull_request(ctx, self.git_cmd, github_info, commit, prev_commit, labels=labels)
+                    pr = self.github.create_pull_request(ctx, self.git_cmd, github_info, commit, prev_commit, labels=all_labels)
                 github_info.pull_requests.append(pr)
                 update_queue.append({
                     'pr': pr,
@@ -461,7 +471,7 @@ class StackedPR:
                             executor.submit(self.github.update_pull_request,
                                         ctx, self.git_cmd, github_info.pull_requests,
                                         update['pr'], update['commit'], update['prev_commit'],
-                                        labels=labels
+                                        labels=all_labels
                             )
                         )
                     concurrent.futures.wait(futures)
@@ -477,7 +487,7 @@ class StackedPR:
                     self.github.update_pull_request(
                         ctx, self.git_cmd, github_info.pull_requests,
                         update['pr'], update['commit'], update['prev_commit'],
-                        labels=labels
+                        labels=all_labels
                     )
             end_time = time.time()
             logger.debug(f"PR update operation took {end_time - start_time:.2f} seconds")
