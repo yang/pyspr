@@ -1,6 +1,6 @@
 """Type definitions for GitHub API responses."""
 
-from typing import Dict, List, TypedDict, Any, Union, cast, TypeVar, Mapping, Sequence
+from typing import Dict, List, TypedDict, Any, cast, TypeVar, Mapping, Sequence, Protocol, Optional, Tuple
 from typing_extensions import NotRequired, Required
 
 # GraphQL response types with complete type information
@@ -47,11 +47,9 @@ class GraphQLResponse(TypedDict, total=False):
     data: Required[GraphQLData]
     errors: NotRequired[List[Dict[str, Any]]]
 
-# Type for tuple response from PyGithub
-GraphQLTupleResponse = "tuple[int, Dict[str, Any]]"
-
-# Type alias for the combined response types
-GraphQLResponseType = Union["tuple[int, Dict[str, Any]]", Dict[str, Any]]
+# Type for PyGithub GraphQL response
+# The actual return type is Tuple[headers: Dict[str, Any], data: Any]
+GraphQLResponseType = Tuple[Dict[str, Any], Any]
 
 class PRMapDict(TypedDict):
     """Type for PR dict keyed by commit ID."""
@@ -74,10 +72,6 @@ class PRCommitInfo(TypedDict):
 T = TypeVar('T')
 
 # Type guard helpers
-def is_tuple_response(resp: GraphQLResponseType) -> bool:
-    """Check if response is a tuple response."""
-    return isinstance(resp, tuple) and len(resp) > 1
-
 def is_dict_with_keys(obj: Any, *keys: str) -> bool:
     """Check if object is a dict with all specified keys."""
     return isinstance(obj, Mapping) and all(key in obj for key in keys)
@@ -119,3 +113,19 @@ def safe_cast(obj: Any, expected_type: type) -> Any:
     if not isinstance(obj, expected_type):
         raise TypeError(f"Expected {expected_type.__name__}, got {type(obj).__name__}")
     return obj  # No need to cast since we've verified the type
+
+class GitHubRequester(Protocol):
+    """Type for PyGithub requester to handle GraphQL calls.
+    
+    This types the internal _Github__requester that's needed for GraphQL.
+    We use a Protocol since the requester is a private implementation detail.
+    """
+    def requestJsonAndCheck(
+        self,
+        verb: str,
+        url: str, 
+        parameters: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
+        input: Optional[Any] = None
+    ) -> GraphQLResponseType:
+        ...
