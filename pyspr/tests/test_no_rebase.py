@@ -1,29 +1,28 @@
 """Unit test for --no-rebase functionality."""
 
 import os
-import pytest
-import io
-from contextlib import redirect_stdout, redirect_stderr
+import logging
 from unittest.mock import MagicMock, patch
 from dataclasses import dataclass
+from typing import List, Optional
 
 from pyspr.config import Config
 from pyspr.spr import StackedPR
-from pyspr.github import GitHubInfo
+from pyspr.github import PullRequest
 
 @dataclass
 class MockGithubInfo:
     local_branch: str = "feature-branch"
-    pull_requests: list = None
+    pull_requests: List[PullRequest] = None
     def key(self):
         return "mock-key"
 
-def test_no_rebase_functionality(caplog):
+def test_no_rebase_functionality(caplog: Any):
     """Test that --no-rebase properly skips rebasing.
     
     Mock all external dependencies to test only the core logic.
     """
-    import logging
+    from typing import Any
     caplog.set_level(logging.DEBUG)
     
     # Create config

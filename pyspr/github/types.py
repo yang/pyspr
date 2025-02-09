@@ -99,7 +99,19 @@ def cast_pr_nodes(nodes: Any) -> List[PRNode]:
     """Cast nodes to List[PRNode] after validation."""
     if not isinstance(nodes, Sequence):
         raise TypeError("Not a valid list of PRNodes")
-    return [cast_pr_node(node) for node in nodes]
+    cast_nodes: List[PRNode] = []
+    try:
+        nodes_list = list(nodes)
+        for item in nodes_list:
+            try:
+                node = safe_cast(item, dict)
+                if is_pr_node(node):
+                    cast_nodes.append(cast_pr_node(node))
+            except (TypeError, ValueError):
+                continue
+    except Exception:
+        pass  # Failed to convert to list
+    return cast_nodes
 
 def safe_cast(obj: Any, expected_type: type) -> Any:
     """Safely cast an object to expected type or raise TypeError."""

@@ -230,9 +230,14 @@ class GitHubClient:
             
             # Handle response structure correctly
             resp: Dict[str, Any]
-            if isinstance(result, tuple) and len(result) >= 2:
-                tuple_result = result  # type: ignore
-                resp = safe_cast(tuple_result[1], dict)
+            if isinstance(result, tuple):
+                try:
+                    # Directly unpack to avoid len() call
+                    _, resp_data = result  # type: ignore
+                    resp = safe_cast(resp_data, dict)
+                except ValueError:
+                    # Not a 2-tuple, try to cast whole result
+                    resp = safe_cast(result, dict)
             else:
                 resp = safe_cast(result, dict)
                 
@@ -309,6 +314,9 @@ class GitHubClient:
                         in_queue = False  # Auto merge info not critical
                         
                         from_branch = safe_cast(pr_data['headRefName'], str)
+
+                        # We know commit is initialized because we're in the commit_nodes block
+                        assert commit is not None
                         pr = PullRequest(number, commit, all_commits,
                                       base_ref=base_ref, from_branch=from_branch,
                                       in_queue=in_queue, title=title, body=body)
@@ -336,9 +344,9 @@ class GitHubClient:
                     logger.debug(f"Processing PR #{pr.number} with branch {pr.head.ref}")
                     commit_id = branch_match.group(1)
                     commit_hash = pr.head.sha
+                    all_commits: List[Commit] = []
                     try:
                         commits_in_pr = list(pr.get_commits())
-                        all_commits = []
                         if commits_in_pr:
                             last_commit = commits_in_pr[-1]
                             msg_commit_id = re.search(r'commit-id:([a-f0-9]{8})', str(last_commit.commit.message))
@@ -372,7 +380,7 @@ class GitHubClient:
                     pull_request_map[commit_id] = new_pr
 
         # Build PR stack like Go version
-        pull_requests = []
+        pull_requests: List[PullRequest] = []
         target_branch = self.config.repo.get('github_branch', 'main')
         
         # Find top PR
@@ -385,7 +393,8 @@ class GitHubClient:
                 
         # Build stack
         while curr_pr:
-            pull_requests.insert(0, curr_pr)  # Prepend like Go
+            curr = curr_pr  # Make a local copy that's definitely not None for insert
+            pull_requests.insert(0, curr)  # Prepend like Go
             logger.debug(f"Added PR #{curr_pr.number} to stack - base: {curr_pr.base_ref}")
             if curr_pr.base_ref == target_branch:
                 logger.debug("Reached target branch, stopping")
@@ -403,10 +412,11 @@ class GitHubClient:
                 break
                 
         logger.debug(f"Final PR stack has {len(pull_requests)} PRs")
-        for pr in pull_requests:
+        final_prs = list(pull_requests)  # Make copy to avoid type issues
+        for pr in final_prs:
             logger.debug(f"  PR #{pr.number}: commit={pr.commit.commit_id} base={pr.base_ref}")
                 
-        return GitHubInfo(local_branch, pull_requests)
+        return GitHubInfo(local_branch, final_prs)
 
     def create_pull_request(self, ctx: StackedPRContextType, git_cmd: GitInterface, info: GitHubInfo,
                          commit: Commit, prev_commit: Optional[Commit]) -> PullRequest:
