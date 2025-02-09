@@ -435,8 +435,10 @@ class GitHubClient:
             
         logger.info(f"> github create #{info.pull_requests[-1].number + 1 if info.pull_requests else 1} : {commit.subject}")
         
+        # Get full commit message including test tags
+        commit_msg = git_cmd.must_git(f"show -s --format=%B {commit.commit_hash}").strip()
         title = commit.subject
-        commit.body = git_cmd.must_git(f"show -s --format=%b {commit.commit_hash}").strip()
+        commit.body = commit_msg  # Preserve full commit message
         
         # Get current PR stack for interlinking
         current_prs: List[PullRequest] = info.pull_requests[:] if info and info.pull_requests else []
@@ -491,7 +493,9 @@ class GitHubClient:
         
         # Update title if needed and commit is provided 
         if commit:
-            commit.body = git_cmd.must_git(f"show -s --format=%b {commit.commit_hash}").strip()
+            # Get full commit message including test tags
+            commit_msg = git_cmd.must_git(f"show -s --format=%B {commit.commit_hash}").strip()
+            commit.body = commit_msg  # Preserve full commit message
             if gh_pr.title != commit.subject:
                 gh_pr.edit(title=commit.subject)
                 pr.title = commit.subject
