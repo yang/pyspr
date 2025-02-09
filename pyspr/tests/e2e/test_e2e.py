@@ -1,4 +1,6 @@
 """End-to-end test for amending commits in stack, PR stack isolation, WIP and reviewer behavior."""
+
+CURRENT_USER = "yang"  # Since we're using yang's token for tests
 # pyright: reportUnusedVariable=false
 # pyright: reportUnusedImport=false
 # pyright: reportUnknownVariableType=false
@@ -398,51 +400,8 @@ def test_wip_behavior(test_repo: Tuple[str, str, str, str], caplog: pytest.LogCa
     assert pr1.base_ref == "main", "First PR should target main"
     assert pr2.base_ref is not None and pr2.base_ref.startswith("spr/main/"), "Second PR should target first PR's branch"
 
-@pytest.fixture
-def test_reviewer_repo() -> Generator[Tuple[str, str, str, str, str], None, None]:
-    """Use yang/teststack repo with a temporary test branch."""
-    orig_dir = os.getcwd()
-    owner = "yang"
-    repo_name = "teststack"
-    test_branch = f"test-spr-reviewers-{uuid.uuid4().hex[:7]}"
-    log.info(f"Using test branch {test_branch} in {owner}/{repo_name}")
-    
-    # Use gh CLI token
-    token = get_gh_token()
-    os.environ["GITHUB_TOKEN"] = token
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        os.chdir(tmpdir)
-
-        # Clone the repo
-        run_cmd(f"gh repo clone {owner}/{repo_name}")
-        os.chdir("teststack")
-
-        # Configure git
-        run_cmd("git config user.name 'Test User'")
-        run_cmd("git config user.email 'test@example.com'")
-        run_cmd(f"git checkout -b {test_branch}")
-        
-        repo_dir = os.path.abspath(os.getcwd())
-        os.chdir(orig_dir)
-        
-        # Return owner name from token for verification in test
-        current_owner = "yang" # Since we're using yang's token
-        
-        yield owner, repo_name, test_branch, repo_dir, current_owner
-
-        # Cleanup
-        os.chdir(repo_dir)
-        run_cmd("git checkout main")
-        run_cmd(f"git branch -D {test_branch}")
-        try:
-            run_cmd(f"git push origin --delete {test_branch}")
-        except subprocess.CalledProcessError:
-            log.info(f"Failed to delete remote branch {test_branch}, may not exist")
-
-        os.chdir(orig_dir)
-
-def test_reviewer_functionality(test_reviewer_repo: Tuple[str, str, str, str, str]) -> None:
+def test_reviewer_functionality(test_repo: Tuple[str, str, str, str]) -> None:
     """Test reviewer functionality, verifying:
     1. Self-review attempts are handled properly (can't review your own PR)
     2. Other user review requests work properly
@@ -451,7 +410,7 @@ def test_reviewer_functionality(test_reviewer_repo: Tuple[str, str, str, str, st
     - First part tests yang token case (can't self-review)
     - Second part tests testluser case (verify request handling)
     """
-    owner, repo_name, test_branch, repo_dir, current_owner = test_reviewer_repo
+    owner, repo_name, test_branch, repo_dir = test_repo
 
     config = Config({
         'repo': {
@@ -526,8 +485,8 @@ def test_reviewer_functionality(test_reviewer_repo: Tuple[str, str, str, str, st
             log.info(f"Error getting review data: {e}")
             requested_logins = []
         
-        assert current_owner.lower() not in requested_logins, f"First PR correctly has no {current_owner} reviewer (can't review own PR)"
-        log.info(f"Created PR #{pr1.number} with no {current_owner} reviewer")
+        assert CURRENT_USER.lower() not in requested_logins, f"First PR correctly has no {CURRENT_USER} reviewer (can't review own PR)"
+        log.info(f"Created PR #{pr1.number} with no {CURRENT_USER} reviewer")
 
         # Create second commit and try self-review
         log.info("\nCreating second commit with self-reviewer...")
@@ -551,7 +510,7 @@ def test_reviewer_functionality(test_reviewer_repo: Tuple[str, str, str, str, st
         except Exception as e:
             log.info(f"Error getting review data: {e}")
             requested_logins1 = []
-        assert current_owner.lower() not in requested_logins1, f"First PR correctly has no {current_owner} reviewer"
+        assert CURRENT_USER.lower() not in requested_logins1, f"First PR correctly has no {CURRENT_USER} reviewer"
         
         # Verify no reviewer on second PR (self-review blocked)
         pr2 = [pr for pr in our_prs if pr.number != pr1.number][0]
@@ -563,7 +522,7 @@ def test_reviewer_functionality(test_reviewer_repo: Tuple[str, str, str, str, st
         except Exception as e:
             log.info(f"Error getting review data: {e}")
             requested_logins2 = []
-        assert current_owner.lower() not in requested_logins2, f"Second PR correctly has no {current_owner} reviewer (self-review blocked)"
+        assert CURRENT_USER.lower() not in requested_logins2, f"Second PR correctly has no {CURRENT_USER} reviewer (self-review blocked)"
         
         log.info("Successfully verified self-review handling")
 
