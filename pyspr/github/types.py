@@ -1,6 +1,6 @@
 """Type definitions for GitHub API responses."""
 
-from typing import Dict, List, TypedDict, Any, Union, TypeVar, cast
+from typing import Dict, List, TypedDict, Any, Union, cast, TypeVar, Mapping, Sequence
 from typing_extensions import NotRequired, Required
 
 # GraphQL response types with complete type information
@@ -71,17 +71,23 @@ class PRCommitInfo(TypedDict):
     commit_hash: str
     commit_headline: str
 
+T = TypeVar('T')
+
 # Type guard helpers
 def is_tuple_response(resp: GraphQLResponseType) -> bool:
     """Check if response is a tuple response."""
     return isinstance(resp, tuple) and len(resp) > 1
 
+def is_dict_with_keys(obj: Any, *keys: str) -> bool:
+    """Check if object is a dict with all specified keys."""
+    return isinstance(obj, Mapping) and all(key in obj for key in keys)
+
 def is_pr_node(node: Any) -> bool:
     """Check if node is a valid PR node."""
-    return (isinstance(node, dict) and
-            isinstance(node.get('id'), str) and
-            isinstance(node.get('number'), int) and
-            isinstance(node.get('headRefName'), str))
+    return is_dict_with_keys(node, 'id', 'number', 'headRefName') and \
+           isinstance(node.get('id'), str) and \
+           isinstance(node.get('number'), int) and \
+           isinstance(node.get('headRefName'), str)
 
 def cast_pr_node(node: Any) -> PRNode:
     """Cast a node to PRNode after validation."""
@@ -91,7 +97,7 @@ def cast_pr_node(node: Any) -> PRNode:
 
 def cast_pr_nodes(nodes: Any) -> List[PRNode]:
     """Cast nodes to List[PRNode] after validation."""
-    if not isinstance(nodes, list):
+    if not isinstance(nodes, Sequence):
         raise TypeError("Not a valid list of PRNodes")
     return [cast_pr_node(node) for node in nodes]
 
@@ -99,4 +105,4 @@ def safe_cast(obj: Any, expected_type: type) -> Any:
     """Safely cast an object to expected type or raise TypeError."""
     if not isinstance(obj, expected_type):
         raise TypeError(f"Expected {expected_type.__name__}, got {type(obj).__name__}")
-    return cast(Any, obj)
+    return obj  # No need to cast since we've verified the type

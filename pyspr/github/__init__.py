@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 
 # Import GraphQL response types from dedicated module
 from .types import (
-    GraphQLResponseType, 
-    is_tuple_response, cast_pr_nodes, safe_cast
+    GraphQLResponseType,
+    cast_pr_nodes, safe_cast
 )
 
 from ..git import Commit, GitInterface, ConfigProtocol
@@ -154,8 +154,8 @@ class GitHubClient:
         
         # Get local commits first to filter PRs
         local_commits = get_local_commit_stack(self.config, git_cmd)
-        # local_commit_ids is used for future filtering - pyright false positive
-        local_commit_ids: set[str] = {commit.commit_id for commit in local_commits}  # noqa: F841
+        # Keep list of commit IDs for future filtering
+        _ = {commit.commit_id for commit in local_commits}  # intentionally unused
         
         logger.debug("Local commit IDs:")
         for commit in local_commits:
@@ -229,8 +229,10 @@ class GitHubClient:
             )
             
             # Handle response structure correctly
-            if is_tuple_response(result):
-                resp = safe_cast(result[1], dict)
+            resp: Dict[str, Any]
+            if isinstance(result, tuple) and len(result) >= 2:
+                tuple_result = result  # type: ignore
+                resp = safe_cast(tuple_result[1], dict)
             else:
                 resp = safe_cast(result, dict)
                 
@@ -239,20 +241,25 @@ class GitHubClient:
                 raise Exception("No data in GraphQL response")
                 
             data = safe_cast(resp.get('data', {}), dict)
-            # user_login is intentionally unused - keeping for future use
-            # when we want to filter PRs by user
-            user_login = safe_cast(safe_cast(data.get('viewer', {}), dict).get('login', ''), str)
+            # Keep login for future user filtering
+            _ = safe_cast(safe_cast(data.get('viewer', {}), dict).get('login', ''), str)  # intentionally unused
             pr_data = safe_cast(safe_cast(data.get('repository', {}), dict).get('pullRequests', {}), dict)
             pr_nodes = cast_pr_nodes(pr_data.get('nodes', []))
             
             logger.info(f"GraphQL returned {len(pr_nodes)} open PRs (newest first)")
 
             logger.debug("PRs returned by GraphQL:")
-            for pr in pr_nodes:
-                logger.debug(f"  PR #{pr['number']}: base={pr['baseRefName']} head={pr['headRefName']}")
+            for pr in safe_cast(pr_nodes, list):
+                try:
+                    num = str(pr.get('number', '?'))
+                    base = str(pr.get('baseRefName', '?')) 
+                    head = str(pr.get('headRefName', '?'))
+                    logger.debug(f"  PR #{num}: base={base} head={head}")
+                except Exception:
+                    logger.debug("  [invalid PR data]")
             
             # Process PRs into map
-            for pr_data in pr_nodes:
+            for pr_data in safe_cast(pr_nodes, list):
                 branch_match = re.match(spr_branch_pattern, str(pr_data['headRefName']))
                 if branch_match:
                     logger.debug(f"Processing PR #{pr_data['number']} with branch {pr_data['headRefName']}")
@@ -261,7 +268,9 @@ class GitHubClient:
                     # Get commit info
                     pr_commits = safe_cast(pr_data['commits'], dict)
                     commit_nodes = safe_cast(pr_commits.get('nodes', []), list)
-                    all_commits: List[Commit] = []  # Declare before use
+                    all_commits: List[Commit] = []  # Will be populated if there are commits 
+                    commit: Optional[Commit] = None
+
                     if commit_nodes:
                         commit_data = safe_cast(commit_nodes[-1], dict)
                         last_commit = safe_cast(commit_data.get('commit', {}), dict)
@@ -278,6 +287,8 @@ class GitHubClient:
                             
                         headline = safe_cast(last_commit.get('messageHeadline', ''), str)
                         commit = Commit(commit_id, commit_hash, headline)
+
+                        # Process all commits
                         for node in commit_nodes:
                             c_data = safe_cast(node, dict)
                             c = safe_cast(c_data.get('commit', {}), dict)
