@@ -59,6 +59,7 @@ requests==2.32.3
 smmap==5.0.2
     # via gitdb
 tomli==2.2.1
+    # via pyspr
     # via pytest
 typing-extensions==4.12.2
     # via annotated-types

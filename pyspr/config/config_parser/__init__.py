@@ -6,6 +6,7 @@ import logging
 import yaml
 
 from ...git import GitInterface
+import tomli
 
 # Get module logger
 logger = logging.getLogger(__name__)
@@ -26,8 +27,22 @@ def parse_config(git_cmd: GitInterface) -> Config:
             'github_host': 'github.com',
             'show_pr_titles_in_stack': False,
         },
-        'user': {}
+        'user': {},
+        'tool': {
+            'pyspr': {
+                'concurrency': 0
+            }
+        }
     }
+    
+    # Try to load pyproject.toml for tool.pyspr settings
+    try:
+        with open('pyproject.toml', 'rb') as f:
+            pyproject = tomli.load(f)
+            if 'tool' in pyproject and 'pyspr' in pyproject['tool']:
+                config['tool']['pyspr'].update(pyproject['tool']['pyspr'])
+    except (FileNotFoundError, tomli.TOMLDecodeError):
+        pass  # No pyproject.toml or invalid TOML is fine
     
     # Try to load .spr.yaml from repository root
     try:

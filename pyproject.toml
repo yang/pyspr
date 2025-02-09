@@ -7,11 +7,12 @@ authors = [
 ]
 dependencies = [
     "pyyaml>=6.0.2",
-    "pygithub>=2.5.0", 
+    "pygithub>=2.5.0",
     "gitpython>=3.1.44",
     "click>=8.1.7",
     "pydantic>=2.9.2",
-    "typing-extensions>=4.9.0"
+    "typing-extensions>=4.9.0",
+    "tomli>=2.2.1",
 ]
 readme = "README.md"
 requires-python = ">= 3.8"
@@ -45,3 +46,6 @@ reportUnknownVariableType = true
 reportUnknownArgumentType = true
 reportUntypedFunctionDecorator = true
 reportMissingTypeArgument = true
+
+[tool.pyspr]
+concurrency = 0 # Control degree of concurrency: 0/None=disabled, N=number of workers

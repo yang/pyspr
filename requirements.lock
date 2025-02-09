@@ -49,6 +49,8 @@ requests==2.32.3
     # via pygithub
 smmap==5.0.2
     # via gitdb
+tomli==2.2.1
+    # via pyspr
 typing-extensions==4.12.2
     # via annotated-types
     # via pydantic

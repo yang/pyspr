@@ -6,6 +6,7 @@ import sys
 import re
 import logging
 from typing import Dict, List, Optional, TypedDict
+import time
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ class StackedPR:
         self.output = sys.stdout
         self.input = sys.stdin
         self.pretend = False  # Default to not pretend mode
+        self.concurrency = config.get('concurrency', 0)  # Get from tool.pyspr config
 
     def align_local_commits(self, commits: List[Commit], prs: List[PullRequest]) -> List[Commit]:
         """Align local commits with pull requests."""
@@ -261,12 +263,33 @@ class StackedPR:
                     commit_hash, branch = ref_name.split(':refs/heads/')
                     logger.info(f"  {branch} ({commit_hash[:8]})")
             else:
-                if self.config.repo.get('branch_push_individually', False):
-                    for ref_name in ref_names:
-                        self.git_cmd.must_git(f"push --force {remote} {ref_name}")
+                start_time = time.time()
+                if self.config.repo.get('branch_push_individually', False) or self.concurrency > 0:
+                    if self.concurrency > 0 and len(ref_names) > 1:
+                        # Push branches in parallel with specified concurrency
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=self.concurrency) as executor:
+                            futures = []
+                            for ref_name in ref_names:
+                                futures.append(
+                                    executor.submit(self.git_cmd.must_git, f"push --force {remote} {ref_name}")
+                                )
+                            concurrent.futures.wait(futures)
+                            # Check for errors
+                            for future in futures:
+                                try:
+                                    future.result()  # This will raise any exceptions from the thread
+                                except Exception as e:
+                                    logger.error(f"Push failed: {e}")
+                                    raise
+                    else:
+                        # Sequential push
+                        for ref_name in ref_names:
+                            self.git_cmd.must_git(f"push --force {remote} {ref_name}")
                 else:
                     cmd = f"push --force --atomic {remote} " + " ".join(ref_names)
                     self.git_cmd.must_git(cmd)
+                end_time = time.time()
+                logger.debug(f"Push operation took {end_time - start_time:.2f} seconds")
 
     def update_pull_requests(self, ctx: StackedPRContextProtocol, 
                          reviewers: Optional[List[str]] = None, 
@@ -421,16 +444,33 @@ class StackedPR:
 
         # Update all PRs to have correct bases
         if not self.pretend:
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                from concurrent.futures import Future
-                futures: List[Future[None]] = []
+            start_time = time.time()
+            if self.concurrency > 0:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=self.concurrency) as executor:
+                    from concurrent.futures import Future
+                    futures: List[Future[None]] = []
+                    for update in update_queue:
+                        futures.append(
+                            executor.submit(self.github.update_pull_request,
+                                        ctx, self.git_cmd, github_info.pull_requests,
+                                        update['pr'], update['commit'], update['prev_commit'])
+                        )
+                    concurrent.futures.wait(futures)
+                    # Check for errors
+                    for future in futures:
+                        try:
+                            future.result()  # This will raise any exceptions from the thread
+                        except Exception as e:
+                            logger.error(f"PR update failed: {e}")
+                            raise
+            else:
                 for update in update_queue:
-                    futures.append(
-                        executor.submit(self.github.update_pull_request,
-                                       ctx, self.git_cmd, github_info.pull_requests,
-                                       update['pr'], update['commit'], update['prev_commit'])
+                    self.github.update_pull_request(
+                        ctx, self.git_cmd, github_info.pull_requests,
+                        update['pr'], update['commit'], update['prev_commit']
                     )
-                concurrent.futures.wait(futures)
+            end_time = time.time()
+            logger.debug(f"PR update operation took {end_time - start_time:.2f} seconds")
         else:
             logger.info("\n[PRETEND] Would update the following PRs:")
             for update in update_queue:
