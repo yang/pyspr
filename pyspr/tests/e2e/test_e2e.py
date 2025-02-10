@@ -1043,13 +1043,9 @@ def test_no_rebase_pr_stacking(test_repo_ctx: RepoContext) -> None:
     initial_hash = git_cmd.must_git("rev-parse HEAD").strip()
     log.info(f"Initial commit: {initial_hash[:8]}")
 
-    # Create first commit & PR 
-    # Note: We're specifically NOT using the test tag since this test 
-    # is about preserving commit hashes and needs to handle its PRs differently
+    # Create first commit & PR with test tag as a control case
     log.info("\nCreating first commit...")
-    run_cmd(f"echo 'nr_test1.txt\nFirst commit\n' > {os.path.join(repo_dir, 'nr_test1.txt')}")
-    run_cmd("git add nr_test1.txt")
-    run_cmd('git commit -m "First commit"')
+    ctx.make_commit("nr_test1.txt", "First commit", "First commit")
     c1_hash = git_cmd.must_git("rev-parse HEAD").strip()
     log.info(f"First commit: {c1_hash[:8]}")
 
@@ -1061,16 +1057,16 @@ def test_no_rebase_pr_stacking(test_repo_ctx: RepoContext) -> None:
     # Get PR info more efficiently
     info: Optional[GitHubInfo] = github.get_info(None, git_cmd)
     assert info is not None, "GitHub info should not be None"
-    pr1 = info.pull_requests[0] if info.pull_requests else None
-    assert pr1 is not None, "First PR should exist"
+    # Get test PRs the standard way first to validate the flow
+    prs = ctx.get_test_prs()
+    assert len(prs) == 1, f"Should have 1 PR, found {len(prs)}"
+    pr1 = prs[0]
     pr1_number = pr1.number
     log.info(f"Created PR #{pr1_number} with commit {pr1.commit.commit_hash[:8]}")
 
     # Create second commit
     log.info("\nCreating second commit...")
-    run_cmd(f"echo 'nr_test2.txt\nSecond commit\n' > {os.path.join(repo_dir, 'nr_test2.txt')}")
-    run_cmd("git add nr_test2.txt")
-    run_cmd('git commit -m "Second commit"')
+    ctx.make_commit("nr_test2.txt", "Second commit", "Second commit")
     c2_hash = git_cmd.must_git("rev-parse HEAD").strip()
     log.info(f"Second commit: {c2_hash[:8]}")
 
@@ -1101,11 +1097,9 @@ def test_no_rebase_pr_stacking(test_repo_ctx: RepoContext) -> None:
            "> git rebase" not in update_output, \
         "Update output should indicate rebase was skipped"
 
-    # Get updated PR info using the no_rebase config
-    info: Optional[GitHubInfo] = github.get_info(None, git_cmd)
-    assert info is not None, "GitHub info should not be None"
-    prs = sorted(info.pull_requests, key=lambda pr: pr.number)
-    assert len(prs) == 2, f"Should have 2 PRs, found {len(prs)}"
+    # Get updated PR info using ctx.get_test_prs() since now we use tags
+    prs = sorted(ctx.get_test_prs(), key=lambda pr: pr.number) 
+    assert len(prs) == 2, f"Should have 2 PRs, found {len(prs)}: {[pr.title for pr in prs]}"
 
     # Extract PRs by number
     pr1_after = next((pr for pr in prs if pr.number == pr1_number), None)
