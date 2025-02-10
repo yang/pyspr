@@ -546,15 +546,21 @@ class GitHubClient:
         logger.info(f"> github add reviewers #{pr.number} : {pr.title} - {user_ids}")
             
         gh_pr = self.repo.get_pull(pr.number)
-        try:
-            # PyGithub typing is wrong; it actually accepts a list of strings
-            gh_pr.create_review_request(reviewers=user_ids)  # type: ignore
-        except Exception as e:
-            if "Review cannot be requested from pull request author" in str(e):
-                # This is expected when trying to add self as reviewer
-                logger.warning(f"Skipping adding author as reviewer for PR #{pr.number}")
-            else:
-                raise # Re-raise other errors
+        
+        # Get current user to filter out self-review attempts
+        current_user = self.client.get_user().login.lower()
+        filtered_reviewers = [uid for uid in user_ids if uid.lower() != current_user]
+        
+        if filtered_reviewers:
+            try:
+                # PyGithub typing is wrong; it actually accepts a list of strings
+                gh_pr.create_review_request(reviewers=filtered_reviewers)  # type: ignore
+                logger.debug(f"Added reviewers {filtered_reviewers} to PR #{pr.number}")
+            except Exception as e:
+                logger.error(f"Failed to add reviewers to PR #{pr.number}: {e}")
+                raise
+        else:
+            logger.warning(f"Skipping adding reviewers for PR #{pr.number} - all reviewers filtered (self-review not allowed)")
                 
         logger.debug(f"Called add_reviewers for PR #{pr.number} with IDs: {user_ids}")
 

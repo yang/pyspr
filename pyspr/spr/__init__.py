@@ -28,6 +28,7 @@ class UpdateItem(TypedDict):
     pr: PullRequest
     commit: Optional[Commit]
     prev_commit: Optional[Commit]
+    add_reviewers: Optional[List[str]]  # Track if reviewers should be added
 
 class StackedPR:
     """StackedPR implementation."""
@@ -401,12 +402,11 @@ class StackedPR:
                     update_queue.append({
                         'pr': pr, 
                         'commit': commit,
-                        'prev_commit': prev_commit
+                        'prev_commit': prev_commit,
+                        'add_reviewers': reviewers  # Track if reviewers should be added
                     })
                     pr.commit = commit
                     github_info.pull_requests.append(pr)
-                    if reviewers:
-                        logger.warning(f"Not updating reviewers for PR #{pr.number}")
                     valid_pull_requests.remove(pr)  # Remove to avoid matching again
                     break
 
@@ -440,28 +440,19 @@ class StackedPR:
                 update_queue.append({
                     'pr': pr,
                     'commit': commit,
-                    'prev_commit': prev_commit
+                    'prev_commit': prev_commit,
+                    'add_reviewers': reviewers  # Track if reviewers should be added
                 })
-                if reviewers and not self.pretend:
-                    # Get list of assignable users for matching
-                    if assignable is None:
-                        assignable = self.github.get_assignable_users(ctx)
-                    # For PyGithub we need to pass logins, not IDs
-                    user_logins: List[str] = [] 
-                    logger.debug(f"Trying to add reviewers: {reviewers}")
-                    logger.debug(f"Assignable users: {assignable}")
-                    for r in reviewers:
-                        for u in assignable:
-                            if r.lower() == u['login'].lower():
-                                user_logins.append(r)  # Use original login for case preservation
-                                break
-                    if user_logins:
-                        logger.debug(f"Adding reviewers {user_logins} to PR #{pr.number}")
-                        self.github.add_reviewers(ctx, pr, user_logins)
 
         # Update all PRs to have correct bases
         if not self.pretend:
             start_time = time.time()
+            # Get assignable users once for reviewer filtering
+            if any(update.get('add_reviewers') for update in update_queue):
+                assignable = self.github.get_assignable_users(ctx)
+            else:
+                assignable = []
+                
             if self.concurrency > 0:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=self.concurrency) as executor:
                     from concurrent.futures import Future
@@ -482,6 +473,33 @@ class StackedPR:
                         except Exception as e:
                             logger.error(f"PR update failed: {e}")
                             raise
+                            
+                    # Handle reviewers after basic update is done
+                    reviewer_futures: List[Future[None]] = []
+                    for update in update_queue:
+                        if update.get('add_reviewers'):
+                            reviewers = update['add_reviewers']
+                            pr = update['pr']
+                            user_logins: List[str] = [] 
+                            logger.debug(f"Trying to add reviewers: {reviewers}")
+                            for r in reviewers:
+                                for u in assignable:
+                                    if r.lower() == u['login'].lower():
+                                        user_logins.append(r)  # Use original login for case preservation
+                                        break
+                            if user_logins:
+                                logger.debug(f"Adding reviewers {user_logins} to PR #{pr.number}")
+                                reviewer_futures.append(
+                                    executor.submit(self.github.add_reviewers, ctx, pr, user_logins)
+                                )
+                    concurrent.futures.wait(reviewer_futures)
+                    # Check for reviewer errors
+                    for future in reviewer_futures:
+                        try:
+                            future.result()
+                        except Exception as e:
+                            logger.error(f"Adding reviewers failed: {e}")
+                            # Don't raise since reviewer failure shouldn't fail the whole update
             else:
                 for update in update_queue:
                     self.github.update_pull_request(
@@ -489,6 +507,25 @@ class StackedPR:
                         update['pr'], update['commit'], update['prev_commit'],
                         labels=all_labels
                     )
+                    # Handle reviewers for each PR
+                    if update.get('add_reviewers'):
+                        reviewers = update['add_reviewers']
+                        pr = update['pr']
+                        user_logins: List[str] = [] 
+                        logger.debug(f"Trying to add reviewers: {reviewers}")
+                        for r in reviewers:
+                            for u in assignable:
+                                if r.lower() == u['login'].lower():
+                                    user_logins.append(r)
+                                    break
+                        if user_logins:
+                            logger.debug(f"Adding reviewers {user_logins} to PR #{pr.number}")
+                            try:
+                                self.github.add_reviewers(ctx, pr, user_logins)
+                            except Exception as e:
+                                logger.error(f"Adding reviewers failed: {e}")
+                                # Don't raise since reviewer failure shouldn't fail update
+                                
             end_time = time.time()
             logger.debug(f"PR update operation took {end_time - start_time:.2f} seconds")
         else:

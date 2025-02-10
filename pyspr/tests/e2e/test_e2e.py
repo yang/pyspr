@@ -533,10 +533,10 @@ def test_reviewer_functionality(test_repo: Tuple[str, str, str, str]) -> None:
         pr2 = max(our_prs, key=lambda p: p.number)
         gh_pr2 = github.repo.get_pull(pr2.number)
         
-        # Since we're using yang's token and testluser is yang, verify request was ignored
+        # Since we're using yang's token and testluser is different user, verify request was added
         requested_users, _ = gh_pr2.get_review_requests()
         requested_logins = [u.login.lower() for u in requested_users]
-        assert "testluser" not in requested_logins, "Second PR correctly has no testluser reviewer due to self-review restriction"
+        assert "testluser" in requested_logins, "Second PR should have testluser reviewer since they're a different user"
         
         # Verify we attempted to add reviewers
         log.info("\nDEBUG: Update command output:")
@@ -546,7 +546,7 @@ def test_reviewer_functionality(test_repo: Tuple[str, str, str, str]) -> None:
                "DEBUG:" in update_output, \
                "Should have attempted to add testluser as reviewer"
         
-        log.info("Successfully verified testluser review handling with self-review restriction")
+        log.info("Successfully verified testluser review handling")
 
     finally:
         # Change back to original directory
