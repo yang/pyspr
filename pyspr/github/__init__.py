@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 # Import GraphQL response types from dedicated module
 from .types import (
     GraphQLResponseType, GitHubRequester,
-    cast_pr_nodes, safe_cast
+    parse_graphql_response
 )
 
 from ..git import Commit, GitInterface, ConfigProtocol
@@ -237,91 +237,81 @@ class GitHubClient:
             
             # Handle response - it's always a tuple of (headers, data)
             _headers, resp = result  # The response is always a tuple
-            resp = safe_cast(resp, dict)  # GraphQL always returns a dict
-                
-            # Check if we have any data at all
-            if 'data' not in resp:
-                raise Exception("No data in GraphQL response")
-                
-            data = safe_cast(resp.get('data', {}), dict)
-            # Keep login for future user filtering
-            _ = safe_cast(safe_cast(data.get('viewer', {}), dict).get('login', ''), str)  # intentionally unused
-            pr_data = safe_cast(safe_cast(data.get('repository', {}), dict).get('pullRequests', {}), dict)
-            pr_nodes = cast_pr_nodes(pr_data.get('nodes', []))
+            
+            # Use Pydantic to parse and validate the response
+            graphql_resp = parse_graphql_response(resp)
+            
+            # Get PR nodes using the validated model
+            pr_nodes = graphql_resp.data.repository.pullRequests.nodes
             
             logger.info(f"GraphQL returned {len(pr_nodes)} open PRs (newest first)")
 
             logger.debug("PRs returned by GraphQL:")
-            for pr in safe_cast(pr_nodes, list):
-                try:
-                    num = str(pr.get('number', '?'))
-                    base = str(pr.get('baseRefName', '?')) 
-                    head = str(pr.get('headRefName', '?'))
-                    logger.debug(f"  PR #{num}: base={base} head={head}")
-                except Exception:
-                    logger.debug("  [invalid PR data]")
-            
+            for pr in pr_nodes:
+                num = str(pr.number)
+                base = pr.baseRefName
+                head = pr.headRefName
+                logger.debug(f"  PR #{num}: base={base} head={head}")
+        
             # Process PRs into map
-            for pr_data in safe_cast(pr_nodes, list):
-                branch_match = re.match(spr_branch_pattern, str(pr_data['headRefName']))
-                if branch_match:
-                    logger.debug(f"Processing PR #{pr_data['number']} with branch {pr_data['headRefName']}")
-                    commit_id = branch_match.group(1)
-                    
-                    # Get commit info
-                    pr_commits = safe_cast(pr_data['commits'], dict)
-                    commit_nodes = safe_cast(pr_commits.get('nodes', []), list)
-                    all_commits: List[Commit] = []  # Will be populated if there are commits 
-                    commit: Optional[Commit] = None
+            for pr_data in pr_nodes:
+                    branch_match = re.match(spr_branch_pattern, pr_data.headRefName)
+                    if branch_match:
+                        logger.debug(f"Processing PR #{pr_data.number} with branch {pr_data.headRefName}")
+                        commit_id = branch_match.group(1)
+                        
+                        # Get commit info
+                        commit_nodes = pr_data.commits.nodes
+                        all_commits: List[Commit] = []  # Will be populated if there are commits 
+                        commit: Optional[Commit] = None
 
-                    if commit_nodes:
-                        commit_data = safe_cast(commit_nodes[-1], dict)
-                        last_commit = safe_cast(commit_data.get('commit', {}), dict)
-                        commit_hash = safe_cast(last_commit.get('oid', ''), str)
-                        commit_msg = safe_cast(last_commit.get('messageBody', ''), str)
-                        # Try to get commit ID from message
-                        logger.debug(f"PR #{pr_data['number']} last commit message:\n{commit_msg}")
-                        msg_commit_id = re.search(r'commit-id:([a-f0-9]{8})', str(commit_msg))
-                        if msg_commit_id:
-                            message_id = msg_commit_id.group(1)
-                            logger.debug(f"Found commit ID {message_id} in message")
-                            logger.debug(f"Branch name commit ID: {commit_id}")
-                            commit_id = message_id
+                        if commit_nodes:
+                            last_commit_data = commit_nodes[-1]
+                            last_commit = last_commit_data.commit
+                            commit_hash = last_commit.oid
+                            commit_msg = last_commit.messageBody
+                            # Try to get commit ID from message
+                            logger.debug(f"PR #{pr_data.number} last commit message:\n{commit_msg}")
+                            msg_commit_id = re.search(r'commit-id:([a-f0-9]{8})', commit_msg)
+                            if msg_commit_id:
+                                message_id = msg_commit_id.group(1)
+                                logger.debug(f"Found commit ID {message_id} in message")
+                                logger.debug(f"Branch name commit ID: {commit_id}")
+                                commit_id = message_id
+                                
+                            headline = last_commit.messageHeadline
+                            commit = Commit(commit_id, commit_hash, headline)
+
+                            # Process all commits
+                            for node in commit_nodes:
+                                c = node.commit
+                                c_msg = c.messageBody
+                                c_id_match = re.search(r'commit-id:([a-f0-9]{8})', c_msg)
+                                if c_id_match:
+                                    c_id = c_id_match.group(1)
+                                    c_oid = c.oid
+                                    c_headline = c.messageHeadline
+                                    all_commits.append(Commit(c_id, c_oid, c_headline))
                             
-                        headline = safe_cast(last_commit.get('messageHeadline', ''), str)
-                        commit = Commit(commit_id, commit_hash, headline)
+                            # Get basic PR info from Pydantic model
+                            number = pr_data.number
+                            base_ref = pr_data.baseRefName
+                            title = pr_data.title
+                            body = pr_data.body
+                            
+                            in_queue = False  # Auto merge info not critical
+                            
+                            from_branch = pr_data.headRefName
 
-                        # Process all commits
-                        for node in commit_nodes:
-                            c_data = safe_cast(node, dict)
-                            c = safe_cast(c_data.get('commit', {}), dict)
-                            c_msg = safe_cast(c.get('messageBody', ''), str)
-                            c_id_match = re.search(r'commit-id:([a-f0-9]{8})', c_msg)
-                            if c_id_match:
-                                c_id = c_id_match.group(1)
-                                c_oid = safe_cast(c.get('oid', ''), str)
-                                c_headline = safe_cast(c.get('messageHeadline', ''), str)
-                                all_commits.append(Commit(c_id, c_oid, c_headline))
-                        
-                        # Get basic PR info 
-                        number = safe_cast(pr_data['number'], int)
-                        base_ref = safe_cast(pr_data['baseRefName'], str)
-                        title = safe_cast(pr_data['title'], str)
-                        body = safe_cast(pr_data['body'], str)
-                        
-                        in_queue = False  # Auto merge info not critical
-                        
-                        from_branch = safe_cast(pr_data['headRefName'], str)
-
-                        # We know commit is initialized because we're in the commit_nodes block
-                        assert commit is not None
-                        pr = PullRequest(number, commit, all_commits,
-                                      base_ref=base_ref, from_branch=from_branch,
-                                      in_queue=in_queue, title=title, body=body)
-                                      
-                        # Add PR to map regardless of local commits to follow chain
-                        logger.debug(f"Adding PR #{number} to map with commit ID {commit_id}")
-                        pull_request_map[commit_id] = pr
+                            # We know commit is initialized because we're in the commit_nodes block
+                            assert commit is not None
+                            pr = PullRequest(number, commit, all_commits,
+                                          base_ref=base_ref, from_branch=from_branch,
+                                          in_queue=in_queue, title=title, body=body)
+                                          
+                            # Add PR to map regardless of local commits to follow chain
+                            logger.debug(f"Adding PR #{number} to map with commit ID {commit_id}")
+                            pull_request_map[commit_id] = pr
             
         except Exception as e:
             logger.error(f"GraphQL query failed: {e}")

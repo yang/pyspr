@@ -1,59 +1,74 @@
 """Type definitions for GitHub API responses."""
 
-from typing import Dict, List, TypedDict, Any, cast, TypeVar, Mapping, Sequence, Protocol, Optional, Tuple
-from typing_extensions import NotRequired, Required
+from typing import Dict, List, Any, TypeVar, Protocol, Optional, Tuple, Union
+from pydantic import BaseModel
 
-# GraphQL response types with complete type information
-class PRCommitNode(TypedDict, total=False):
-    oid: Required[str]
-    messageHeadline: Required[str]
-    messageBody: Required[str]
+# GraphQL response types with Pydantic models
+class PRCommitNode(BaseModel):
+    oid: str
+    messageHeadline: str
+    messageBody: str
 
-class PRCommitData(TypedDict, total=False):
-    commit: Required[PRCommitNode]
+class PRCommitData(BaseModel):
+    commit: PRCommitNode
 
-class PRCommits(TypedDict, total=False):
-    nodes: Required[List[PRCommitData]]
+class PRCommits(BaseModel):
+    nodes: List[PRCommitData]
 
-class PRNode(TypedDict, total=False):
-    id: Required[str]
-    number: Required[int]
-    title: Required[str]
-    body: Required[str]
-    baseRefName: Required[str]
-    headRefName: Required[str]
-    mergeable: NotRequired[str]
-    commits: Required[PRCommits]
+class PRNode(BaseModel):
+    id: str
+    number: int
+    title: str
+    body: str
+    baseRefName: str
+    headRefName: str
+    mergeable: Optional[str] = None
+    commits: PRCommits
 
-class PageInfo(TypedDict, total=False):
-    hasNextPage: Required[bool]
-    endCursor: NotRequired[str]
+class PageInfo(BaseModel):
+    hasNextPage: bool
+    endCursor: Optional[str] = None
 
-class PRNodes(TypedDict, total=False):
-    nodes: Required[List[PRNode]]
-    pageInfo: Required[PageInfo]
+class PRNodes(BaseModel):
+    nodes: List[PRNode]
+    pageInfo: PageInfo
 
-class GraphQLViewer(TypedDict, total=False):
-    login: Required[str]
+class GraphQLViewer(BaseModel):
+    login: str
 
-class GraphQLRepository(TypedDict, total=False):
-    pullRequests: Required[PRNodes]
+class GraphQLRepository(BaseModel):
+    pullRequests: PRNodes
 
-class GraphQLData(TypedDict, total=False):
-    viewer: Required[GraphQLViewer]
-    repository: Required[GraphQLRepository]
+class GraphQLData(BaseModel):
+    viewer: GraphQLViewer
+    repository: GraphQLRepository
 
-class GraphQLResponse(TypedDict, total=False):
-    data: Required[GraphQLData]
-    errors: NotRequired[List[Dict[str, Any]]]
+class GraphQLErrorLocation(BaseModel):
+    line: int
+    column: int
+
+class GraphQLError(BaseModel):
+    message: str
+    locations: Optional[List[GraphQLErrorLocation]] = None
+    path: Optional[List[Union[str, int]]] = None
+    extensions: Optional[Dict[str, Any]] = None
+
+class GraphQLResponse(BaseModel):
+    data: GraphQLData
+    errors: Optional[List[GraphQLError]] = None
 
 # Type for PyGithub GraphQL response
-# The actual return type is Tuple[headers: Dict[str, Any], data: Any]
 GraphQLResponseType = Tuple[Dict[str, Any], Any]
 
-class PRMapDict(TypedDict):
+class PRCommitInfo(BaseModel):
+    """Type for commit info in a PR."""
+    commit_id: str
+    commit_hash: str
+    commit_headline: str
+
+class PRMapDict(BaseModel):
     """Type for PR dict keyed by commit ID."""
-    pr_num: int 
+    pr_num: int
     title: str
     body: str
     base_ref: str
@@ -61,58 +76,38 @@ class PRMapDict(TypedDict):
     commit_id: str
     commit_hash: str
     commit_headline: str
-    all_commits: List['PRCommitInfo']
-
-class PRCommitInfo(TypedDict):
-    """Type for commit info in a PR."""
-    commit_id: str
-    commit_hash: str
-    commit_headline: str
+    all_commits: List[PRCommitInfo]
 
 T = TypeVar('T')
 
-# Type guard helpers
-def is_dict_with_keys(obj: Any, *keys: str) -> bool:
-    """Check if object is a dict with all specified keys."""
-    return isinstance(obj, Mapping) and all(key in obj for key in keys)
-
-def is_pr_node(node: Any) -> bool:
-    """Check if node is a valid PR node."""
-    return is_dict_with_keys(node, 'id', 'number', 'headRefName') and \
-           isinstance(node.get('id'), str) and \
-           isinstance(node.get('number'), int) and \
-           isinstance(node.get('headRefName'), str)
-
-def cast_pr_node(node: Any) -> PRNode:
-    """Cast a node to PRNode after validation."""
-    if not is_pr_node(node):
-        raise TypeError("Not a valid PRNode")
-    return cast(PRNode, node)
-
-def cast_pr_nodes(nodes: Any) -> List[PRNode]:
-    """Cast nodes to List[PRNode] after validation."""
-    if not isinstance(nodes, Sequence):
-        raise TypeError("Not a valid list of PRNodes")
-    cast_nodes: List[PRNode] = []
-    nodes_seq: Sequence[Any] = nodes  # Explicitly type the sequence
+def parse_graphql_response(response: Any) -> GraphQLResponse:
+    """Parse GraphQL response into Pydantic model."""
     try:
-        nodes_list: List[Any] = list(nodes_seq)
-        for item in nodes_list:
-            try:
-                node = safe_cast(item, dict)
-                if is_pr_node(node):
-                    cast_nodes.append(cast_pr_node(node))
-            except (TypeError, ValueError):
-                continue
-    except Exception:
-        pass  # Failed to convert to list
-    return cast_nodes
+        return GraphQLResponse.model_validate(response)
+    except Exception as e:
+        raise TypeError(f"Invalid GraphQL response: {e}")
 
-def safe_cast(obj: Any, expected_type: type) -> Any:
-    """Safely cast an object to expected type or raise TypeError."""
-    if not isinstance(obj, expected_type):
-        raise TypeError(f"Expected {expected_type.__name__}, got {type(obj).__name__}")
-    return obj  # No need to cast since we've verified the type
+def parse_pr_node(node: Any) -> Optional[PRNode]:
+    """Parse a PR node into Pydantic model."""
+    try:
+        return PRNode.model_validate(node)
+    except Exception:
+        return None
+
+def parse_pr_nodes(nodes: Any) -> List[PRNode]:
+    """Parse nodes to List[PRNode] with validation."""
+    valid_nodes: List[PRNode] = []
+    if not isinstance(nodes, list):
+        return valid_nodes
+    nodes_list: List[Any] = nodes
+    for node in nodes_list:
+        try:
+            parsed = parse_pr_node(node)
+            if parsed:
+                valid_nodes.append(parsed)
+        except Exception:
+            continue
+    return valid_nodes
 
 class GitHubRequester(Protocol):
     """Type for PyGithub requester to handle GraphQL calls.
