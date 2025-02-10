@@ -1,21 +1,7 @@
 """Config module."""
 
-from typing import Dict, Any, Protocol, TypeVar, overload, Union, Optional
+from typing import Dict, Any, Optional
 from .models import RepoConfig, UserConfig, PysprConfig
-
-T = TypeVar('T')
-
-class ConfigProtocol(Protocol):
-    """Protocol for config objects."""
-    repo: Dict[str, Any]
-    user: Dict[str, Any]
-    tool: Dict[str, Any]
-    state: Optional[Dict[str, Any]]
-    @overload
-    def get(self, key: str) -> Any: ...
-    @overload
-    def get(self, key: str, default: T) -> Union[Any, T]: ...
-    def get(self, key: str, default: Any = None) -> Any: ...
 
 class Config:
     """Config object holding repository and user config."""

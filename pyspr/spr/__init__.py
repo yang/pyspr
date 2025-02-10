@@ -186,12 +186,12 @@ class StackedPR:
 
             # Log env var and config before check
             logger.debug(f"SPR_NOREBASE env var: {os.environ.get('SPR_NOREBASE')}")
-            logger.debug(f"noRebase config: {self.config.user.get('noRebase', False)}")
+            logger.debug(f"no_rebase config: {self.config.user.get('no_rebase', False)}")
 
             # Check for no-rebase from env var or config
             no_rebase = (
                 os.environ.get("SPR_NOREBASE") == "true" or 
-                self.config.user.get('noRebase', False)
+                self.config.user.get('no_rebase', False)
             )
             logger.debug(f"DEBUG: no_rebase={no_rebase}")
             

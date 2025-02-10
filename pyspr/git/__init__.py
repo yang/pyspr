@@ -4,53 +4,13 @@ import os
 import re
 import uuid
 import logging
-from dataclasses import dataclass
-from typing import List, Optional, Tuple, Any, Dict, Protocol, TypeVar, overload, Union
+from typing import List, Optional, Tuple
 import git
 from git.exc import GitCommandError, InvalidGitRepositoryError
-from ..typing import CommitID, CommitHash
-
-T = TypeVar('T')
+from ..typing import CommitID, ConfigProtocol, GitInterface, Commit
 
 # Get module logger
 logger = logging.getLogger(__name__)
-
-@dataclass 
-class Commit:
-    """Git commit info.
-    CommitID persists across amends, CommitHash changes with each amend."""
-    commit_id: CommitID  # Persists across amends
-    commit_hash: CommitHash  # Changes with each amend
-    subject: str
-    body: str = ""
-    wip: bool = False
-
-    @classmethod
-    def from_strings(cls, commit_id: str, commit_hash: str, subject: str, body: str = "", wip: bool = False) -> 'Commit':
-        """Create a Commit from string IDs. Use this factory method for easier creation."""
-        return cls(CommitID(commit_id), CommitHash(commit_hash), subject, body, wip)
-
-class GitInterface(Protocol):
-    """Git interface."""
-    def run_cmd(self, command: str, output: Optional[str] = None) -> str:
-        """Run git command and optionally capture output."""
-        ...
-
-    def must_git(self, command: str, output: Optional[str] = None) -> str:
-        """Run git command, failing on error."""
-        ...
-
-class ConfigProtocol(Protocol):
-    """Protocol for config objects."""
-    repo: Dict[str, Any]
-    user: Dict[str, Any]
-    tool: Dict[str, Any]
-    state: Optional[Dict[str, Any]]
-    @overload
-    def get(self, key: str) -> Any: ...
-    @overload
-    def get(self, key: str, default: T) -> Union[Any, T]: ...
-    def get(self, key: str, default: Any = None) -> Any: ...
 
 def get_local_commit_stack(config: ConfigProtocol, git_cmd: GitInterface) -> List[Commit]:
     """Get local commit stack. Returns commits ordered with bottom commit first."""
