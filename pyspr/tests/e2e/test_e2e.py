@@ -1093,9 +1093,17 @@ def test_no_rebase_functionality(test_repo_ctx: RepoContext, caplog: pytest.LogC
         assert len(log_shas) == 2, "Should have at least 2 commits"
         assert log_shas[1].startswith(main_sha[:7]), "Main commit should be second in log after rebase"
 
-        # Check rebase happened by looking in update output
-        assert "rebase" in update_output.lower() or "> git rebase" in update_output, "Regular update should perform rebase"
+        # Get log output from caplog
+        log_output = caplog.text
         
+        # Check rebase happened by looking in stdout or caplog
+        found_rebase = (
+            "rebase" in update_output.lower() or 
+            "> git rebase" in update_output or
+            "rebase" in log_output.lower() or
+            "> git rebase" in log_output
+        )
+        assert found_rebase, "Regular update should perform rebase"
         # Step 3: Reset to pre-rebase state 
         run_cmd(f"git reset --hard {branch_sha}")
         

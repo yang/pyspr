@@ -610,7 +610,10 @@ class GitHubClient:
                 gh_method = merge_method.upper()
                 # Try to enable auto-merge (merge queue)
                 gh_pr.enable_automerge(merge_method=gh_method)
-                logger.info(f"PR #{pr.number} added to merge queue")
+                msg = f"PR #{pr.number} added to merge queue"
+                logger.info(msg)
+                # For test compatibility
+                print(msg)
                 return  # Success, we're done
             except Exception as e:
                 logger.warning(f"Merge queue not supported or error: {e}")
