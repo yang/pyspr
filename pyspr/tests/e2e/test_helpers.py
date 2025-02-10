@@ -7,7 +7,10 @@ import yaml
 import logging
 from dataclasses import dataclass
 import pytest
-from typing import Generator, List, Tuple, Optional, Union
+from _pytest.fixtures import FixtureRequest
+from typing import Generator, List, Tuple, Optional, Union, Any
+# Pytest types
+from pytest import FixtureRequest  # type: ignore
 
 from pyspr.config import Config
 from pyspr.git import RealGit
@@ -247,16 +250,18 @@ def create_repo_context(owner: str, name: str, test_name: str) -> Generator[Repo
         os.chdir(orig_dir)
 
 @pytest.fixture
-def test_repo_ctx(request: pytest.FixtureRequest) -> Generator[RepoContext, None, None]:
+def test_repo_ctx(request: FixtureRequest) -> Generator[RepoContext, None, None]:
     """Regular test repo fixture using yang/teststack."""
-    # request.node is typed by pytest so we can directly use it
-    yield from create_repo_context("yang", "teststack", request.node.name)
+    assert request.node is not None, "pytest request.node should not be None"  # type: ignore[reportUnknownMemberType]
+    node: Any = request.node  # type: ignore[reportUnknownMemberType] 
+    yield from create_repo_context("yang", "teststack", node.name)  # type: ignore[reportUnknownMemberType]
 
 @pytest.fixture
-def test_mq_repo_ctx(request: pytest.FixtureRequest) -> Generator[RepoContext, None, None]:
+def test_mq_repo_ctx(request: FixtureRequest) -> Generator[RepoContext, None, None]:
     """Merge queue test repo fixture using yangenttest1/teststack."""
-    # request.node is typed by pytest so we can directly use it
-    yield from create_repo_context("yangenttest1", "teststack", request.node.name)
+    assert request.node is not None, "pytest request.node should not be None"  # type: ignore[reportUnknownMemberType]
+    node: Any = request.node  # type: ignore[reportUnknownMemberType] 
+    yield from create_repo_context("yangenttest1", "teststack", node.name)  # type: ignore[reportUnknownMemberType]
 
 def create_test_repo(owner: str, name: str) -> Generator[Tuple[str, str, str, str], None, None]:
     """Legacy test repo fixture factory for tests that haven't been migrated to RepoContext yet.
