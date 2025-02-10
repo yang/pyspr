@@ -221,12 +221,16 @@ class GitHubClient:
 
             # Single query (no pagination for now)
             from typing import cast
-            requester = cast(GitHubRequester, self.client._Github__requester)
-            result: GraphQLResponseType = requester.requestJsonAndCheck(
+            # Safely access private requester with typings
+            any_client = cast(Any, self.client)  # First cast to Any to bypass attribute check
+            req = cast(GitHubRequester, any_client._Github__requester)  # Then cast to our protocol
+            
+            # Use protocol-defined response type
+            result: GraphQLResponseType = req.requestJsonAndCheck(
                 "POST",
-                "https://api.github.com/graphql",
+                "https://api.github.com/graphql", 
                 input={
-                    "query": query, 
+                    "query": query,
                     "variables": variables
                 }
             )

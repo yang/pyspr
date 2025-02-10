@@ -25,7 +25,7 @@ def check(err: Exception) -> None:
 class AliasedGroup(click.Group):
     """Command group with support for aliases."""
     
-    def __init__(self, *args: List[Any], **kwargs: Dict[str, Any]) -> None:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         """Initialize with aliases map."""
         super().__init__(*args, **kwargs)
         self.aliases: Dict[str, str] = {}

@@ -1,36 +1,33 @@
 """End-to-end test for amending commits in stack, PR stack isolation, WIP and reviewer behavior."""
 
 CURRENT_USER = "yang"  # Since we're using yang's token for tests
-# pyright: reportUnusedVariable=false
-# pyright: reportUnusedImport=false
-# pyright: reportUnknownVariableType=false
-# pyright: reportUnknownMemberType=false
-# pyright: reportOptionalMemberAccess=false
-# pyright: reportUnknownArgumentType=false
-# pyright: reportUnknownParameterType=false
-# pyright: reportMissingTypeArgument=false
-# pyright: reportUnknownLambdaType=false
-# pyright: reportUnnecessaryComparison=false
 
 import os
 import sys
-import tempfile
 import uuid
 import subprocess
-import io
 import time
 import datetime
 import logging
-import yaml
-from pathlib import Path
-from contextlib import redirect_stdout
-from typing import Dict, Generator, List, Optional, Set, Tuple, Union
+from typing import Generator, List, Optional, Set, Tuple
 import pytest
+import yaml  # Used for test_no_rebase_pr_stacking to dump config
+from typing_extensions import TypedDict
 
-from pyspr.tests.e2e.test_helpers import get_gh_token
+from pyspr.tests.e2e.test_helpers import RepoContext, create_test_repo, run_cmd
 from pyspr.config import Config
-from pyspr.git import RealGit, Commit 
+from pyspr.git import RealGit, Commit
 from pyspr.github import GitHubClient, PullRequest
+
+_ = test_repo_ctx  # Used as fixture import
+
+class TestPR(TypedDict):
+    """Type for test PR results."""
+    number: int
+    title: str
+    base_ref: str
+    from_branch: Optional[str]
+    commit: Commit
 
 # Configure logging
 logging.basicConfig(
@@ -45,8 +42,6 @@ log = logging.getLogger(__name__)
 log.addHandler(handler)
 log.setLevel(logging.INFO)
 log.propagate = True  # Allow logs to propagate to pytest
-
-from pyspr.tests.e2e.test_helpers import run_cmd, RepoContext, test_repo_ctx, create_test_repo
 
 def test_delete_insert(test_repo_ctx: RepoContext) -> None:
     """Test that creates four commits, runs update, then recreates commits but skips the second one,
@@ -210,11 +205,12 @@ def test_wip_behavior(test_repo_ctx: RepoContext, caplog: pytest.LogCaptureFixtu
         if branch:
             log.info(f"  {branch}")
     
-    # Helper to find our test PRs 
-    def get_test_prs() -> list:
+    # Helper to find our test PRs
+    def get_test_prs() -> List[PullRequest]:
         log.info("=== ABOUT TO CALL GITHUB API ===")  # See if we get here before timeout
         log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Starting PR filtering...")
         gh_start = time.time()
+        prs: List[PullRequest] = []
         try:
             info = github.get_info(None, git_cmd)
             prs = info.pull_requests if info else []
@@ -224,14 +220,15 @@ def test_wip_behavior(test_repo_ctx: RepoContext, caplog: pytest.LogCaptureFixtu
         
         log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Filtering {len(prs)} PRs...")
         filter_start = time.time()
-        result = []
+        result: List[PullRequest] = []
         try:
             for pr in prs:
                 try:
                     # Debug each PR being checked
                     log.info(f"Checking PR #{pr.number} - branch {pr.from_branch}")
-                    if pr.from_branch is not None and pr.from_branch.startswith('spr/main/') and pr.commit is not None:
-                        # Look for our unique tag in the commit message
+                    if pr.from_branch is not None and pr.from_branch.startswith('spr/main/'):
+                        # PR commit always exists for SPR branches
+                        assert pr.commit is not None
                         commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
                         if f"test-tag:{ctx.tag}" in commit_msg:
                             log.info(f"Found matching PR #{pr.number}")
@@ -349,12 +346,16 @@ def test_reviewer_functionality(test_repo_ctx: RepoContext) -> None:
             run_cmd(f'git commit -m "{full_msg}"')
 
         # Helper to find test PRs by tag
-        def get_test_prs(tag: str) -> list:
-            result = []
-            for pr in github.get_info(None, git_cmd).pull_requests:
+        def get_test_prs(tag: str) -> List[PullRequest]:
+            result: List[PullRequest] = []
+            info = github.get_info(None, git_cmd)
+            if info is None:
+                return []
+            for pr in info.pull_requests:
                 if pr.from_branch and pr.from_branch.startswith('spr/main/'):
                     try:
                         # Look for our unique tag in the commit message
+                        assert pr.commit is not None
                         commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
                         if f"test-tag:{tag}" in commit_msg:
                             result.append(pr)
@@ -524,11 +525,15 @@ def test_reorder(test_repo_ctx: RepoContext) -> None:
     # Helper to find our test PRs using unique tag
     def get_test_prs() -> List[PullRequest]:
         log.info("\nLooking for PRs with unique tag...")
-        result = []
-        for pr in github.get_info(None, git_cmd).pull_requests:
+        result: List[PullRequest] = []
+        info = github.get_info(None, git_cmd)
+        if info is None:
+            return []
+        for pr in info.pull_requests:
             if pr.from_branch and pr.from_branch.startswith('spr/main/'):
                 try:
                     # Look for our unique tag in the commit message
+                    assert pr.commit is not None
                     commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
                     if f"test-tag:{ctx.tag}" in commit_msg:
                         log.info(f"Found PR #{pr.number} with tag and commit ID {pr.commit.commit_id}")
@@ -699,12 +704,16 @@ def _run_merge_test(
     run_cmd("pyspr update")
 
     # Helper to find our test PRs
-    def get_test_prs() -> list:
-        result = []
-        for pr in github.get_info(None, git_cmd).pull_requests:
+    def get_test_prs() -> List[PullRequest]:
+        result: List[PullRequest] = []
+        info = github.get_info(None, git_cmd)
+        if info is None:
+            return []
+        for pr in info.pull_requests:
             if pr.from_branch and pr.from_branch.startswith('spr/main/'):
                 try:
                     # Look for our unique tag in the commit message
+                    assert pr.commit is not None
                     commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
                     if f"test-tag:{repo_ctx.tag}" in commit_msg:
                         result.append(pr)
@@ -892,16 +901,20 @@ def test_replace_commit(test_repo_ctx: RepoContext) -> None:
     c3_hash = git_cmd.must_git("rev-parse HEAD").strip()
 
     # Helper to find our test PRs
-    def get_test_prs() -> list:
-        result = []
-        for pr in github.get_info(None, git_cmd).pull_requests:
+    def get_test_prs() -> List[PullRequest]:
+        result: List[PullRequest] = []
+        info = github.get_info(None, git_cmd)
+        if info is None:
+            return []
+        for pr in info.pull_requests:
             if pr.from_branch and pr.from_branch.startswith('spr/main/'):
                 try:
                     # Look for our unique tag in the commit message
+                    assert pr.commit is not None
                     commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
                     if f"test-tag:{ctx.tag}" in commit_msg:
                         result.append(pr)
-                except:  # Skip failures since we're just filtering
+                except:  # Skip failures since we're just filtering  
                     pass
         return result
 
@@ -950,9 +963,12 @@ def test_replace_commit(test_repo_ctx: RepoContext) -> None:
     pr_nums_to_check: Set[int] = set(pr.number for pr in relevant_prs)
     if pr2_num not in pr_nums_to_check:
         # Also check if B's old PR is still open but no longer has our commits
-        for pr in github.get_info(None, git_cmd).pull_requests:
-            if pr.number == pr2_num:
-                relevant_prs.append(pr)
+        info = github.get_info(None, git_cmd)
+        if info is not None:
+            # Look for PR in the full info
+            for pr in info.pull_requests:
+                if pr.number == pr2_num:
+                    relevant_prs.append(pr)
                 pr_nums_to_check.add(pr.number)
                 break
     
@@ -1242,7 +1258,7 @@ def test_no_rebase_pr_stacking(test_repo_ctx: RepoContext) -> None:
 
     # Verify stack structure
     assert pr1_after.base_ref == "main", f"PR1 should target main, got {pr1_after.base_ref}"
-    assert pr2.base_ref.startswith('spr/main/'), f"PR2 should target PR1's branch, got {pr2.base_ref}"
+    assert pr2.base_ref is not None and pr2.base_ref.startswith('spr/main/'), f"PR2 should target PR1's branch, got {pr2.base_ref}"
     assert pr2.base_ref and pr1_after.commit.commit_id in pr2.base_ref, "PR2 should target PR1's branch"
     log.info(f"Verified stack structure: #{pr1_number} <- #{pr2.number}")
 
@@ -1335,12 +1351,16 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
     run_cmd("pyspr update")
 
     # Helper to find our test PRs
-    def get_test_prs() -> list:
-        result = []
-        for pr in github.get_info(None, git_cmd).pull_requests:
+    def get_test_prs() -> List[PullRequest]:
+        result: List[PullRequest] = []
+        info = github.get_info(None, git_cmd)
+        if info is None:
+            return []
+        for pr in info.pull_requests:
             if pr.from_branch and pr.from_branch.startswith('spr/main/'):
                 try:
                     # Look for our unique tags in the commit message
+                    assert pr.commit is not None
                     commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
                     if f"test-tag:{unique_tag1}" in commit_msg or f"test-tag:{unique_tag2}" in commit_msg:
                         result.append(pr)
@@ -1367,14 +1387,23 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
     pr2a, pr2b = all_prs["2A"], all_prs["2B"]
 
     # Save commit IDs for later verification
+    assert pr2a is not None and pr2a.commit is not None, "PR2A and its commit should exist"
     c2a_id = pr2a.commit.commit_id
+
+    # Verify all PRs exist
+    assert pr1a is not None, "PR1A should not be None"
+    assert pr1b is not None, "PR1B should not be None"
+    assert pr2a is not None, "PR2A should not be None"
+    assert pr2b is not None, "PR2B should not be None"
 
     # Verify stack 1 connections
     assert pr1a.base_ref == "main", "PR1A should target main"
+    assert pr1a.commit is not None, "PR1A commit should not be None"
     assert pr1b.base_ref == f"spr/main/{pr1a.commit.commit_id}", "PR1B should target PR1A"
 
     # Verify stack 2 connections
-    assert pr2a.base_ref == "main", "PR2A should target main"
+    assert pr2a.base_ref == "main", "PR2A should target main" 
+    assert pr2a.commit is not None, "PR2A commit should not be None"
     assert pr2b.base_ref == f"spr/main/{pr2a.commit.commit_id}", "PR2B should target PR2A"
 
     log.info(f"Created stacks - Stack1: #{pr1a.number} <- #{pr1b.number}, Stack2: #{pr2a.number} <- #{pr2b.number}")

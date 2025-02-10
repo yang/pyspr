@@ -306,13 +306,15 @@ class StackedPR:
                          labels: Optional[List[str]] = None) -> None:
         """Update pull requests for commits."""
         # Combine CLI labels with config labels
-        config_labels: List[str] = self.config.repo.get('labels', [])
-        # pyright: reportUnnecessaryIsInstance=false
-        # This check is needed because config can contain str or list
-        if isinstance(config_labels, str):
-            config_labels = [config_labels]
-        elif not isinstance(config_labels, list):
-            config_labels = []
+        config_labels: List[str] = []  # Initialize with empty list
+        raw_labels = self.config.repo.get('labels', [])
+        # Both checks needed because config can contain str, list, or other types
+        # pyright: ignore[reportUnnecessaryIsInstance]
+        if isinstance(raw_labels, str):
+            config_labels = [raw_labels]
+        elif isinstance(raw_labels, list):
+            config_labels = cast(List[str], raw_labels)  # Trust user config
+        # else case handled by initialization
             
         all_labels = list(config_labels)
         if labels:
