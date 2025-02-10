@@ -629,27 +629,8 @@ def _run_merge_test(
         merge_cmd += f" -c {count}"
     log.info(f"\nMerging {'to queue' if use_merge_queue else 'all'} PRs{' (partial)' if count else ''}...")
     
-    try:
-        # No need for manually finding project root since run_cmd handles that
-        merge_output = run_cmd(merge_cmd)
-        log.info(merge_output)
-    except subprocess.CalledProcessError as e:  # noqa: F841
-        info = github.get_info(None, git_cmd)
-        assert info is not None, "GitHub info should not be None" 
-        log.info("\nFinal PR state after merge attempt:")
-        for pr in sorted(info.pull_requests, key=lambda pr: pr.number):
-            if github.repo:
-                gh_pr = github.repo.get_pull(pr.number)
-                log.info(f"PR #{pr.number}:")
-                log.info(f"  Title: {gh_pr.title}")
-                log.info(f"  Base: {gh_pr.base.ref}")
-                log.info(f"  State: {gh_pr.state}")
-                log.info(f"  Merged: {gh_pr.merged}")
-                if use_merge_queue:
-                    log.info(f"  Mergeable state: {gh_pr.mergeable_state}")
-                    log.info(f"  Auto merge: {getattr(gh_pr, 'auto_merge', None)}")
-        # Don't need to log e.output since run_cmd already did
-        raise
+    # No need for manually finding project root since run_cmd handles that
+    merge_output = run_cmd(merge_cmd)
 
     # For partial merges, find the top PR number differently based on count
     to_merge = prs[:count] if count is not None else prs
