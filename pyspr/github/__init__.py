@@ -283,7 +283,7 @@ class GitHubClient:
                                 commit_id = message_id
                                 
                             headline = last_commit.messageHeadline
-                            commit = Commit(commit_id, commit_hash, headline)
+                            commit = Commit.from_strings(commit_id, commit_hash, headline)
 
                             # Process all commits
                             for node in commit_nodes:
@@ -294,7 +294,7 @@ class GitHubClient:
                                     c_id = c_id_match.group(1)
                                     c_oid = c.oid
                                     c_headline = c.messageHeadline
-                                    all_commits.append(Commit(c_id, c_oid, c_headline))
+                                    all_commits.append(Commit.from_strings(c_id, c_oid, c_headline))
                             
                             # Get basic PR info from Pydantic model
                             number = pr_data.number
@@ -350,12 +350,12 @@ class GitHubClient:
                                 c_id_match = re.search(r'commit-id:([a-f0-9]{8})', c_msg)
                                 if c_id_match:
                                     c_id = c_id_match.group(1)
-                                    all_commits.append(Commit(c_id, c.sha, c.commit.message.split('\n')[0]))
+                                    all_commits.append(Commit.from_strings(c_id, c.sha, c.commit.message.split('\n')[0]))
                     except Exception as e:
                         logger.error(f"Error getting commits for PR #{pr.number}: {e}")
                         pass
 
-                    commit = Commit(commit_id, commit_hash, pr.title)
+                    commit = Commit.from_strings(commit_id, commit_hash, pr.title)
                     try:
                         in_queue = False
                     except:

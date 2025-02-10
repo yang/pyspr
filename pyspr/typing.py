@@ -1,8 +1,12 @@
 """Common types used across the codebase."""
 
-from typing import Any, Dict, Optional, Protocol, Type, TypeVar, Union
+from typing import Any, Dict, Optional, Protocol, Type, TypeVar, Union, NewType
 
 T = TypeVar('T', bound='StackedPRContextProtocol')
+
+# Create NewTypes for commit identifiers
+CommitID = NewType('CommitID', str)
+CommitHash = NewType('CommitHash', str)
 
 class StackedPRContextProtocol(Protocol):
     """Protocol for what StackedPR expects from a context."""

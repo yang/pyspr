@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple, Any, Dict, Protocol, TypeVar, overload, Union
 import git
 from git.exc import GitCommandError, InvalidGitRepositoryError
+from ..typing import CommitID, CommitHash
 
 T = TypeVar('T')
 
@@ -18,11 +19,16 @@ logger = logging.getLogger(__name__)
 class Commit:
     """Git commit info.
     CommitID persists across amends, CommitHash changes with each amend."""
-    commit_id: str # Persists across amends
-    commit_hash: str # Changes with each amend
+    commit_id: CommitID  # Persists across amends
+    commit_hash: CommitHash  # Changes with each amend
     subject: str
     body: str = ""
     wip: bool = False
+
+    @classmethod
+    def from_strings(cls, commit_id: str, commit_hash: str, subject: str, body: str = "", wip: bool = False) -> 'Commit':
+        """Create a Commit from string IDs. Use this factory method for easier creation."""
+        return cls(CommitID(commit_id), CommitHash(commit_hash), subject, body, wip)
 
 class GitInterface(Protocol):
     """Git interface."""
@@ -102,7 +108,7 @@ def get_local_commit_stack(config: ConfigProtocol, git_cmd: GitInterface) -> Lis
                     commit_hash = git_cmd.must_git(f"rev-parse {cid}").strip()
                     subject = git_cmd.must_git(f"show -s --format=%s {cid}").strip()
                     wip = subject.upper().startswith("WIP")
-                    commits_new.insert(0, Commit(commit_id, commit_hash, subject, body, wip))
+                    commits_new.insert(0, Commit.from_strings(commit_id, commit_hash, subject, body, wip))
                 else:
                     # Need to add ID
                     new_id = str(uuid.uuid4())[:8]
@@ -122,7 +128,7 @@ def get_local_commit_stack(config: ConfigProtocol, git_cmd: GitInterface) -> Lis
                     
                     # Add to list
                     wip = subject.upper().startswith("WIP")
-                    commits_new.insert(0, Commit(new_id, new_hash, subject, new_msg, wip))
+                    commits_new.insert(0, Commit.from_strings(new_id, new_hash, subject, new_msg, wip))
 
             # Now rewrite history with the new commit IDs
             git_cmd.must_git(f"checkout {curr_branch}")
@@ -164,7 +170,7 @@ def parse_local_commit_stack(commit_log: str) -> Tuple[List[Commit], bool]:
                 # Missing commit ID in previous commit
                 return [], False
             commit_scan_on = True
-            scanned_commit = Commit(
+            scanned_commit = Commit.from_strings(
                 commit_id="",  # Will be filled by commit-id or hash
                 commit_hash=hash_match.group(1),
                 subject="",
@@ -175,7 +181,7 @@ def parse_local_commit_stack(commit_log: str) -> Tuple[List[Commit], bool]:
         # Match commit ID - last thing in commit
         id_match = commit_id_regex.search(line)
         if id_match and scanned_commit:
-            scanned_commit.commit_id = id_match.group(1)
+            scanned_commit.commit_id = CommitID(id_match.group(1))
             scanned_commit.body = scanned_commit.body.strip()
             
             if scanned_commit.subject.upper().startswith("WIP"):
