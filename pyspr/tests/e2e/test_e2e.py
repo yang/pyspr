@@ -12,20 +12,11 @@ import datetime
 import logging
 from typing import Dict, Generator, List, Optional, Set, Tuple, Union
 import pytest
-from typing_extensions import TypedDict
 
 from pyspr.tests.e2e.test_helpers import RepoContext, create_test_repo, run_cmd, test_repo_ctx  # type: ignore
 from pyspr.config import Config
 from pyspr.git import RealGit, Commit
 from pyspr.github import GitHubClient, PullRequest, GitHubInfo
-
-class TestPR(TypedDict):
-    """Type for test PR results."""
-    number: int
-    title: str
-    base_ref: str
-    from_branch: Optional[str]
-    commit: Commit
 
 # Configure logging
 logging.basicConfig(
