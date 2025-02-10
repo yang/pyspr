@@ -198,11 +198,25 @@ class StackedPR:
             if not no_rebase:
                 # Simple rebase
                 logger.debug("Will rebase since no_rebase is False")
-                self.git_cmd.must_git(f"rebase {remote}/{branch} --autostash")
+                try:
+                    self.git_cmd.must_git(f"rebase {remote}/{branch} --autostash")
+                except Exception as e:
+                    logger.error(f"Rebase failed: {e}")
+                    # Get current rebase status to check for conflicts
+                    try:
+                        rebase_status = self.git_cmd.run_cmd("status")
+                        if "You have unmerged paths" in rebase_status or "fix conflicts" in rebase_status:
+                            logger.error("Rebase stopped due to conflicts. Fix conflicts and run update again.")
+                            self.git_cmd.run_cmd("rebase --abort")  # Clean up
+                        else:
+                            logger.error("Rebase failed for unknown reason.")
+                    except Exception:
+                        pass
+                    return None
             else:
                 logger.debug("Skipping rebase")
         except Exception as e:
-            logger.error(f"Rebase failed: {e}")
+            logger.error(f"Error during setup: {e}")
             return None
 
         info = self.github.get_info(ctx, self.git_cmd)
