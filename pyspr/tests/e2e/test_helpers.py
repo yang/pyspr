@@ -18,6 +18,9 @@ from pyspr.github import GitHubClient, PullRequest
 
 log = logging.getLogger(__name__)
 
+import time
+import datetime
+
 @dataclass
 class RepoContext:
     """Test repository context with helpers for test operations."""
@@ -33,11 +36,17 @@ class RepoContext:
         """Create a commit with the test tag embedded."""
         full_msg = f"{msg} [test-tag:{self.tag}]"
         full_path = os.path.join(self.repo_dir, file)
-        with open(full_path, "w") as f:
-            f.write(f"{file}\n{content}\n")
-        run_cmd(f"git add {file}")
-        run_cmd(f'git commit -m "{full_msg}"')
-        return self.git_cmd.must_git("rev-parse HEAD").strip()
+        try:
+            with open(full_path, "w") as f:
+                f.write(f"{file}\n{content}\n")
+            run_cmd(f"git add {file}")
+            run_cmd(f'git commit -m "{full_msg}"')
+            return self.git_cmd.must_git("rev-parse HEAD").strip()
+        except subprocess.CalledProcessError as e:
+            log.error(f"Commit failed: {e}")
+            self.dump_git_state()
+            self.dump_dir_contents()
+            raise
 
     def get_test_prs(self) -> List[PullRequest]:
         """Get PRs filtered by this test's tag."""
@@ -56,6 +65,78 @@ class RepoContext:
                     log.info(f"Error checking PR: {e}")
                     pass
         return result
+
+    def dump_git_state(self) -> None:
+        """Dump git state for debugging."""
+        try:
+            log.info("=== Git State Debug Info ===")
+            log.info("Git log:")
+            log.info(self.git_cmd.must_git("log --oneline -n 3"))
+            log.info("Remote branches:")
+            log.info(self.git_cmd.must_git("ls-remote --heads origin"))
+            log.info("Local branches:")
+            log.info(self.git_cmd.must_git("branch -vv"))
+            log.info("Git status:")
+            log.info(self.git_cmd.must_git("status"))
+        except Exception as e:
+            log.error(f"Failed to dump git state: {e}")
+
+    def dump_dir_contents(self) -> None:
+        """Dump directory contents for debugging."""
+        try:
+            log.info("=== Directory Contents ===")
+            log.info(run_cmd("ls -la", cwd=self.repo_dir))
+        except Exception as e:
+            log.error(f"Failed to dump directory contents: {e}")
+
+    def dump_pr_state(self) -> None:
+        """Dump PR state for debugging."""
+        try:
+            log.info("=== PR State Debug Info ===")
+            info = self.github.get_info(None, self.git_cmd)
+            if info and info.pull_requests:
+                for pr in sorted(info.pull_requests, key=lambda pr: pr.number):
+                    if self.github.repo:
+                        gh_pr = self.github.repo.get_pull(pr.number)
+                        log.info(f"PR #{pr.number}:")
+                        log.info(f"  Title: {gh_pr.title}")
+                        log.info(f"  Base: {gh_pr.base.ref}")
+                        log.info(f"  State: {gh_pr.state}")
+                        log.info(f"  Merged: {gh_pr.merged}")
+                        self.dump_review_requests(gh_pr)
+        except Exception as e:
+            log.error(f"Failed to dump PR state: {e}")
+
+    def dump_review_requests(self, pr) -> None:
+        """Dump review requests for a PR."""
+        try:
+            requested_users, requested_teams = pr.get_review_requests()
+            log.info("  Review requests:")
+            if requested_users:
+                requested_logins = [u.login.lower() for u in requested_users]
+                log.info(f"    Users: {requested_logins}")
+            if requested_teams:
+                team_slugs = [t.slug.lower() for t in requested_teams]
+                log.info(f"    Teams: {team_slugs}")
+        except Exception as e:
+            log.error(f"Failed to get review requests: {e}")
+
+    def timed_operation(self, operation_name: str, func):
+        """Run a function with timing information."""
+        log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Starting {operation_name}...")
+        start_time = time.time()
+        try:
+            result = func()
+            end_time = time.time()
+            log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} {operation_name} completed in {end_time - start_time:.2f} seconds")
+            return result
+        except Exception as e:
+            end_time = time.time()
+            log.error(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} {operation_name} failed after {end_time - start_time:.2f} seconds: {e}")
+            self.dump_git_state()
+            self.dump_dir_contents()
+            self.dump_pr_state()
+            raise
 
 def get_gh_token() -> str:
     """Get GitHub token from gh CLI config."""
@@ -86,7 +167,8 @@ def get_gh_token() -> str:
 
     raise Exception("Could not get GitHub token from gh CLI")
 
-def run_cmd(cmd: str, cwd: Optional[str] = None, check: bool = True, capture_output: bool = True) -> str:
+def run_cmd(cmd: str, cwd: Optional[str] = None, check: bool = True, 
+           capture_output: bool = True) -> str:
     """Run a shell command using subprocess with consistent output capture and logging.
     
     Args:
@@ -244,8 +326,10 @@ def create_repo_context(owner: str, name: str, test_name: str) -> Generator[Repo
     except Exception as e:
         log.error(f"Test failed: {e}")
         if ctx:
-            log_output = ctx.git_cmd.must_git("log --oneline -n 3")
-            log.error(f"Git log at failure:\n{log_output}")
+            log.error("=== Test Failure Debug Information ===")
+            ctx.dump_git_state()
+            ctx.dump_dir_contents()
+            ctx.dump_pr_state()
     finally:
         os.chdir(orig_dir)
 
