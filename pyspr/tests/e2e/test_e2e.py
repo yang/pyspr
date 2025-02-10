@@ -165,23 +165,12 @@ def test_wip_behavior(test_repo_ctx: RepoContext, caplog: pytest.LogCaptureFixtu
     git_cmd = ctx.git_cmd
     github = ctx.github
     
-    # Create 4 commits: 2 regular, 1 WIP, 1 regular
-    def make_commit(file: str, msg: str) -> str:
-        log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Creating commit for {file} - {msg}")
-        full_msg = f"{msg} [test-tag:{ctx.tag}]"
-        with open(file, "w") as f:
-            f.write(f"{file}\n")
-        run_cmd(f"git add {file}")
-        run_cmd(f'git commit -m "{full_msg}"')
-        result = git_cmd.must_git("rev-parse HEAD").strip()
-        log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Created commit {result[:8]}")
-        return result
-        
     log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Creating commits...")
-    make_commit("wip_test1.txt", "First regular commit")
-    make_commit("wip_test2.txt", "Second regular commit")
-    make_commit("wip_test3.txt", "WIP Third commit")
-    make_commit("wip_test4.txt", "Fourth regular commit")  # Not used but kept for completeness
+    # Create 4 commits: 2 regular, 1 WIP, 1 regular
+    ctx.make_commit("wip_test1.txt", "test content", "First regular commit")
+    ctx.make_commit("wip_test2.txt", "test content", "Second regular commit")
+    ctx.make_commit("wip_test3.txt", "test content", "WIP Third commit")
+    ctx.make_commit("wip_test4.txt", "test content", "Fourth regular commit")  # Not used but kept for completeness
     
     # Run update to create PRs
     log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Running pyspr update...")
@@ -204,42 +193,14 @@ def test_wip_behavior(test_repo_ctx: RepoContext, caplog: pytest.LogCaptureFixtu
         if branch:
             log.info(f"  {branch}")
     
-    # Helper to find our test PRs
-    def get_test_prs() -> List[PullRequest]:
-        log.info("=== ABOUT TO CALL GITHUB API ===")  # See if we get here before timeout
-        log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Starting PR filtering...")
-        gh_start = time.time()
-        prs: List[PullRequest] = []
-        try:
-            info: Optional[GitHubInfo] = github.get_info(None, git_cmd)
-            prs = info.pull_requests if info else []
-        finally:
-            gh_end = time.time()
-            log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} GitHub API get_info took {gh_end - gh_start:.2f} seconds")
-        
-        log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Filtering {len(prs)} PRs...")
-        filter_start = time.time()
-        result: List[PullRequest] = []
-        try:
-            for pr in prs:
-                try:
-                    # Debug each PR being checked
-                    log.info(f"Checking PR #{pr.number} - branch {pr.from_branch}")
-                    if pr.from_branch is not None and pr.from_branch.startswith('spr/main/'):
-                        # PR commit always exists for SPR branches
-                        assert pr.commit is not None
-                        commit_msg: str = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
-                        if f"test-tag:{ctx.tag}" in commit_msg:
-                            log.info(f"Found matching PR #{pr.number}")
-                            result.append(pr)
-                except Exception as e:  # Log any failures
-                    log.info(f"Error checking PR #{getattr(pr, 'number', 'unknown')}: {e}")
-                    pass
-        finally:
-            filter_end = time.time()
-            log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} PR filtering took {filter_end - filter_start:.2f} seconds")
-        log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Found {len(result)} matching PRs")
-        return result
+    # We'll use ctx.get_test_prs() directly, with timing logs around it
+    log.info("=== ABOUT TO CALL GITHUB API ===")
+    log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Starting PR filtering...")
+    gh_start = time.time()
+    test_prs = ctx.get_test_prs()
+    gh_end = time.time()
+    log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} PR filtering took {gh_end - gh_start:.2f} seconds")
+    log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Found {len(test_prs)} matching PRs")
     
     # Verify only first two PRs were created
     log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Getting GitHub info...")
@@ -251,9 +212,8 @@ def test_wip_behavior(test_repo_ctx: RepoContext, caplog: pytest.LogCaptureFixtu
     log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} C2: {c2_hash}")
     log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} C3: {c3_hash}")
     
-    # Get our test PRs
-    log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Getting filtered test PRs...")
-    test_prs = get_test_prs()
+    # Get our test PRs (already got them above)
+    log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Using filtered test PRs...")
     
     # Print all PR commit hashes for debugging
     log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Test PR commit hashes:")
@@ -328,24 +288,18 @@ def test_reviewer_functionality(test_repo_ctx: RepoContext) -> None:
         # Create unique tag pattern for part 2 (we use ctx.tag for part 1)
         unique_tag2 = f"test-reviewer-testluser-{uuid.uuid4().hex[:8]}"
 
-        # Helper to make commits for part 1 (uses ctx.tag)
-        def make_commit_1(file: str, msg: str) -> None:
-            full_msg = f"{msg} [test-tag:{ctx.tag}]"
-            with open(file, "w") as f:
-                f.write(f"{file}\n{msg}\n")
-            run_cmd(f"git add {file}")
-            run_cmd(f'git commit -m "{full_msg}"')
-
+        # Note: We'll still use ctx.make_commit with the test tag directly for part 1.
+        # For part 2, we need to make commits with a different tag pattern.
         # Helper to make commits for part 2
         def make_commit_2(file: str, msg: str) -> None:
             full_msg = f"{msg} [test-tag:{unique_tag2}]"
-            with open(file, "w") as f:
+            with open(os.path.join(repo_dir, file), "w") as f:
                 f.write(f"{file}\n{msg}\n")
             run_cmd(f"git add {file}")
             run_cmd(f'git commit -m "{full_msg}"')
 
-        # Helper to find test PRs by tag
-        def get_test_prs(tag: str) -> List[PullRequest]:
+        # For part 2 we need custom PR filtering by tag
+        def get_test_prs_by_tag(tag: str) -> List[PullRequest]:
             result: List[PullRequest] = []
             info: Optional[GitHubInfo] = github.get_info(None, git_cmd)
             if info is None:
@@ -366,7 +320,7 @@ def test_reviewer_functionality(test_repo_ctx: RepoContext) -> None:
         log.info("\n=== Part 1: Testing self-review handling ===")
         log.info("Creating first commit without reviewer...")
         log.info(f"Current working directory: {os.getcwd()}")
-        make_commit_1("r_test1.txt", "First commit")
+        ctx.make_commit("r_test1.txt", "test content", "First commit")
 
         # Create initial PR without reviewer
         run_cmd("pyspr update")
@@ -374,7 +328,7 @@ def test_reviewer_functionality(test_repo_ctx: RepoContext) -> None:
         # Verify first PR exists with no reviewer
         info: Optional[GitHubInfo] = github.get_info(None, git_cmd)
         assert info is not None, "GitHub info should not be None"
-        our_prs = get_test_prs(ctx.tag)
+        our_prs = ctx.get_test_prs()
         assert len(our_prs) == 1, f"Should have 1 PR for our test, found {len(our_prs)}"
         pr1 = our_prs[0]
         assert github.repo is not None, "GitHub repo should be available"
@@ -396,13 +350,13 @@ def test_reviewer_functionality(test_repo_ctx: RepoContext) -> None:
 
         # Create second commit and try self-review
         log.info("\nCreating second commit with self-reviewer...")
-        make_commit_1("r_test2.txt", "Second commit")
+        ctx.make_commit("r_test2.txt", "test content", "Second commit")
         run_cmd("pyspr update -r yang")
 
         # Verify no self-review was added
         info: Optional[GitHubInfo] = github.get_info(None, git_cmd)
         assert info is not None, "GitHub info should not be None"
-        our_prs = get_test_prs(ctx.tag)
+        our_prs = ctx.get_test_prs()
         assert len(our_prs) == 2, f"Should have 2 PRs for our test, found {len(our_prs)}"
         prs_by_num: Dict[int, PullRequest] = {pr.number: pr for pr in our_prs}
         assert pr1.number in prs_by_num, "First PR should still exist"
@@ -445,7 +399,7 @@ def test_reviewer_functionality(test_repo_ctx: RepoContext) -> None:
         run_cmd("pyspr update")
 
         # Verify first PR
-        our_prs = get_test_prs(unique_tag2)
+        our_prs = get_test_prs_by_tag(unique_tag2)
         assert len(our_prs) == 1, f"Should have 1 PR for testluser test, found {len(our_prs)}"
         pr1 = our_prs[0]
         gh_pr1 = github.repo.get_pull(pr1.number)
@@ -465,7 +419,7 @@ def test_reviewer_functionality(test_repo_ctx: RepoContext) -> None:
         update_output = run_cmd("pyspr update -r testluser -v", cwd=repo_dir)
 
         # Find our PRs again
-        our_prs = get_test_prs(unique_tag2)
+        our_prs = get_test_prs_by_tag(unique_tag2)
         assert len(our_prs) == 2, f"Should have 2 PRs for testluser test, found {len(our_prs)}"
         
         # Get the latest PR
@@ -490,19 +444,11 @@ def test_reorder(test_repo_ctx: RepoContext) -> None:
     git_cmd = ctx.git_cmd
     github = ctx.github
 
-    # Create four test commits with unique tag in message
-    def make_commit(file: str, content: str, msg: str) -> None:
-        full_msg = f"{msg} [test-tag:{ctx.tag}]"
-        with open(file, "w") as f:
-            f.write(f"{file}\n{content}\n")
-        run_cmd(f"git add {file}")
-        run_cmd(f'git commit -m "{full_msg}"')
-
     # Create commits c1, c2, c3, c4
-    make_commit("test1.txt", "test content 1", "First commit")
-    make_commit("test2.txt", "test content 2", "Second commit")
-    make_commit("test3.txt", "test content 3", "Third commit")
-    make_commit("test4.txt", "test content 4", "Fourth commit")
+    ctx.make_commit("test1.txt", "test content 1", "First commit")
+    ctx.make_commit("test2.txt", "test content 2", "Second commit")
+    ctx.make_commit("test3.txt", "test content 3", "Third commit")
+    ctx.make_commit("test4.txt", "test content 4", "Fourth commit")
 
     # Run pyspr update
     run_cmd("pyspr update")
@@ -513,28 +459,9 @@ def test_reorder(test_repo_ctx: RepoContext) -> None:
     commit3_hash = git_cmd.must_git("rev-parse HEAD~1").strip()
     commit4_hash = git_cmd.must_git("rev-parse HEAD").strip()
 
-    # Helper to find our test PRs using unique tag
-    def get_test_prs() -> List[PullRequest]:
-        log.info("\nLooking for PRs with unique tag...")
-        result: List[PullRequest] = []
-        info: Optional[GitHubInfo] = github.get_info(None, git_cmd)
-        if info is None:
-            return []
-        for pr in info.pull_requests:
-            if pr.from_branch and pr.from_branch.startswith('spr/main/'):
-                try:
-                    # Look for our unique tag in the commit message
-                    assert pr.commit is not None
-                    commit_msg: str = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
-                    if f"test-tag:{ctx.tag}" in commit_msg:
-                        log.info(f"Found PR #{pr.number} with tag and commit ID {pr.commit.commit_id}")
-                        result.append(pr)
-                except:
-                    pass
-        return result
-
+    log.info("\nLooking for PRs with unique tag...")
     # Verify initial PRs were created
-    prs = get_test_prs()
+    prs = ctx.get_test_prs()
     assert len(prs) == 4, f"Should have created 4 PRs, found {len(prs)}"
     prs.sort(key=lambda p: p.number)  # Sort by PR number
     pr1, pr2, pr3, pr4 = prs
@@ -576,7 +503,7 @@ def test_reorder(test_repo_ctx: RepoContext) -> None:
     run_cmd(f"pyspr update -v")
 
     # Get PRs after reordering
-    prs = get_test_prs()
+    prs = ctx.get_test_prs()
     assert len(prs) == 4, f"Should still have 4 PRs after reordering, found {len(prs)}"
 
     # Instead of checking PRs by number, check them by commit message
@@ -652,28 +579,6 @@ def _run_merge_test(
         git_cmd = RealGit(config)
         github = GitHubClient(None, config)
     
-    # Create commits
-    def make_commit(file: str, line: str, msg: str) -> None:
-        full_msg = f"{msg} [test-tag:{repo_ctx.tag}]"
-        with open(file, "w") as f:
-            f.write(f"{file}\n{line}\n")
-        try:
-            log.info(f"Creating file {file}...")
-            run_cmd(f"git add {file}")
-            run_cmd("git status")  # Debug: show git status after add
-            try:
-                run_cmd(f'git commit -m "{full_msg}"')
-            except subprocess.CalledProcessError as e:
-                log.info(f"Git commit failed with code {e.returncode}")
-                log.info(f"STDOUT: {e.output}")
-                log.info(f"STDERR: {e.stderr}")
-                log.info("Directory contents:")
-                run_cmd("ls -la")
-                raise  # Re-raise the original exception since it has the right error info
-        except subprocess.CalledProcessError as e:
-            log.info(f"Failed to commit: {e}")
-            raise
-        
     log.info("Creating commits...")
     try:
         # Use static filenames but unique content
@@ -683,8 +588,17 @@ def _run_merge_test(
             prefix = "test_merge" if not use_merge_queue else "mq_test"
             filename = f"{prefix}{i+1}.txt"
             test_files.append(filename)
-            make_commit(filename, f"line 1 - {unique}", 
-                      f"Test {'merge queue' if use_merge_queue else 'multi'} commit {i+1}")
+            content = f"line 1 - {unique}"
+            msg = f"Test {'merge queue' if use_merge_queue else 'multi'} commit {i+1}"
+            try:
+                log.info(f"Creating file {filename}...")
+                repo_ctx.make_commit(filename, content, msg)
+                run_cmd("git status")  # Debug: show git status after commit
+            except subprocess.CalledProcessError as e:
+                log.info(f"Git commit failed: {e}")
+                log.info("Directory contents:")
+                run_cmd("ls -la")
+                raise
     except subprocess.CalledProcessError as e:  # noqa: F841
         # Get git status for debugging
         run_cmd("git status")
@@ -694,28 +608,10 @@ def _run_merge_test(
     log.info("Creating initial PRs...")
     run_cmd("pyspr update")
 
-    # Helper to find our test PRs
-    def get_test_prs() -> List[PullRequest]:
-        result: List[PullRequest] = []
-        info: Optional[GitHubInfo] = github.get_info(None, git_cmd)
-        if info is None:
-            return []
-        for pr in info.pull_requests:
-            if pr.from_branch and pr.from_branch.startswith('spr/main/'):
-                try:
-                    # Look for our unique tag in the commit message
-                    assert pr.commit is not None
-                    commit_msg: str = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
-                    if f"test-tag:{repo_ctx.tag}" in commit_msg:
-                        result.append(pr)
-                except:  # Skip failures since we're just filtering
-                    pass
-        return result
-
     # Verify PRs created
     info: Optional[GitHubInfo] = github.get_info(None, git_cmd)
     assert info is not None, "GitHub info should not be None"
-    prs = get_test_prs()
+    prs = repo_ctx.get_test_prs()
     assert len(prs) == num_commits, f"Should have created {num_commits} PRs for our test, found {len(prs)}"
     prs = sorted(prs, key=lambda pr: pr.number)
     pr_nums = [pr.number for pr in prs]
@@ -774,7 +670,7 @@ def _run_merge_test(
     assert info is not None, "GitHub info should not be None"
     
     # Get the current test PRs 
-    current_prs = get_test_prs()
+    current_prs = repo_ctx.get_test_prs()
     prs_by_num: Dict[int, PullRequest] = {pr.number: pr for pr in current_prs}
 
     if use_merge_queue:
@@ -857,13 +753,6 @@ def test_replace_commit(test_repo_ctx: RepoContext) -> None:
     git_cmd = ctx.git_cmd
     github = ctx.github
 
-    def make_commit(file: str, line: str, msg: str) -> None:
-        full_msg = f"{msg} [test-tag:{ctx.tag}]"
-        with open(file, "w") as f:
-            f.write(f"{file}\n{line}\n")
-        run_cmd(f"git add {file}")
-        run_cmd(f'git commit -m "{full_msg}"')
-
     log.info("\nCreating initial stack of 3 commits...")
     run_cmd("git checkout main")
     run_cmd("git pull")
@@ -873,9 +762,9 @@ def test_replace_commit(test_repo_ctx: RepoContext) -> None:
     test_files = ["file1.txt", "file2.txt", "file3.txt", "file2_new.txt"]  # noqa: F841
 
     # 1. Create stack with commits A -> B -> C
-    make_commit("file1.txt", "line 1", "Commit A")
-    make_commit("file2.txt", "line 1", "Commit B")
-    make_commit("file3.txt", "line 1", "Commit C")
+    ctx.make_commit("file1.txt", "line 1", "Commit A")
+    ctx.make_commit("file2.txt", "line 1", "Commit B")
+    ctx.make_commit("file3.txt", "line 1", "Commit C")
 
     # Get original commit hashes - needed for cherry-pick operations
     orig_c1_hash = git_cmd.must_git("rev-parse HEAD~2").strip()  # noqa
@@ -891,26 +780,8 @@ def test_replace_commit(test_repo_ctx: RepoContext) -> None:
     c2_hash = git_cmd.must_git("rev-parse HEAD~1").strip()  # noqa
     c3_hash = git_cmd.must_git("rev-parse HEAD").strip()    # noqa
 
-    # Helper to find our test PRs
-    def get_test_prs() -> List[PullRequest]:
-        result: List[PullRequest] = []
-        info: Optional[GitHubInfo] = github.get_info(None, git_cmd)
-        if info is None:
-            return []
-        for pr in info.pull_requests:
-            if pr.from_branch and pr.from_branch.startswith('spr/main/'):
-                try:
-                    # Look for our unique tag in the commit message
-                    assert pr.commit is not None
-                    commit_msg: str = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
-                    if f"test-tag:{ctx.tag}" in commit_msg:
-                        result.append(pr)
-                except:  # Skip failures since we're just filtering  
-                    pass
-        return result
-
     # Get initial PR info and filter to our newly created PRs
-    commit_prs = get_test_prs()
+    commit_prs = ctx.get_test_prs()
     commit_prs = sorted(commit_prs, key=lambda pr: pr.number)
     assert len(commit_prs) == 3, f"Should find 3 PRs for our commits, found {len(commit_prs)}"
     
@@ -941,7 +812,7 @@ def test_replace_commit(test_repo_ctx: RepoContext) -> None:
     # 2. Replace commit B with new commit D
     log.info("\nReplacing commit B with new commit D...")
     run_cmd("git reset --hard HEAD~2")  # Remove B and C
-    make_commit("file2_new.txt", "line 1", "New Commit D")
+    ctx.make_commit("file2_new.txt", "line 1", "New Commit D")
     run_cmd(f"git cherry-pick {orig_c3_hash}")  # Add C back using original hash
 
     # 3. Run update
@@ -950,7 +821,7 @@ def test_replace_commit(test_repo_ctx: RepoContext) -> None:
 
     # 4. Verify:
     log.info("\nVerifying PR handling after replace...")
-    relevant_prs = get_test_prs()
+    relevant_prs = ctx.get_test_prs()
     pr_nums_to_check: Set[int] = set(pr.number for pr in relevant_prs)
     if pr2_num not in pr_nums_to_check:
         # Also check if B's old PR is still open but no longer has our commits
@@ -1168,20 +1039,17 @@ def test_no_rebase_pr_stacking(test_repo_ctx: RepoContext) -> None:
     github = ctx.github
     repo_dir = ctx.repo_dir
 
-    def make_commit(file: str, msg: str) -> None:
-        """Create commit WITHOUT test tag since this test is about preserving commit hashes"""
-        with open(os.path.join(repo_dir, file), "w") as f:
-            f.write(f"{file}\n{msg}\n")
-        run_cmd(f"git add {file}")
-        run_cmd(f'git commit -m "{msg}"')
-
     # Get initial commit hash for verification
     initial_hash = git_cmd.must_git("rev-parse HEAD").strip()
     log.info(f"Initial commit: {initial_hash[:8]}")
 
-    # Create first commit & PR
+    # Create first commit & PR 
+    # Note: We're specifically NOT using the test tag since this test 
+    # is about preserving commit hashes and needs to handle its PRs differently
     log.info("\nCreating first commit...")
-    make_commit("nr_test1.txt", "First commit")
+    run_cmd(f"echo 'nr_test1.txt\nFirst commit\n' > {os.path.join(repo_dir, 'nr_test1.txt')}")
+    run_cmd("git add nr_test1.txt")
+    run_cmd('git commit -m "First commit"')
     c1_hash = git_cmd.must_git("rev-parse HEAD").strip()
     log.info(f"First commit: {c1_hash[:8]}")
 
@@ -1200,7 +1068,9 @@ def test_no_rebase_pr_stacking(test_repo_ctx: RepoContext) -> None:
 
     # Create second commit
     log.info("\nCreating second commit...")
-    make_commit("nr_test2.txt", "Second commit")
+    run_cmd(f"echo 'nr_test2.txt\nSecond commit\n' > {os.path.join(repo_dir, 'nr_test2.txt')}")
+    run_cmd("git add nr_test2.txt")
+    run_cmd('git commit -m "Second commit"')
     c2_hash = git_cmd.must_git("rev-parse HEAD").strip()
     log.info(f"Second commit: {c2_hash[:8]}")
 
