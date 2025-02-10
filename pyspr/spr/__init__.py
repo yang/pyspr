@@ -184,15 +184,23 @@ class StackedPR:
                 logger.error(f"Branch '{branch}' not found on remote '{remote}'. First push to the remote.")
                 return None
 
+            # Log env var and config before check
+            logger.debug(f"SPR_NOREBASE env var: {os.environ.get('SPR_NOREBASE')}")
+            logger.debug(f"noRebase config: {self.config.user.get('noRebase', False)}")
+
             # Check for no-rebase from env var or config
             no_rebase = (
                 os.environ.get("SPR_NOREBASE") == "true" or 
                 self.config.user.get('noRebase', False)
             )
+            logger.debug(f"DEBUG: no_rebase={no_rebase}")
             
             if not no_rebase:
                 # Simple rebase
+                logger.debug("Will rebase since no_rebase is False")
                 self.git_cmd.must_git(f"rebase {remote}/{branch} --autostash")
+            else:
+                logger.debug("Skipping rebase")
         except Exception as e:
             logger.error(f"Rebase failed: {e}")
             return None
@@ -299,11 +307,15 @@ class StackedPR:
                          labels: Optional[List[str]] = None) -> None:
         """Update pull requests for commits."""
         # Combine CLI labels with config labels
-        config_labels: List[str] = self.config.repo.get('labels', [])
-        if isinstance(config_labels, str):
-            config_labels = [config_labels]
-        elif not isinstance(config_labels, list):
-            config_labels = []
+        config_labels: List[str] = []  # Initialize with empty list
+        raw_labels = self.config.repo.get('labels', [])
+        # Both checks needed because config can contain str, list, or other types
+        # pyright: ignore[reportUnnecessaryIsInstance]
+        if isinstance(raw_labels, str):
+            config_labels = [raw_labels]
+        elif isinstance(raw_labels, list):
+            config_labels = cast(List[str], raw_labels)  # Trust user config
+        # else case handled by initialization
             
         all_labels = list(config_labels)
         if labels:

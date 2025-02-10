@@ -27,6 +27,8 @@ deprecated==1.2.18
     # via pygithub
 exceptiongroup==1.2.2
     # via pytest
+execnet==2.1.1
+    # via pytest-xdist
 gitdb==4.0.12
     # via gitpython
 gitpython==3.1.44
@@ -55,6 +57,9 @@ pynacl==1.5.0
     # via pygithub
 pyright==1.1.393
 pytest==8.3.4
+    # via pytest-xdist
+pytest-xdist==3.6.1
+    # via pyspr
 pyyaml==6.0.2
     # via pyspr
 requests==2.32.3

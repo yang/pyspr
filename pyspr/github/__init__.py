@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Import GraphQL response types from dedicated module
 from .types import (
-    GraphQLResponseType,
+    GraphQLResponseType, GitHubRequester,
     cast_pr_nodes, safe_cast
 )
 
@@ -220,27 +220,24 @@ class GitHubClient:
             }
 
             # Single query (no pagination for now)
-            result: GraphQLResponseType = self.client._Github__requester.requestJsonAndCheck(  # type: ignore
+            from typing import cast
+            # Safely access private requester with typings
+            any_client = cast(Any, self.client)  # First cast to Any to bypass attribute check
+            req = cast(GitHubRequester, any_client._Github__requester)  # Then cast to our protocol
+            
+            # Use protocol-defined response type
+            result: GraphQLResponseType = req.requestJsonAndCheck(
                 "POST",
-                "https://api.github.com/graphql",
+                "https://api.github.com/graphql", 
                 input={
-                    "query": query, 
+                    "query": query,
                     "variables": variables
                 }
             )
             
-            # Handle response structure correctly
-            resp: Dict[str, Any]
-            if isinstance(result, tuple):
-                try:
-                    # Directly unpack to avoid len() call
-                    _, resp_data = result  # type: ignore
-                    resp = safe_cast(resp_data, dict)
-                except ValueError:
-                    # Not a 2-tuple, try to cast whole result
-                    resp = safe_cast(result, dict)
-            else:
-                resp = safe_cast(result, dict)
+            # Handle response - it's always a tuple of (headers, data)
+            _headers, resp = result  # The response is always a tuple
+            resp = safe_cast(resp, dict)  # GraphQL always returns a dict
                 
             # Check if we have any data at all
             if 'data' not in resp:
@@ -435,8 +432,10 @@ class GitHubClient:
             
         logger.info(f"> github create #{info.pull_requests[-1].number + 1 if info.pull_requests else 1} : {commit.subject}")
         
+        # Get full commit message including test tags
+        commit_msg = git_cmd.must_git(f"show -s --format=%B {commit.commit_hash}").strip()
         title = commit.subject
-        commit.body = git_cmd.must_git(f"show -s --format=%b {commit.commit_hash}").strip()
+        commit.body = commit_msg  # Preserve full commit message
         
         # Get current PR stack for interlinking
         current_prs: List[PullRequest] = info.pull_requests[:] if info and info.pull_requests else []
@@ -491,7 +490,9 @@ class GitHubClient:
         
         # Update title if needed and commit is provided 
         if commit:
-            commit.body = git_cmd.must_git(f"show -s --format=%b {commit.commit_hash}").strip()
+            # Get full commit message including test tags
+            commit_msg = git_cmd.must_git(f"show -s --format=%B {commit.commit_hash}").strip()
+            commit.body = commit_msg  # Preserve full commit message
             if gh_pr.title != commit.subject:
                 gh_pr.edit(title=commit.subject)
                 pr.title = commit.subject
@@ -515,7 +516,8 @@ class GitHubClient:
         # Update base branch to maintain stack, but not if in merge queue
         # PyGithub typing is wrong; auto_merge exists but isn't in stubs
         try:
-            in_queue = getattr(gh_pr, 'auto_merge', None) is not None  # type: ignore
+            # auto_merge is a GraphQL-only feature, use getattr
+            in_queue = getattr(gh_pr, 'auto_merge', None) is not None
         except:
             in_queue = False
 
@@ -574,7 +576,8 @@ class GitHubClient:
         logger.info(f"> github close #{pr.number} : {pr.title}")
             
         gh_pr = self.repo.get_pull(pr.number)
-        gh_pr.edit(state="closed")  # type: ignore  # PyGithub typing wrong; state is valid
+        # PyGithub's edit method accepts state parameter
+        gh_pr.edit(state="closed")
 
     def get_assignable_users(self, ctx: StackedPRContextType) -> List[Dict[str, str]]:
         """Get assignable users."""
@@ -600,13 +603,13 @@ class GitHubClient:
             try:
                 # Debug API info
                 logger.debug("Pull request attributes available:")
-                logger.debug(f"  auto_merge: {getattr(gh_pr, 'auto_merge', None)}")  # type: ignore
+                logger.debug(f"  auto_merge: {getattr(gh_pr, 'auto_merge', None)}")
                 logger.debug(f"  mergeable: {gh_pr.mergeable}")
                 logger.debug(f"  mergeable_state: {gh_pr.mergeable_state}")
                 # Convert merge method to uppercase for PyGithub
                 gh_method = merge_method.upper()
                 # Try to enable auto-merge (merge queue)
-                gh_pr.enable_automerge(merge_method=gh_method)  # type: ignore
+                gh_pr.enable_automerge(merge_method=gh_method)
                 logger.info(f"PR #{pr.number} added to merge queue")
                 return  # Success, we're done
             except Exception as e:
@@ -617,19 +620,19 @@ class GitHubClient:
                     raise Exception("Repository requires merge queue but failed to add PR to queue") from e
                 # Fall back to regular merge only if merge queue is optional
                 if merge_method == 'squash':
-                    gh_pr.merge(merge_method='squash')  # type: ignore
+                    gh_pr.merge(merge_method='squash')
                 elif merge_method == 'rebase':
-                    gh_pr.merge(merge_method='rebase')  # type: ignore
+                    gh_pr.merge(merge_method='rebase')
                 else:
-                    gh_pr.merge(merge_method='merge')  # type: ignore
+                    gh_pr.merge(merge_method='merge')
         else:
             # Regular merge
             if merge_method == 'squash':
-                gh_pr.merge(merge_method='squash')  # type: ignore
+                gh_pr.merge(merge_method='squash')
             elif merge_method == 'rebase':
-                gh_pr.merge(merge_method='rebase')  # type: ignore
+                gh_pr.merge(merge_method='rebase')
             else:
-                gh_pr.merge(merge_method='merge')  # type: ignore
+                gh_pr.merge(merge_method='merge')
 
     def branch_name_from_commit(self, commit: Commit) -> str:
         """Generate branch name from commit. Matches Go implementation."""
