@@ -19,8 +19,6 @@ from pyspr.config import Config
 from pyspr.git import RealGit, Commit
 from pyspr.github import GitHubClient, PullRequest, GitHubInfo
 
-# test_repo_ctx is imported from test_helpers and used as fixture
-
 class TestPR(TypedDict):
     """Type for test PR results."""
     number: int
@@ -1268,7 +1266,7 @@ def test_no_rebase_pr_stacking(test_repo_ctx: RepoContext) -> None:
     log.info(f"Final git log:\n{log_output}")
 
 # Disabled for now since we just don't really want auto-closing functionality.
-@pytest.skip
+@pytest.mark.skip(reason="Auto-closing functionality not needed")
 def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
     """Test that PRs from different stacks don't interfere with each other.
     
