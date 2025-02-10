@@ -5,7 +5,7 @@ import os
 import sys
 import re
 import logging
-from typing import Dict, List, Optional, TypedDict, cast
+from typing import Dict, List, Optional, TypedDict, cast, Sequence
 import time
 from concurrent.futures import Future
 
@@ -278,11 +278,11 @@ class StackedPR:
                     if self.concurrency > 0 and len(ref_names) > 1:
                         # Push branches in parallel with specified concurrency
                         with concurrent.futures.ThreadPoolExecutor(max_workers=self.concurrency) as executor:
-                            futures: List[Future[str]] = []
-                            for ref_name in ref_names:
-                                futures.append(
-                                    executor.submit(self.git_cmd.must_git, f"push --force {remote} {ref_name}")
-                                )
+                            # Type the futures properly - must_git returns str
+                            futures: Sequence[Future[str]] = [
+                                executor.submit(self.git_cmd.must_git, f"push --force {remote} {ref_name}")
+                                for ref_name in ref_names
+                            ]
                             concurrent.futures.wait(futures)
                             # Check for errors
                             for future in futures:
@@ -465,10 +465,10 @@ class StackedPR:
                 assignable = self.github.get_assignable_users(ctx)
 
             # Helper to filter reviewers by assignable users                
-            def filter_reviewers(reviewers: List[str]) -> List[str]:
+            def filter_reviewers(reviewers: Optional[List[str]]) -> List[str]:
                 if not reviewers or not assignable:
                     return []
-                user_logins = []
+                user_logins: List[str] = []
                 for r in reviewers:
                     for u in assignable:
                         if r.lower() == u['login'].lower():
@@ -479,7 +479,7 @@ class StackedPR:
             if self.concurrency > 0:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=self.concurrency) as executor:
                     # First update PRs
-                    futures: List[Future[None]] = [
+                    futures: Sequence[Future[None]] = [
                         executor.submit(self.github.update_pull_request,
                                     ctx, self.git_cmd, github_info.pull_requests,
                                     update['pr'], update['commit'], update['prev_commit'],
@@ -495,15 +495,12 @@ class StackedPR:
                             raise
 
                     # Then handle reviewers
-                    reviewer_futures = []
-                    for update in update_queue:
-                        if update.get('add_reviewers'):
-                            reviewers = filter_reviewers(update['add_reviewers'])
-                            if reviewers:
-                                reviewer_futures.append(
-                                    executor.submit(self.github.add_reviewers, 
-                                                   ctx, update['pr'], reviewers)
-                                )
+                    reviewer_futures: Sequence[Future[None]] = [
+                        executor.submit(self.github.add_reviewers, 
+                                      ctx, update['pr'], filter_reviewers(update['add_reviewers']))
+                        for update in update_queue
+                        if update.get('add_reviewers') and filter_reviewers(update['add_reviewers'])
+                    ]
                     # Wait for reviewer updates but don't fail on errors
                     concurrent.futures.wait(reviewer_futures)
                     for future in reviewer_futures:
