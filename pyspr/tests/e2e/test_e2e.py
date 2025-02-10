@@ -13,7 +13,7 @@ import logging
 from typing import Dict, Generator, List, Optional, Set, Tuple, Union
 import pytest
 
-from pyspr.tests.e2e.test_helpers import RepoContext, create_test_repo, run_cmd
+from pyspr.tests.e2e.test_helpers import RepoContext, create_test_repo, run_cmd, test_repo_ctx
 from pyspr.config import Config
 from pyspr.git import RealGit
 from pyspr.github import GitHubClient, PullRequest, GitHubInfo
@@ -996,6 +996,56 @@ def test_no_rebase_functionality(test_repo_ctx: RepoContext, caplog: pytest.LogC
         
     finally:
         pass
+
+def test_update_after_merge(test_repo_ctx: RepoContext) -> None:
+    """Test update behavior after bottom PR in stack is merged.
+    
+    Scenario:
+    1. Create stack of 2 PRs
+    2. Merge bottom PR
+    3. Re-run update
+    4. Verify only remaining PR is updated
+    """
+    ctx = test_repo_ctx
+    git_cmd = ctx.git_cmd
+    github = ctx.github
+
+    # Create two commits
+    log.info("\nCreating two commits...")
+    ctx.make_commit("test1.txt", "test content 1", "First commit")
+    ctx.make_commit("test2.txt", "test content 2", "Second commit")
+    
+    # Initial update to create PRs
+    log.info("Creating initial PRs...")
+    run_cmd("pyspr update")
+    
+    # Get the PRs
+    prs = ctx.get_test_prs()
+    assert len(prs) == 2, f"Should have created 2 PRs, found {len(prs)}"
+    prs = sorted(prs, key=lambda p: p.number)
+    pr1, pr2 = prs
+    pr1_num, pr2_num = pr1.number, pr2.number
+    
+    log.info(f"Created PRs: #{pr1_num}, #{pr2_num}")
+    
+    # Merge bottom PR
+    log.info("\nMerging bottom PR...")
+    run_cmd("pyspr merge -c1")
+    
+    # Re-run update
+    log.info("\nRe-running update...")
+    run_cmd("pyspr update")
+    
+    # Verify only one PR remains
+    prs = ctx.get_test_prs()
+    assert len(prs) == 1, f"Should have 1 PR remaining, found {len(prs)}"
+    remaining_pr = prs[0]
+    
+    # Verify it's the correct PR
+    assert remaining_pr.number == pr2_num, f"Remaining PR should be #{pr2_num}, found #{remaining_pr.number}"
+    assert remaining_pr.base_ref == "main", f"Remaining PR should target main, got {remaining_pr.base_ref}"
+    
+    log.info(f"Verified remaining PR #{remaining_pr.number} targeting main")
 
 def test_no_rebase_pr_stacking(test_repo_ctx: RepoContext) -> None:
     """Test stacking new PRs on top without changing earlier PRs using --no-rebase.
