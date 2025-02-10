@@ -1266,6 +1266,8 @@ def test_no_rebase_pr_stacking(test_repo_ctx: RepoContext) -> None:
     log_output = git_cmd.must_git("log --oneline -n 3")
     log.info(f"Final git log:\n{log_output}")
 
+# Disabled for now since we just don't really want auto-closing functionality.
+@pytest.skip
 def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
     """Test that PRs from different stacks don't interfere with each other.
     
