@@ -538,14 +538,6 @@ def test_reviewer_functionality(test_repo: Tuple[str, str, str, str]) -> None:
         requested_logins = [u.login.lower() for u in requested_users]
         assert "testluser" in requested_logins, "Second PR should have testluser reviewer since they're a different user"
         
-        # Verify we attempted to add reviewers
-        log.info("\nDEBUG: Update command output:")
-        log.info(update_output)
-        assert "Trying to add reviewers" in update_output or \
-               "Adding reviewers" in update_output or \
-               "DEBUG:" in update_output, \
-               "Should have attempted to add testluser as reviewer"
-        
         log.info("Successfully verified testluser review handling")
 
     finally:

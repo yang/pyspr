@@ -535,34 +535,26 @@ class GitHubClient:
                 gh_pr.edit(base=desired_base)
 
     def add_reviewers(self, ctx: StackedPRContextType, pr: PullRequest, user_ids: List[str]) -> None:
-        """Add reviewers to pull request.
-        
-        Handles self-review attempts gracefully as GitHub doesn't allow requesting 
-        reviews from yourself.
-        """
+        """Add reviewers to pull request, filtering out self-reviews."""
         if not self.repo:
             return
             
         logger.info(f"> github add reviewers #{pr.number} : {pr.title} - {user_ids}")
             
         gh_pr = self.repo.get_pull(pr.number)
-        
-        # Get current user to filter out self-review attempts
         current_user = self.client.get_user().login.lower()
         filtered_reviewers = [uid for uid in user_ids if uid.lower() != current_user]
         
-        if filtered_reviewers:
-            try:
-                # PyGithub typing is wrong; it actually accepts a list of strings
-                gh_pr.create_review_request(reviewers=filtered_reviewers)  # type: ignore
-                logger.debug(f"Added reviewers {filtered_reviewers} to PR #{pr.number}")
-            except Exception as e:
-                logger.error(f"Failed to add reviewers to PR #{pr.number}: {e}")
-                raise
-        else:
-            logger.warning(f"Skipping adding reviewers for PR #{pr.number} - all reviewers filtered (self-review not allowed)")
-                
-        logger.debug(f"Called add_reviewers for PR #{pr.number} with IDs: {user_ids}")
+        if not filtered_reviewers:
+            logger.debug(f"No valid reviewers for PR #{pr.number} after filtering self-review")
+            return
+        
+        try:
+            # PyGithub typing is wrong; it actually accepts a list of strings
+            gh_pr.create_review_request(reviewers=filtered_reviewers)  # type: ignore
+        except Exception as e:
+            logger.error(f"Failed to add reviewers to PR #{pr.number}: {e}")
+            raise
 
     def comment_pull_request(self, ctx: StackedPRContextType, pr: PullRequest, comment: str) -> None:
         """Comment on pull request."""
