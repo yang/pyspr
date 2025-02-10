@@ -1,6 +1,7 @@
 """Config module."""
 
 from typing import Dict, Any, Protocol, TypeVar, overload, Union, Optional
+from .models import RepoConfig, UserConfig, PysprConfig
 
 T = TypeVar('T')
 
@@ -20,12 +21,18 @@ class Config:
     """Config object holding repository and user config."""
     def __init__(self, config: Dict[str, Dict[str, Any]]):
         """Initialize with parsed config dict."""
-        repo_config: Dict[str, Any] = config.get('repo', {})
-        user_config: Dict[str, Any] = config.get('user', {})
-        tool_config: Dict[str, Any] = config.get('tool', {}).get('pyspr', {})
-        self.repo: Dict[str, Any] = {k.lower(): v for k, v in repo_config.items()} 
-        self.user: Dict[str, Any] = {k.lower(): v for k, v in user_config.items()}
-        self.tool: Dict[str, Any] = {k.lower(): v for k, v in tool_config.items()}
+        pyspr_config = PysprConfig(
+            repo=RepoConfig(**(config.get('repo', {}))),
+            user=UserConfig(**(config.get('user', {}))),
+            tool=config.get('tool', {}).get('pyspr', {}),
+        )
+        # Convert to lower case dicts for backward compatibility
+        self.repo: Dict[str, Any] = {k.lower(): v for k, v in pyspr_config.repo.model_dump().items()}
+        self.user: Dict[str, Any] = {k.lower(): v for k, v in pyspr_config.user.model_dump().items()}
+        # Convert noRebase to no_rebase for consistency
+        if 'norebase' in self.user:
+            self.user['no_rebase'] = self.user.pop('norebase')
+        self.tool: Dict[str, Any] = {k.lower(): v for k, v in pyspr_config.tool.items()}
         self.state: Optional[Dict[str, Any]] = None
 
         # Convert concurrency to int if present
@@ -37,15 +44,16 @@ class Config:
         
     def get(self, key: str, default: Any = None) -> Any:
         """Get a config value from any section."""
+        key_lower = key.lower()
         # Check tool section first
-        if key.lower() in self.tool:
-            return self.tool[key.lower()]
+        if key_lower in self.tool:
+            return self.tool[key_lower]
         # Then repo section
-        if key.lower() in self.repo:
-            return self.repo[key.lower()]
-        # Then user section
-        if key.lower() in self.user:
-            return self.user[key.lower()]
+        if key_lower in self.repo:
+            return self.repo[key_lower]
+        # Then user section 
+        if key_lower in self.user:
+            return self.user[key_lower]
         return default
 
 def default_config() -> Config:

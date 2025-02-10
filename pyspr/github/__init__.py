@@ -3,10 +3,13 @@
 import os
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Dict, List, Optional, Protocol, Literal
 from github import Github
 from github.Repository import Repository
 import re
+
+# Define merge method type
+MergeMethod = Literal['merge', 'squash', 'rebase']
 
 # Get module logger
 logger = logging.getLogger(__name__)
@@ -86,7 +89,7 @@ class GitHubInterface(Protocol):
         """Get assignable users."""
         ...
         
-    def merge_pull_request(self, ctx: StackedPRContextType, pr: PullRequest, merge_method: str) -> None:
+    def merge_pull_request(self, ctx: StackedPRContextType, pr: PullRequest, merge_method: MergeMethod) -> None:
         """Merge pull request."""
         ...
 
@@ -579,7 +582,7 @@ class GitHubClient:
         users = self.repo.get_assignees()
         return [{"login": u.login, "id": u.login} for u in users]
 
-    def merge_pull_request(self, ctx: StackedPRContextType, pr: PullRequest, merge_method: str) -> None:
+    def merge_pull_request(self, ctx: StackedPRContextType, pr: PullRequest, merge_method: MergeMethod) -> None:
         """Merge pull request using merge queue if configured."""
         if not self.repo:
             return
