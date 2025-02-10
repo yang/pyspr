@@ -13,9 +13,9 @@ import logging
 from typing import Dict, Generator, List, Optional, Set, Tuple, Union
 import pytest
 
-from pyspr.tests.e2e.test_helpers import RepoContext, create_test_repo, run_cmd, test_repo_ctx  # type: ignore
+from pyspr.tests.e2e.test_helpers import RepoContext, create_test_repo, run_cmd
 from pyspr.config import Config
-from pyspr.git import RealGit, Commit
+from pyspr.git import RealGit
 from pyspr.github import GitHubClient, PullRequest, GitHubInfo
 
 # Configure logging
