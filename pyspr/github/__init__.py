@@ -656,7 +656,7 @@ class GitHubClient:
             return body
 
         stack_markdown = self.format_stack_markdown(commit, stack)
-        warning = ("\n\n⚠️ *Part of a stack created by [spr](https://github.com/ejoffe/spr). " +
+        warning = ("\n\n⚠️ *Part of a stack created by [yang/pyspr](https://github.com/yang/pyspr), mostly written by Claude. " +
                   "Do not merge manually using the UI - doing so may have unexpected results.*")
 
         if not body:
