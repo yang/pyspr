@@ -170,12 +170,14 @@ class GitHubClient:
             
         # Use GraphQL to efficiently get all data in one query, matching Go behavior
         query = """
-        query($owner: String!, $name: String!, $after: String) {
+        query {
           viewer {
             login
-          }
-          repository(owner: $owner, name: $name) {
-            pullRequests(first:100, states:[OPEN], orderBy: {field: CREATED_AT, direction: DESC}, after: $after) {
+            pullRequests(
+              first: 100
+              states: [OPEN]
+              orderBy: { field: CREATED_AT, direction: DESC }
+            ) {
               pageInfo {
                 hasNextPage
                 endCursor
@@ -188,12 +190,19 @@ class GitHubClient:
                 baseRefName
                 headRefName
                 mergeable
-                commits(first:100) {
+                reviewDecision
+                repository {
+                  id
+                }
+                commits(first: 100) {
                   nodes {
                     commit {
                       oid
                       messageHeadline
                       messageBody
+                      statusCheckRollup {
+                        state
+                      }
                     }
                   }
                 }
@@ -202,7 +211,6 @@ class GitHubClient:
           }
         }
         """
-        
         spr_branch_pattern = r'^spr/[^/]+/([a-f0-9]{8})'
         
         logger.info(f"> github fetch pull requests")
@@ -245,7 +253,7 @@ class GitHubClient:
             graphql_resp = parse_graphql_response(resp)
             
             # Get PR nodes using the validated model
-            pr_nodes = graphql_resp.data.repository.pullRequests.nodes
+            pr_nodes = graphql_resp.data.viewer.pullRequests.nodes
             
             logger.info(f"GraphQL returned {len(pr_nodes)} open PRs (newest first)")
 

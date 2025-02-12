@@ -35,13 +35,14 @@ class PRNodes(BaseModel):
 
 class GraphQLViewer(BaseModel):
     login: str
+    pullRequests: PRNodes
 
 class GraphQLRepository(BaseModel):
     pullRequests: PRNodes
 
 class GraphQLData(BaseModel):
     viewer: GraphQLViewer
-    repository: GraphQLRepository
+    # repository: GraphQLRepository
 
 class GraphQLErrorLocation(BaseModel):
     line: int
