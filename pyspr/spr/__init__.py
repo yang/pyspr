@@ -567,10 +567,17 @@ class StackedPR:
         else:
             print_header("Pull Requests", use_emoji=True)
             print("")  # Empty line after header
+            
+            # Get repo info for PR URLs
+            owner = self.config.repo.get('github_repo_owner')
+            name = self.config.repo.get('github_repo_name')
+            
             for pr in reversed(github_info.pull_requests):
                 status = "✅ merged" if getattr(pr, 'merged', False) else ""
                 # Space padding to match Go version
                 print(f"   {str(pr)} {status}")
+                if owner and name:
+                    print(f"      https://github.com/{owner}/{name}/pull/{pr.number}")
             print("")  # Empty line after list
 
     def merge_pull_requests(self, ctx: StackedPRContextProtocol, count: Optional[int] = None) -> None:
