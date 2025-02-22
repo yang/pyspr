@@ -380,36 +380,14 @@ class GitHubClient:
 
         # Build PR stack like Go version
         pull_requests: List[PullRequest] = []
-        target_branch = self.config.repo.get('github_branch', 'main')
-        
+
         # Find top PR
-        curr_pr: Optional[PullRequest] = None
         for commit in reversed(local_commits):
             curr_pr = pull_request_map.get(commit.commit_id)
             if curr_pr:
-                logger.debug(f"Found top PR #{curr_pr.number} with commit ID {commit.commit_id}")
-                break
-                
-        # Build stack
-        while curr_pr:
-            curr = curr_pr  # Make a local copy that's definitely not None for insert
-            pull_requests.insert(0, curr)  # Prepend like Go
-            logger.debug(f"Added PR #{curr_pr.number} to stack - base: {curr_pr.base_ref}")
-            if curr_pr.base_ref == target_branch:
-                logger.debug("Reached target branch, stopping")
-                break
-                
-            # Get next commit ID from base branch
-            match = re.match(r'spr/[^/]+/([a-f0-9]{8})', str(curr_pr.base_ref))
-            if not match:
-                logger.debug(f"Base is {curr_pr.base_ref} which doesn't match pattern, stopping")
-                break
-            next_commit_id = match.group(1)
-            curr_pr = pull_request_map.get(next_commit_id)
-            if not curr_pr:
-                logger.debug(f"No PR found for commit {next_commit_id}, stopping")
-                break
-                
+                logger.debug(f"Found PR #{curr_pr.number} with commit ID {commit.commit_id}")
+                pull_requests.insert(0, curr_pr)
+
         logger.debug(f"Final PR stack has {len(pull_requests)} PRs")
         final_prs = list(pull_requests)  # Make copy to avoid type issues
         for pr in final_prs:

@@ -348,10 +348,7 @@ class StackedPR:
         for commit in all_local_commits:
             logger.debug(f"  {commit.commit_hash[:8]}: id={commit.commit_id} subject='{commit.subject}'")
 
-        local_commits = self.align_local_commits(all_local_commits, github_info.pull_requests)
-        logger.debug("Aligned local commits:")
-        for commit in local_commits:
-            logger.debug(f"  {commit.commit_hash[:8]}: id={commit.commit_id}")
+        local_commits = all_local_commits
 
         # Build connected stack like Go version
         target_branch = self.config.repo.get('github_branch', 'main')
