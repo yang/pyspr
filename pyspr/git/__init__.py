@@ -190,6 +190,11 @@ class RealGit:
                 logger.debug(f"Skipping command '{cmd_str}' due to --no-rebase")
                 return ""
 
+        if self.config.get('pretend') and 'push' in cmd_str:
+            # Pretend mode - just log
+            logger.info(f"> git {cmd_str}")
+            return ""
+
         # Always log git commands
         logger.info(f"> git {cmd_str}")
         try:
