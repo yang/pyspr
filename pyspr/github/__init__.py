@@ -277,7 +277,7 @@ class GitHubClient:
                         commit: Optional[Commit] = None
 
                         if commit_nodes:
-                            last_commit_data = commit_nodes[-1]
+                            last_commit_data = commit_nodes[0]
                             last_commit = last_commit_data.commit
                             commit_hash = last_commit.oid
                             commit_msg = last_commit.messageBody
