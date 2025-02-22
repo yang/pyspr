@@ -66,7 +66,7 @@ def setup_git(directory: Optional[str] = None) -> Tuple[Config, RealGit, GitHubC
     config = Config(cfg)
     git_cmd = RealGit(config)
     github = GitHubClient(None, config)
-    
+
     return config, git_cmd, github
 
 @cli.command(name="update", help="Update and create pull requests for updated commits in the stack")
@@ -92,6 +92,7 @@ def update(ctx: Context, directory: Optional[str], reviewer: List[str],
         os.environ["SPR_NOREBASE"] = "true"
 
     config, git_cmd, github = setup_git(directory)
+    config.tool['pretend'] = pretend  # Set pretend mode
     stackedpr = StackedPR(config, github, git_cmd)
     stackedpr.pretend = pretend  # Set pretend mode
     stackedpr.update_pull_requests(ctx, reviewer if reviewer else None, count, labels=list(label) if label else None)

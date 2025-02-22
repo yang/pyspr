@@ -49,6 +49,3 @@ reportUnknownVariableType = true
 reportUnknownArgumentType = true
 reportUntypedFunctionDecorator = true
 reportMissingTypeArgument = true
-
-[tool.pyspr]
-concurrency = 0 # Control degree of concurrency: 0/None=disabled, N=number of workers

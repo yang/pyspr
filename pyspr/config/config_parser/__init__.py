@@ -31,19 +31,11 @@ def parse_config(git_cmd: GitInterface) -> Config:
         'user': {},
         'tool': {
             'pyspr': {
-                'concurrency': 0
+                'concurrency': 0,
+                'pretend': 0
             }
         }
     }
-    
-    # Try to load pyproject.toml for tool.pyspr settings
-    try:
-        with open('pyproject.toml', 'rb') as f:
-            pyproject = tomli.load(f)
-            if 'tool' in pyproject and 'pyspr' in pyproject['tool']:
-                config['tool']['pyspr'].update(pyproject['tool']['pyspr'])
-    except (FileNotFoundError, tomli.TOMLDecodeError):
-        pass  # No pyproject.toml or invalid TOML is fine
     
     # Try to load .spr.yaml from repository root
     try:

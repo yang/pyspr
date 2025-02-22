@@ -28,6 +28,7 @@ class UserConfig(BaseModel):
 class ToolConfig(BaseModel):
     """Tool configuration."""
     concurrency: int = 0
+    pretend: bool = False
 
     class Config:
         """Pydantic config."""
