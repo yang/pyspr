@@ -970,7 +970,7 @@ def test_no_rebase_functionality(test_repo_ctx: RepoContext, caplog: pytest.LogC
             # Verify rebase is skipped (the key test)
             no_rebase = (
                 os.environ.get("SPR_NOREBASE") == "true" or 
-                config.user.get('noRebase', False)
+                config.user.get('no_rebase', False)
             )
             log.info(f"DEBUG: no_rebase={no_rebase}")  # Use log.info instead of log
             if not no_rebase:
@@ -1103,7 +1103,7 @@ def test_no_rebase_pr_stacking(test_repo_ctx: RepoContext) -> None:
             'github_repo_name': ctx.name,
         },
         'user': {
-            'noRebase': True
+            'no_rebase': True
         }
     }
     with open(spr_yaml_path, 'w') as f:

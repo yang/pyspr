@@ -18,7 +18,7 @@ class RepoConfig(BaseModel):
 
 class UserConfig(BaseModel):
     """User configuration."""
-    no_rebase: bool = False  # Renamed from noRebase for consistency
+    no_rebase: bool = False
     log_git_commands: bool = False
 
     class Config:

@@ -15,9 +15,6 @@ class Config:
         # Convert to lower case dicts for backward compatibility
         self.repo: Dict[str, Any] = {k.lower(): v for k, v in pyspr_config.repo.model_dump().items()}
         self.user: Dict[str, Any] = {k.lower(): v for k, v in pyspr_config.user.model_dump().items()}
-        # Convert noRebase to no_rebase for consistency
-        if 'norebase' in self.user:
-            self.user['no_rebase'] = self.user.pop('norebase')
         self.tool: Dict[str, Any] = {k.lower(): v for k, v in pyspr_config.tool.items()}
         self.state: Optional[Dict[str, Any]] = None
 
