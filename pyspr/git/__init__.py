@@ -53,8 +53,9 @@ def get_local_commit_stack(config: ConfigProtocol, git_cmd: GitInterface) -> Lis
         try:
             commits_new: List[Commit] = []
             last_good_hash = target
+            max_changed = -1
 
-            for cid in reversed(commit_hashes):  # Work from newest to oldest
+            for i, cid in enumerate(reversed(commit_hashes)):  # Work from newest to oldest
                 if not cid:
                     continue
                 # Check for commit-id in message
@@ -90,10 +91,14 @@ def get_local_commit_stack(config: ConfigProtocol, git_cmd: GitInterface) -> Lis
                     wip = subject.upper().startswith("WIP")
                     commits_new.insert(0, Commit.from_strings(new_id, new_hash, subject, new_msg, wip))
 
+                    max_changed = i
+
+            commits_changed = commits_new[-(max_changed + 1):]
+
             # Now rewrite history with the new commit IDs
             git_cmd.must_git(f"checkout {curr_branch}")
-            git_cmd.must_git(f"reset --hard {last_good_hash}")
-            for commit in commits_new:
+            git_cmd.must_git(f"reset --hard HEAD~{len(commits_changed)}")
+            for commit in commits_changed:
                 cherry_pick_cmd = f"cherry-pick {commit.commit_hash}"
                 git_cmd.must_git(cherry_pick_cmd)
                 
@@ -186,7 +191,7 @@ class RealGit:
                    os.environ.get("SPR_NOREBASE") == "true")
         if no_rebase:
             # Skip any commands that could modify commit hashes
-            if any(cmd_str.startswith(cmd) for cmd in ("rebase", "cherry-pick", "reset", "merge")):
+            if any(cmd_str.startswith(cmd) for cmd in ("rebase",)):
                 logger.debug(f"Skipping command '{cmd_str}' due to --no-rebase")
                 return ""
 
