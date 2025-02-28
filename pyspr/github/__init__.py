@@ -284,11 +284,6 @@ class GitHubClient:
                             # Try to get commit ID from message
                             logger.debug(f"PR #{pr_data.number} last commit message:\n{commit_msg}")
                             msg_commit_id = re.search(r'commit-id:([a-f0-9]{8})', commit_msg)
-                            if msg_commit_id:
-                                message_id = msg_commit_id.group(1)
-                                logger.debug(f"Found commit ID {message_id} in message")
-                                logger.debug(f"Branch name commit ID: {commit_id}")
-                                commit_id = message_id
                                 
                             headline = last_commit.messageHeadline
                             commit = Commit.from_strings(commit_id, commit_hash, headline)
