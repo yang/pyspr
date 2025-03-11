@@ -222,7 +222,7 @@ class GitHubClient:
             # Execute GraphQL query directly like Go version does
             owner = self.config.repo.get('github_repo_owner')
             name = self.config.repo.get('github_repo_name')
-            target_branch = self.config.repo.get('github_branch', 'main')
+            target_branch = self.config.repo.get('github_branch_target', 'main')
             
             # Variables for GraphQL query
             variables = {
@@ -402,7 +402,7 @@ class GitHubClient:
         if prev_commit:
             base = self.branch_name_from_commit(prev_commit) 
         else:
-            base = self.config.repo.get('github_branch', 'main')
+            base = self.config.repo.get('github_branch_target', 'main')
             
         logger.info(f"> github create #{info.pull_requests[-1].number + 1 if info.pull_requests else 1} : {commit.subject}")
         
@@ -503,8 +503,8 @@ class GitHubClient:
                 desired_base = self.branch_name_from_commit(prev_commit)
                 logger.debug(f"  Should target: {desired_base} (prev commit: {prev_commit.commit_hash[:8]})")
             else:
-                desired_base = self.config.repo.get('github_branch', 'main')
-                logger.debug("  Should target: main (no prev commit)")
+                desired_base = self.config.repo.get('github_branch_target', 'main')
+                logger.debug(f"  Should target: {desired_base} (no prev commit)")
                 
             if current_base != desired_base:
                 logger.info(f"  Updating base from {current_base} to {desired_base}")
