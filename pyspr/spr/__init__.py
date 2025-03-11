@@ -606,7 +606,7 @@ class StackedPR:
         
         # Find base PR (the one targeting main)
         base_pr: Optional[PullRequest] = None
-        branch = self.config.repo.get('github_branch', 'main')
+        branch = self.config.repo.get('github_branch_target', 'main')
         for pr in github_info.pull_requests:
             if pr.base_ref == branch:
                 base_pr = pr
@@ -617,6 +617,8 @@ class StackedPR:
 
         # Build stack from bottom up
         current_pr: Optional[PullRequest] = base_pr
+        # TODO temp measure needed until we switch over to target
+        branch = self.config.repo.get('github_branch', 'main')
         while current_pr:
             prs_in_order.append(current_pr)
             next_pr = None
@@ -644,7 +646,7 @@ class StackedPR:
         pr_to_merge = prs_in_order[pr_index]
 
         # Update base of merging PR to target branch
-        main_branch = self.config.repo.get('github_branch', 'main')
+        main_branch = self.config.repo.get('github_branch_target', 'main')
         from ..pretty import print_header
         
         # Nice header and status for merge
