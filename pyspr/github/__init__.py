@@ -170,19 +170,15 @@ class GitHubClient:
             
         # Use GraphQL to efficiently get all data in one query, matching Go behavior
         query = """
-        query {
-          viewer {
-            login
-            pullRequests(
-              first: 100
-              states: [OPEN]
-              orderBy: { field: CREATED_AT, direction: DESC }
-            ) {
-              pageInfo {
-                hasNextPage
-                endCursor
-              }
-              nodes {
+        query Query($searchQuery: String!) {
+          search(type:ISSUE,first:100,query:$searchQuery){
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+            nodes{
+              __typename
+              ... on PullRequest {
                 id
                 number
                 title
@@ -222,12 +218,12 @@ class GitHubClient:
             # Execute GraphQL query directly like Go version does
             owner = self.config.repo.get('github_repo_owner')
             name = self.config.repo.get('github_repo_name')
+            search_query = f"author:{owner} is:pr is:open repo:{name} sort:updated-desc"
             target_branch = self.config.repo.get('github_branch_target', 'main')
             
             # Variables for GraphQL query
             variables = {
-                "owner": owner,
-                "name": name,
+                "searchQuery": search_query
             }
 
             # Single query (no pagination for now)
@@ -253,7 +249,7 @@ class GitHubClient:
             graphql_resp = parse_graphql_response(resp)
             
             # Get PR nodes using the validated model
-            pr_nodes = graphql_resp.data.viewer.pullRequests.nodes
+            pr_nodes = graphql_resp.data.search.nodes
             
             logger.info(f"GraphQL returned {len(pr_nodes)} open PRs (newest first)")
 

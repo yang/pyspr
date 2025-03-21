@@ -33,16 +33,12 @@ class PRNodes(BaseModel):
     nodes: List[PRNode]
     pageInfo: PageInfo
 
-class GraphQLViewer(BaseModel):
-    login: str
-    pullRequests: PRNodes
-
-class GraphQLRepository(BaseModel):
-    pullRequests: PRNodes
+class GraphQLSearch(BaseModel):
+    nodes: List[PRNode]
+    pageInfo: PageInfo
 
 class GraphQLData(BaseModel):
-    viewer: GraphQLViewer
-    # repository: GraphQLRepository
+    search: GraphQLSearch
 
 class GraphQLErrorLocation(BaseModel):
     line: int
