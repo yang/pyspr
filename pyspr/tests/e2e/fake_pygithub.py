@@ -468,6 +468,7 @@ class FakeGithub:
                 name=repo_name,
                 full_name=full_name_or_id
             )
+            logger.info(f"Created repository: {full_name_or_id}")
             self._save_state()
         
         return self._repos[full_name_or_id]

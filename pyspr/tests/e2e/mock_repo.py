@@ -11,29 +11,9 @@ from pyspr.config import Config
 from pyspr.git import RealGit
 from pyspr.github import GitHubClient
 from pyspr.tests.e2e.test_helpers import RepoContext, run_cmd
-from pyspr.tests.e2e.fake_pygithub import FakeGithub
+from pyspr.tests.e2e.mock_setup import create_github_client
 
 logger = logging.getLogger(__name__)
-
-class MockGitHubClient(GitHubClient):
-    """GitHub client that uses our fake PyGithub."""
-    
-    def __init__(self, ctx, config: Config):
-        """Initialize with config but use fake PyGithub."""
-        self.config = config
-        self.token = "mock-token"
-        
-        # Create fake PyGithub instance directly
-        from pyspr.tests.e2e.fake_pygithub import FakeGithub
-        self.client = FakeGithub(self.token)
-        self._repo = None
-        
-        # Get repository
-        owner = self.config.repo.get('github_repo_owner')
-        name = self.config.repo.get('github_repo_name')
-        if owner and name:
-            self._repo = self.client.get_repo(f"{owner}/{name}")
-
 
 def create_mock_repo_context(owner: str, name: str, test_name: str) -> Generator[RepoContext, None, None]:
     """Create a local repository context with a file remote for testing.
@@ -99,8 +79,8 @@ def create_mock_repo_context(owner: str, name: str, test_name: str) -> Generator
             
             repo_dir = os.path.abspath(os.getcwd())
             
-            # Create config - this will be used by RealGit and MockGitHubClient
-            config = Config({
+            # Create a .spr.yaml file in the repo to ensure config is read by subprocesses
+            config_dict = {
                 'repo': {
                     'github_remote': 'origin',
                     'github_branch': 'main',
@@ -111,11 +91,25 @@ def create_mock_repo_context(owner: str, name: str, test_name: str) -> Generator
                     'mock_remote_url': file_remote_url
                 },
                 'user': {}
-            })
+            }
+            
+            # Write .spr.yaml file
+            import yaml
+            with open('.spr.yaml', 'w') as f:
+                yaml.dump(config_dict, f)
+            
+            # Add .spr.yaml to git
+            run_cmd("git add .spr.yaml")
+            run_cmd("git commit -m 'Add .spr.yaml for testing'")
+            
+            # Create config - this will be used by RealGit and GitHubClient
+            config = Config(config_dict)
             
             # Create git and GitHub clients
             git_cmd = RealGit(config)
-            github = MockGitHubClient(None, config)
+            
+            # Create GitHub client using our mock_setup helper
+            github = create_github_client(None, config)
             
             # Create and return RepoContext
             ctx = RepoContext(

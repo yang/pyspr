@@ -29,7 +29,7 @@ SPR_USE_REAL_GITHUB=true rye run pytest -xvs pyspr/tests/e2e/
 
 - `fake_pygithub.py` - Fake implementation of PyGithub classes
 - `mock_github_module.py` - Interface to make fake PyGithub available
-- `mock_repo.py` - Creates local Git repositories with file:// remotes and MockGitHubClient
+- `mock_repo.py` - Creates local Git repositories with file:// remotes
 - `mock_setup.py` - Helper functions for the main application to use mock GitHub
 - `fixtures.py` - Pytest fixtures that handle mock/real switching
 - `conftest.py` - Ensures mock environment is properly set up
@@ -41,7 +41,7 @@ SPR_USE_REAL_GITHUB=true rye run pytest -xvs pyspr/tests/e2e/
 1. Tests use a `RepoContext` object that contains Git and GitHub clients
 2. When running with mock GitHub, the context uses:
    - Real Git with local file:// remotes
-   - `MockGitHubClient` that directly uses our fake PyGithub classes
+   - Regular `GitHubClient` with our fake PyGithub implementation injected
 3. The fake PyGithub implementation:
    - Stores state in JSON files (under `.git/fake_github`)
    - Simulates API responses for both REST and GraphQL
