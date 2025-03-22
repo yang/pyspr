@@ -18,6 +18,7 @@ class FakeNamedUser:
     login: str
     name: Optional[str] = None
     email: Optional[str] = None
+    github: Optional[Any] = None
     
     def __post_init__(self):
         if self.name is None:
@@ -132,6 +133,11 @@ class FakePullRequest:
             self.state = state
         if base is not None and self.base is not None:
             self.base.ref = base
+            
+        # Save state after updating PR
+        if self.repository and hasattr(self.repository.owner, 'github') and hasattr(self.repository.owner.github, '_save_state'):
+            self.repository.owner.github._save_state()
+            logger.debug(f"Saved state after editing PR #{self.number}")
     
     def create_issue_comment(self, body: str):
         """Add a comment to the pull request."""
@@ -143,6 +149,11 @@ class FakePullRequest:
         for label in labels:
             self._labels.append(str(label))
         logger.info(f"PR #{self.number} labels: {labels}")
+        
+        # Save state after adding labels
+        if self.repository and hasattr(self.repository.owner, 'github') and hasattr(self.repository.owner.github, '_save_state'):
+            self.repository.owner.github._save_state()
+            logger.debug(f"Saved state after adding labels to PR #{self.number}")
     
     def get_commits(self):
         """Get commits in the pull request."""
@@ -168,17 +179,32 @@ class FakePullRequest:
                     self._review_teams.append(FakeTeam(team))
                 else:
                     self._review_teams.append(team)
+                    
+        # Save state after requesting reviews
+        if self.repository and hasattr(self.repository.owner, 'github') and hasattr(self.repository.owner.github, '_save_state'):
+            self.repository.owner.github._save_state()
+            logger.debug(f"Saved state after requesting reviews for PR #{self.number}")
     
     def merge(self, commit_title: str = None, commit_message: str = None, 
              sha: str = None, merge_method: str = "merge"):
         """Merge the pull request."""
         self.merged = True
         self.state = "closed"
+        
+        # Save state after merging PR
+        if self.repository and hasattr(self.repository.owner, 'github') and hasattr(self.repository.owner.github, '_save_state'):
+            self.repository.owner.github._save_state()
+            logger.debug(f"Saved state after merging PR #{self.number}")
     
     def enable_automerge(self, merge_method: str = "merge"):
         """Enable auto-merge for the pull request."""
         self.auto_merge = {"enabled": True, "method": merge_method}
         logger.info(f"PR #{self.number} auto-merge enabled with method: {merge_method}")
+        
+        # Save state after enabling auto-merge
+        if self.repository and hasattr(self.repository.owner, 'github') and hasattr(self.repository.owner.github, '_save_state'):
+            self.repository.owner.github._save_state()
+            logger.debug(f"Saved state after enabling auto-merge for PR #{self.number}")
     
     def to_model(self) -> PullRequestModel:
         """Convert to serializable model."""
@@ -281,6 +307,11 @@ class FakeRepository:
         self._pulls[pr.number] = pr
         self._next_pr_number += 1
         
+        # Save state after creating pull request
+        if hasattr(self.owner, 'github') and hasattr(self.owner.github, '_save_state'):
+            self.owner.github._save_state()
+            logger.debug(f"Saved state after creating PR #{pr.number}")
+        
         return pr
     
     def get_assignees(self) -> List[FakeNamedUser]:
@@ -358,7 +389,27 @@ class FakeRequester:
         for repo_name, repo in self.github._repos.items():
             for pr_num, pr in repo._pulls.items():
                 if pr.state == "open":
+                    # Get a valid commit message for the PR to include commit-id
+                    commit_message = ""
+                    if hasattr(pr, 'body') and pr.body:
+                        commit_message = pr.body
+                    elif hasattr(pr, '_commits') and pr._commits:
+                        for commit in pr._commits:
+                            if hasattr(commit, 'commit_id'):
+                                commit_message += f"\ncommit-id:{commit.commit_id}"
+                    
+                    # Ensure we have a commit ID in the message for test_delete_insert
+                    if hasattr(pr, 'commit') and hasattr(pr.commit, 'commit_id'):
+                        if "commit-id:" not in commit_message:
+                            commit_message += f"\ncommit-id:{pr.commit.commit_id}"
+                    
                     # Build PR node for response
+                    sha = "fake-sha"
+                    if hasattr(pr, 'head') and pr.head and hasattr(pr.head, 'sha'):
+                        sha = pr.head.sha
+                    elif hasattr(pr, 'commit') and pr.commit and hasattr(pr.commit, 'commit_hash'):
+                        sha = pr.commit.commit_hash
+                    
                     pr_node = {
                         "id": f"pr_{pr_num}",
                         "number": pr.number,
@@ -375,9 +426,9 @@ class FakeRequester:
                             "nodes": [
                                 {
                                     "commit": {
-                                        "oid": pr.head.sha if pr.head else "fake-sha",
+                                        "oid": sha,
                                         "messageHeadline": pr.title,
-                                        "messageBody": pr.body,
+                                        "messageBody": commit_message,
                                         "statusCheckRollup": {
                                             "state": "SUCCESS"
                                         }
@@ -391,6 +442,9 @@ class FakeRequester:
         # Add PR nodes to response
         response["data"]["viewer"]["pullRequests"]["nodes"] = pr_nodes
         
+        # Log for debugging
+        logger.info(f"GraphQL returned {len(pr_nodes)} open PRs (newest first)")
+        
         # Return tuple of (headers, data)
         return {}, response
 
@@ -402,6 +456,8 @@ class FakeGithub:
         """Initialize with token, but don't actually use it."""
         self.token = token
         self._user = FakeNamedUser("yang")  # Default user
+        # Set reference to github in user for saving state
+        self._user.github = self
         self._repos: Dict[str, FakeRepository] = {}
         
         # State storage for PRs, etc.
@@ -449,8 +505,10 @@ class FakeGithub:
             state_adapter = TypeAdapter(GithubStateModel)
             state_json = state_adapter.dump_json(state, indent=2)
             
+            os.makedirs(os.path.dirname(state_file), exist_ok=True)
             with open(state_file, "w") as f:
                 f.write(state_json.decode('utf-8'))
+            logger.info(f"Saved fake GitHub state to {state_file} with {len(repos)} repositories")
         except Exception as e:
             logger.error(f"Error saving fake GitHub state: {e}")
     
@@ -463,8 +521,11 @@ class FakeGithub:
         if full_name_or_id not in self._repos:
             # Create new repository if it doesn't exist
             owner_name, repo_name = full_name_or_id.split("/")
+            owner = FakeNamedUser(owner_name)
+            owner.github = self  # Set reference to github for saving state
+            
             self._repos[full_name_or_id] = FakeRepository(
-                owner=FakeNamedUser(owner_name),
+                owner=owner,
                 name=repo_name,
                 full_name=full_name_or_id
             )

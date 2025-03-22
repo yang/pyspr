@@ -24,9 +24,13 @@ def github_environment():
     """
     if not should_use_real_github():
         logger.info("Setting up MOCK GitHub environment")
-        # Nothing to do here - we're directly injecting our mock implementations
+        # Set environment variable to indicate we're using mock GitHub
+        os.environ["SPR_USING_MOCK_GITHUB"] = "true"
     else:
         logger.info("Using REAL GitHub API")
+        # Clear environment variable if it was set
+        if "SPR_USING_MOCK_GITHUB" in os.environ:
+            del os.environ["SPR_USING_MOCK_GITHUB"]
     
     yield
 

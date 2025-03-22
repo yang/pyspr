@@ -51,19 +51,41 @@ class RepoContext:
     def get_test_prs(self) -> List[PullRequest]:
         """Get PRs filtered by this test's tag."""
         result: List[PullRequest] = []
+        log.info(f"Looking for PRs with tag: {self.tag}")
+        
+        # Debug: Check the state of the fake GitHub
+        if hasattr(self.github, 'client') and hasattr(self.github.client, '_repos'):
+            repos = getattr(self.github.client, '_repos', {})
+            for repo_name, repo in repos.items():
+                pulls = getattr(repo, '_pulls', {})
+                log.info(f"Repo {repo_name} has {len(pulls)} PRs")
+                for pr_num, pr in pulls.items():
+                    log.info(f"PR #{pr_num}: {pr.title}")
+        
         info = self.github.get_info(None, self.git_cmd)
         if not info:
+            log.warning("GitHub info is None")
             return result
+            
+        log.info(f"Found {len(info.pull_requests)} PRs in info")
         for pr in info.pull_requests:
+            log.info(f"Checking PR #{pr.number} with commit hash {pr.commit.commit_hash}")
             if pr.from_branch and pr.from_branch.startswith('spr/main/'):
                 try:
                     commit_msg = self.git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
+                    log.info(f"PR #{pr.number} commit message: {commit_msg}")
                     if f"test-tag:{self.tag}" in commit_msg:
-                        log.info(f"Found PR #{pr.number} with tag and commit ID {pr.commit.commit_id}")
+                        log.info(f"Found PR #{pr.number} with tag '{self.tag}' and commit ID {pr.commit.commit_id}")
                         result.append(pr)
+                    else:
+                        log.info(f"PR #{pr.number} does not have tag '{self.tag}'")
                 except Exception as e:
-                    log.info(f"Error checking PR: {e}")
+                    log.info(f"Error checking PR #{pr.number}: {e}")
                     pass
+            else:
+                log.info(f"PR #{pr.number} branch '{pr.from_branch}' doesn't start with 'spr/main/'")
+        
+        log.info(f"Final result: found {len(result)} PRs with tag '{self.tag}'")
         return result
 
     def dump_git_state(self) -> None:
