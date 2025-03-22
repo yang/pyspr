@@ -32,34 +32,6 @@ class FakeGithubState(BaseModel):
             
         for pr in self.pull_requests.values():
             pr.state_ref = self
-        
-        # Handle repositories with old schema missing owner_login
-        keys_to_remove = []
-        repos_to_add = {}
-        
-        for key, repo in self.repositories.items():
-            if not hasattr(repo, 'owner_login') or not repo.owner_login:
-                # Try to extract owner_login from old schema
-                if hasattr(repo, 'owner'):
-                    owner = repo.owner
-                    if isinstance(owner, str):
-                        # For full backward compatibility
-                        repo.owner_login = owner
-                    elif hasattr(repo, 'full_name'):
-                        # Extract from full_name as a fallback
-                        parts = repo.full_name.split('/')
-                        if len(parts) == 2:
-                            repo.owner_login = parts[0]
-                            keys_to_remove.append(key)
-                            repos_to_add[repo.full_name] = repo
-                            
-        # Remove keys that need updating
-        for key in keys_to_remove:
-            del self.repositories[key]
-            
-        # Add with correct keys
-        for key, repo in repos_to_add.items():
-            self.repositories[key] = repo
     
     @model_validator(mode='after')
     def validate_and_link(self):
@@ -129,17 +101,17 @@ class FakeGithubState(BaseModel):
     @classmethod
     def load_from_file(cls, file_path: str) -> "FakeGithubState":
         """Load state from a JSON file."""
-        try:
-            if os.path.exists(file_path):
+        if os.path.exists(file_path):
+            try:
                 with open(file_path, "r") as f:
                     state_json = f.read()
                 state = cls.model_validate_json(state_json)
                 logger.info(f"Loaded state from {file_path}")
                 return state
-        except Exception as e:
-            logger.error(f"Error loading state: {e}")
+            except Exception as e:
+                logger.error(f"Error loading state: {e}")
         
-        # Return empty state if loading failed
+        # Return empty state if file doesn't exist or loading failed
         return cls()
 
 
