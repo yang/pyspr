@@ -1,0 +1,142 @@
+"""Local Git repository setup with mock GitHub for testing."""
+
+import os
+import tempfile
+import uuid
+import logging
+import subprocess
+from typing import Generator, Optional, Dict, Any
+
+from pyspr.config import Config
+from pyspr.git import RealGit
+from pyspr.github import GitHubClient
+from pyspr.tests.e2e.test_helpers import RepoContext, run_cmd
+from pyspr.tests.e2e.fake_pygithub import FakeGithub
+
+logger = logging.getLogger(__name__)
+
+class MockGitHubClient(GitHubClient):
+    """GitHub client that uses our fake PyGithub."""
+    
+    def __init__(self, ctx, config: Config):
+        """Initialize with config but use fake PyGithub."""
+        self.config = config
+        self.token = "mock-token"
+        
+        # Create fake PyGithub instance directly
+        from pyspr.tests.e2e.fake_pygithub import FakeGithub
+        self.client = FakeGithub(self.token)
+        self._repo = None
+        
+        # Get repository
+        owner = self.config.repo.get('github_repo_owner')
+        name = self.config.repo.get('github_repo_name')
+        if owner and name:
+            self._repo = self.client.get_repo(f"{owner}/{name}")
+
+
+def create_mock_repo_context(owner: str, name: str, test_name: str) -> Generator[RepoContext, None, None]:
+    """Create a local repository context with a file remote for testing.
+    
+    Args:
+        owner: Repo owner
+        name: Repo name
+        test_name: Test function name (for tag generation)
+    
+    Yields:
+        RepoContext: Repository context with local Git remote and mock GitHub client
+    """
+    # Always use temp branch for isolation
+    orig_dir = os.getcwd()
+    test_type = test_name.replace('test_', '')
+    unique_tag = f"test-{test_type}-{uuid.uuid4().hex[:8]}"
+    
+    repo_name = f"{owner}/{name}"
+    test_branch = f"test-spr-{uuid.uuid4().hex[:7]}" 
+    logger.info(f"Using test branch {test_branch} for local test repo")
+    
+    ctx = None
+    
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create a bare repository that will serve as our remote
+            remote_dir = os.path.join(tmpdir, "remote.git")
+            os.makedirs(remote_dir)
+            run_cmd(f"git init --bare {remote_dir}")
+            
+            # Create a separate directory for our working repository
+            repo_dir = os.path.join(tmpdir, name)
+            os.mkdir(repo_dir)
+            os.chdir(repo_dir)
+            
+            # Initialize git and set the remote
+            run_cmd("git init")
+            file_remote_url = f"file://{remote_dir}"
+            run_cmd(f"git remote add origin {file_remote_url}")
+            
+            # Add an initial commit and push to establish main branch
+            run_cmd("git config user.name 'Test User'")
+            run_cmd("git config user.email 'test@example.com'")
+            
+            # Create initial file
+            with open("README.md", "w") as f:
+                f.write(f"# {name} test repository\n\nUsed for automated testing.")
+            
+            # Commit and push
+            run_cmd("git add README.md")
+            run_cmd("git commit -m 'Initial commit'")
+            
+            # Create and checkout main branch
+            run_cmd("git branch -M main")
+            run_cmd("git push -u origin main")
+            
+            # Create test branch
+            run_cmd(f"git checkout -b {test_branch}")
+            run_cmd(f"git push -u origin {test_branch}")
+            
+            # Create local branch for tests
+            run_cmd("git checkout -b test_local")
+            
+            repo_dir = os.path.abspath(os.getcwd())
+            
+            # Create config - this will be used by RealGit and MockGitHubClient
+            config = Config({
+                'repo': {
+                    'github_remote': 'origin',
+                    'github_branch': 'main',
+                    'github_branch_target': 'main',
+                    'github_repo_owner': owner,
+                    'github_repo_name': name,
+                    'use_mock_github': True,
+                    'mock_remote_url': file_remote_url
+                },
+                'user': {}
+            })
+            
+            # Create git and GitHub clients
+            git_cmd = RealGit(config)
+            github = MockGitHubClient(None, config)
+            
+            # Create and return RepoContext
+            ctx = RepoContext(
+                owner=owner,
+                name=name,
+                branch=test_branch,
+                repo_dir=repo_dir,
+                tag=unique_tag,
+                git_cmd=git_cmd,
+                github=github
+            )
+            
+            yield ctx
+            
+            # Clean up branches
+            try:
+                run_cmd("git checkout main")
+                run_cmd(f"git branch -D {test_branch} || true")
+                run_cmd(f"git push origin --delete {test_branch} || true")
+            except subprocess.CalledProcessError as e:
+                logger.warning(f"Error during cleanup: {e}")
+            
+    finally:
+        os.chdir(orig_dir)

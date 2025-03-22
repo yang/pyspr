@@ -1,4 +1,4 @@
-"""CLI entry point."""
+"""CLI entry point with mock GitHub support."""
 
 import os
 import sys

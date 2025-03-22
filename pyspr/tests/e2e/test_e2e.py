@@ -13,10 +13,11 @@ import logging
 from typing import Dict, Generator, List, Optional, Set, Tuple, Union
 import pytest
 
-from pyspr.tests.e2e.test_helpers import RepoContext, create_test_repo, run_cmd, test_repo_ctx
+from pyspr.tests.e2e.test_helpers import RepoContext, run_cmd
 from pyspr.config import Config
 from pyspr.git import RealGit
 from pyspr.github import GitHubClient, PullRequest, GitHubInfo
+from pyspr.tests.e2e.fixtures import test_repo_ctx, test_mq_repo_ctx, create_test_repo, github_environment
 
 # Configure logging
 logging.basicConfig(
@@ -530,9 +531,10 @@ def test_reorder(test_repo_ctx: RepoContext) -> None:
     pr_chain = f"#{pr1_after.number} -> #{pr2_after.number} -> #{pr4_after.number} -> #{pr3_after.number}"
     log.info(f"\nVerified PRs after reordering: {pr_chain}")
 
+# We import test_repo_ctx and other fixtures from fixtures.py now
 @pytest.fixture
 def test_repo() -> Generator[Tuple[str, str, str, str], None, None]:
-    """Regular test repo fixture using yang/teststack."""
+    """Regular test repo fixture using yang/teststack with mock or real GitHub."""
     yield from create_test_repo("yang", "teststack")
 
 def _run_merge_test(
@@ -693,11 +695,7 @@ def test_merge_workflow(test_repo_ctx: RepoContext) -> None:
     """Test full merge workflow with real PRs."""
     _run_merge_test(test_repo_ctx, False, 3)
 
-@pytest.fixture
-def test_mq_repo_ctx() -> Generator[RepoContext, None, None]:
-    """Merge queue test repo fixture using yangenttest1/teststack."""
-    from pyspr.tests.e2e.test_helpers import create_repo_context
-    yield from create_repo_context("yangenttest1", "teststack", "test_merge_queue_workflow")
+# We import test_mq_repo_ctx from fixtures.py now
 
 def test_merge_queue_workflow(test_mq_repo_ctx: RepoContext) -> None:
     """Test merge queue workflow with real PRs."""
