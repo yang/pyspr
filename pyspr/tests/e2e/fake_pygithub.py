@@ -69,6 +69,12 @@ class RefModel(BaseModel):
     sha: str = "fake-sha"
 
 
+class CommitInfoModel(BaseModel):
+    """Model for serializing/deserializing commit info."""
+    commit_id: str
+    commit_hash: str
+    subject: str
+
 class PullRequestModel(BaseModel):
     """Model for serializing/deserializing FakePullRequest."""
     number: int
@@ -84,6 +90,7 @@ class PullRequestModel(BaseModel):
     labels: List[str] = Field(default_factory=list)
     auto_merge_enabled: bool = False
     auto_merge_method: Optional[str] = None
+    commit_info: Optional[CommitInfoModel] = None
 
 
 class RepositoryModel(BaseModel):
@@ -98,6 +105,14 @@ class RepositoryModel(BaseModel):
 class GithubStateModel(BaseModel):
     """Model for the entire GitHub state."""
     repositories: Dict[str, RepositoryModel] = Field(default_factory=dict)
+
+
+@dataclass
+class FakeCommitInfo:
+    """Fake implementation of a commit object for FakePullRequest."""
+    commit_id: str
+    commit_hash: str
+    subject: str
 
 
 class FakePullRequest:
@@ -121,6 +136,14 @@ class FakePullRequest:
         self._reviewers: List[FakeNamedUser] = []
         self._review_teams: List[FakeTeam] = []
         self._labels: List[str] = []
+        
+        # Add commit-specific attributes needed for pyspr
+        commit_id = uuid.uuid4().hex[:8]
+        self.commit = FakeCommitInfo(
+            commit_id=commit_id, 
+            commit_hash=uuid.uuid4().hex, 
+            subject=title
+        )
     
     def edit(self, title: str = None, body: str = None, state: str = None, 
             base: str = None, maintainer_can_modify: bool = None):
@@ -208,6 +231,14 @@ class FakePullRequest:
     
     def to_model(self) -> PullRequestModel:
         """Convert to serializable model."""
+        commit_info = None
+        if hasattr(self, 'commit'):
+            commit_info = CommitInfoModel(
+                commit_id=self.commit.commit_id,
+                commit_hash=self.commit.commit_hash,
+                subject=self.commit.subject
+            )
+        
         return PullRequestModel(
             number=self.number,
             title=self.title,
@@ -221,7 +252,8 @@ class FakePullRequest:
             reviewers=[reviewer.login for reviewer in self._reviewers],
             labels=self._labels,
             auto_merge_enabled=self.auto_merge is not None,
-            auto_merge_method=self.auto_merge["method"] if self.auto_merge else None
+            auto_merge_method=self.auto_merge["method"] if self.auto_merge else None,
+            commit_info=commit_info
         )
     
     @classmethod
@@ -251,6 +283,14 @@ class FakePullRequest:
         # Set auto merge
         if model.auto_merge_enabled and model.auto_merge_method:
             pr.auto_merge = {"enabled": True, "method": model.auto_merge_method}
+        
+        # Set commit info if available
+        if model.commit_info:
+            pr.commit = FakeCommitInfo(
+                commit_id=model.commit_info.commit_id,
+                commit_hash=model.commit_info.commit_hash,
+                subject=model.commit_info.subject
+            )
         
         return pr
 
@@ -303,6 +343,20 @@ class FakeRepository:
         )
         pr.base = FakeRef(ref=base, repo=self)
         pr.head = FakeRef(ref=head, repo=self)
+        
+        # Extract commit-id from branch name if it's in spr format
+        import re
+        branch_match = re.match(r'^spr/[^/]+/([a-f0-9]{8})', head)
+        if branch_match:
+            commit_id = branch_match.group(1)
+            # Update the commit info with the commit_id from the branch name
+            if hasattr(pr, 'commit'):
+                pr.commit.commit_id = commit_id
+        
+        # Add commit-id to body if not present
+        if hasattr(pr, 'commit') and hasattr(pr.commit, 'commit_id'):
+            if "commit-id:" not in body:
+                pr.body = f"{body}\ncommit-id:{pr.commit.commit_id}"
         
         self._pulls[pr.number] = pr
         self._next_pr_number += 1
@@ -389,27 +443,24 @@ class FakeRequester:
         for repo_name, repo in self.github._repos.items():
             for pr_num, pr in repo._pulls.items():
                 if pr.state == "open":
-                    # Get a valid commit message for the PR to include commit-id
-                    commit_message = ""
-                    if hasattr(pr, 'body') and pr.body:
-                        commit_message = pr.body
-                    elif hasattr(pr, '_commits') and pr._commits:
-                        for commit in pr._commits:
-                            if hasattr(commit, 'commit_id'):
-                                commit_message += f"\ncommit-id:{commit.commit_id}"
-                    
-                    # Ensure we have a commit ID in the message for test_delete_insert
-                    if hasattr(pr, 'commit') and hasattr(pr.commit, 'commit_id'):
-                        if "commit-id:" not in commit_message:
-                            commit_message += f"\ncommit-id:{pr.commit.commit_id}"
-                    
-                    # Build PR node for response
+                    # Get commit hash from head or commit
                     sha = "fake-sha"
                     if hasattr(pr, 'head') and pr.head and hasattr(pr.head, 'sha'):
                         sha = pr.head.sha
                     elif hasattr(pr, 'commit') and pr.commit and hasattr(pr.commit, 'commit_hash'):
                         sha = pr.commit.commit_hash
                     
+                    # Get commit message with commit-id from body
+                    commit_message = ""
+                    if hasattr(pr, 'body') and pr.body:
+                        commit_message = pr.body
+                    
+                    # Add commit-id if we have one
+                    if hasattr(pr, 'commit') and hasattr(pr.commit, 'commit_id'):
+                        if "commit-id:" not in commit_message:
+                            commit_message += f"\ncommit-id:{pr.commit.commit_id}"
+                    
+                    # Build PR node for response
                     pr_node = {
                         "id": f"pr_{pr_num}",
                         "number": pr.number,

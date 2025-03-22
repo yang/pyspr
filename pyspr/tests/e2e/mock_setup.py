@@ -32,8 +32,17 @@ def create_github_client(ctx: Optional[object], config: Config) -> GitHubClient:
         # Create the GitHub client with default initialization
         client = GitHubClient(ctx, config)
         
+        # Debug current directory before creating fake client
+        logger.info(f"Current directory before creating fake GitHub: {os.getcwd()}")
+        
+        # Create a fake GitHub instance and store it for reuse
+        fake_github = create_fake_github()
+        
+        # Log fake GitHub's data directory
+        logger.info(f"Fake GitHub data directory: {fake_github.data_dir}")
+        
         # Always directly replace the client attribute with our FakeGithub
-        client.client = create_fake_github()
+        client.client = fake_github
         logger.info("Injected fake GitHub instance directly")
         
         # Make sure repo is initialized
@@ -42,6 +51,10 @@ def create_github_client(ctx: Optional[object], config: Config) -> GitHubClient:
             name = config.repo.get('github_repo_name')
             client._repo = client.client.get_repo(f"{owner}/{name}")
             logger.info(f"Initialized repository: {owner}/{name}")
+            
+            # Force saving state after initialization
+            fake_github._save_state()
+            logger.info("Forced saving initial state")
         
         return client
     else:

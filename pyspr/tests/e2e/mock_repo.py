@@ -34,103 +34,112 @@ def create_mock_repo_context(owner: str, name: str, test_name: str) -> Generator
     repo_name = f"{owner}/{name}"
     test_branch = f"test-spr-{uuid.uuid4().hex[:7]}" 
     logger.info(f"Using test branch {test_branch} for local test repo")
+    logger.info(f"Starting in directory: {orig_dir}")
     
     ctx = None
+    tmpdir = None
     
     try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Create a bare repository that will serve as our remote
-            remote_dir = os.path.join(tmpdir, "remote.git")
-            os.makedirs(remote_dir)
-            run_cmd(f"git init --bare {remote_dir}")
-            
-            # Create a separate directory for our working repository
-            repo_dir = os.path.join(tmpdir, name)
-            os.mkdir(repo_dir)
-            os.chdir(repo_dir)
-            
-            # Initialize git and set the remote
-            run_cmd("git init")
-            file_remote_url = f"file://{remote_dir}"
-            run_cmd(f"git remote add origin {file_remote_url}")
-            
-            # Add an initial commit and push to establish main branch
-            run_cmd("git config user.name 'Test User'")
-            run_cmd("git config user.email 'test@example.com'")
-            
-            # Create initial file
-            with open("README.md", "w") as f:
-                f.write(f"# {name} test repository\n\nUsed for automated testing.")
-            
-            # Commit and push
-            run_cmd("git add README.md")
-            run_cmd("git commit -m 'Initial commit'")
-            
-            # Create and checkout main branch
-            run_cmd("git branch -M main")
-            run_cmd("git push -u origin main")
-            
-            # Create test branch
-            run_cmd(f"git checkout -b {test_branch}")
-            run_cmd(f"git push -u origin {test_branch}")
-            
-            # Create local branch for tests
-            run_cmd("git checkout -b test_local")
-            
-            repo_dir = os.path.abspath(os.getcwd())
-            
-            # Create a .spr.yaml file in the repo to ensure config is read by subprocesses
-            config_dict = {
-                'repo': {
-                    'github_remote': 'origin',
-                    'github_branch': 'main',
-                    'github_branch_target': 'main',
-                    'github_repo_owner': owner,
-                    'github_repo_name': name,
-                    'use_mock_github': True,
-                    'mock_remote_url': file_remote_url
-                },
-                'user': {}
-            }
-            
-            # Write .spr.yaml file
-            import yaml
-            with open('.spr.yaml', 'w') as f:
-                yaml.dump(config_dict, f)
-            
-            # Add .spr.yaml to git
-            run_cmd("git add .spr.yaml")
-            run_cmd("git commit -m 'Add .spr.yaml for testing'")
-            
-            # Create config - this will be used by RealGit and GitHubClient
-            config = Config(config_dict)
-            
-            # Create git and GitHub clients
-            git_cmd = RealGit(config)
-            
-            # Create GitHub client using our mock_setup helper
-            github = create_github_client(None, config)
-            
-            # Create and return RepoContext
-            ctx = RepoContext(
-                owner=owner,
-                name=name,
-                branch=test_branch,
-                repo_dir=repo_dir,
-                tag=unique_tag,
-                git_cmd=git_cmd,
-                github=github
-            )
-            
-            yield ctx
-            
-            # Clean up branches
-            try:
-                run_cmd("git checkout main")
-                run_cmd(f"git branch -D {test_branch} || true")
-                run_cmd(f"git push origin --delete {test_branch} || true")
-            except subprocess.CalledProcessError as e:
-                logger.warning(f"Error during cleanup: {e}")
-            
+        # Use manual temporary directory to prevent cleanup so we can debug the state file
+        tmpdir = tempfile.mkdtemp(prefix="pyspr_test_")
+        logger.info(f"Using temporary directory: {tmpdir}")
+        
+        # Create a bare repository that will serve as our remote
+        remote_dir = os.path.join(tmpdir, "remote.git")
+        os.makedirs(remote_dir)
+        run_cmd(f"git init --bare {remote_dir}")
+        
+        # Create a separate directory for our working repository
+        repo_dir = os.path.join(tmpdir, name)
+        os.mkdir(repo_dir)
+        os.chdir(repo_dir)
+        logger.info(f"Changed to repository directory: {repo_dir}")
+        
+        # Initialize git and set the remote
+        run_cmd("git init")
+        file_remote_url = f"file://{remote_dir}"
+        run_cmd(f"git remote add origin {file_remote_url}")
+        
+        # Add an initial commit and push to establish main branch
+        run_cmd("git config user.name 'Test User'")
+        run_cmd("git config user.email 'test@example.com'")
+        
+        # Create initial file
+        with open("README.md", "w") as f:
+            f.write(f"# {name} test repository\n\nUsed for automated testing.")
+        
+        # Commit and push
+        run_cmd("git add README.md")
+        run_cmd("git commit -m 'Initial commit'")
+        
+        # Create and checkout main branch
+        run_cmd("git branch -M main")
+        run_cmd("git push -u origin main")
+        
+        # Create test branch
+        run_cmd(f"git checkout -b {test_branch}")
+        run_cmd(f"git push -u origin {test_branch}")
+        
+        # Create local branch for tests
+        run_cmd("git checkout -b test_local")
+        
+        repo_dir = os.path.abspath(os.getcwd())
+        
+        # Create a .spr.yaml file in the repo to ensure config is read by subprocesses
+        config_dict = {
+            'repo': {
+                'github_remote': 'origin',
+                'github_branch': 'main',
+                'github_branch_target': 'main',
+                'github_repo_owner': owner,
+                'github_repo_name': name,
+                'use_mock_github': True,
+                'mock_remote_url': file_remote_url
+            },
+            'user': {}
+        }
+        
+        # Write .spr.yaml file
+        import yaml
+        with open('.spr.yaml', 'w') as f:
+            yaml.dump(config_dict, f)
+        
+        # Add .spr.yaml to git
+        run_cmd("git add .spr.yaml")
+        run_cmd("git commit -m 'Add .spr.yaml for testing'")
+        
+        # Create config - this will be used by RealGit and GitHubClient
+        config = Config(config_dict)
+        
+        # Create git and GitHub clients
+        git_cmd = RealGit(config)
+        
+        # Create GitHub client using our mock_setup helper
+        github = create_github_client(None, config)
+        
+        # Create and return RepoContext
+        ctx = RepoContext(
+            owner=owner,
+            name=name,
+            branch=test_branch,
+            repo_dir=repo_dir,
+            tag=unique_tag,
+            git_cmd=git_cmd,
+            github=github
+        )
+        
+        yield ctx
+        
+        # Clean up branches
+        try:
+            run_cmd("git checkout main")
+            run_cmd(f"git branch -D {test_branch} || true")
+            run_cmd(f"git push origin --delete {test_branch} || true")
+        except subprocess.CalledProcessError as e:
+            logger.warning(f"Error during cleanup: {e}")
+        
     finally:
+        logger.info(f"Changing back to original directory: {orig_dir}")
         os.chdir(orig_dir)
+        logger.info(f"Test completed. Temp directory: {tmpdir}")
+        # Note: We purposely do not clean up the temp directory so we can examine the state file
