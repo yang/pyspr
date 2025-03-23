@@ -198,10 +198,11 @@ class FakePullRequest:
     def get_commits(self):
         """Get commits in the pull request."""
         # For simplicity, just return a list with the main commit
+        # Use only the commit subject for test compatibility
         return [
             FakeCommit(
                 sha=self.commit_hash, 
-                message=f"{self.commit_subject}\n\ncommit-id:{self.commit_id}",
+                message=self.commit_subject,
                 github_ref=self.github_ref
             )
         ]
@@ -296,7 +297,7 @@ class FakeRepository:
         """Get pull request by number."""
         if not self.github_ref:
             raise ValueError("Repository not linked to GitHub instance")
-        return self.github_ref.get_pull(number)
+        return self.github_ref.get_pull(number, repo_name=self.full_name)
     
     def get_pulls(self, state: str = "open", sort: str = None, 
                  direction: str = None, head: str = None, base: str = None):
@@ -305,7 +306,8 @@ class FakeRepository:
             return []
             
         result = []
-        for pr in self.github_ref.pull_requests.values():
+        for key, pr in self.github_ref.pull_requests.items():
+            # Check if PR belongs to this repository
             if pr.owner_login == self.owner_login and pr.repository_name == self.name:
                 if state and pr.state != state:
                     continue
@@ -322,10 +324,14 @@ class FakeRepository:
         if not self.github_ref:
             raise ValueError("Repository not linked to GitHub instance")
             
-        # Create new PR
+        # Create new PR with repository-specific number
         pr_number = self.next_pr_number
         self.next_pr_number += 1
         
+        # Generate a unique commit ID
+        commit_id = uuid.uuid4().hex[:8]
+        
+        # Use body as provided for tests
         pr = FakePullRequest(
             number=pr_number,
             title=title,
@@ -335,23 +341,16 @@ class FakeRepository:
             head_sha="fake-sha",  # Placeholder
             owner_login=self.owner_login,
             repository_name=self.name,
+            commit_id=commit_id,
             github_ref=self.github_ref
         )
         
-        # Extract commit-id from branch name if it's in spr format
-        branch_match = re.match(r'^spr/[^/]+/([a-f0-9]{8})', head)
-        if branch_match:
-            commit_id = branch_match.group(1)
-            pr.commit_id = commit_id
+        logger.debug(f"Created PR #{pr.number} in repo {self.full_name}")
         
-        # Add commit-id to body if not present
-        if "commit-id:" not in body:
-            pr.body = f"{body}\ncommit-id:{pr.commit_id}"
-        
-        logger.debug(f"Created PR #{pr.number}")
-        
-        # Add PR to GitHub
-        self.github_ref.pull_requests[pr_number] = pr
+        # Add PR to GitHub's global PR dictionary using a composite key
+        # Format: "owner/repo:number" to ensure uniqueness across repos
+        pr_key = f"{self.full_name}:{pr_number}"
+        self.github_ref.pull_requests[pr_key] = pr
         
         # Save state after creating PR
         if self.github_ref:
@@ -400,7 +399,7 @@ class FakeRequester:
         pr_nodes = []
         
         # Get all open PRs
-        for pr in self.github_ref.pull_requests.values():
+        for key, pr in self.github_ref.pull_requests.items():
             if pr.state == "open":
                 # Build PR node for response
                 pr_node = {
@@ -421,7 +420,7 @@ class FakeRequester:
                                 "commit": {
                                     "oid": pr.commit_hash,
                                     "messageHeadline": pr.title,
-                                    "messageBody": f"{pr.body}\ncommit-id:{pr.commit_id}",
+                                    "messageBody": pr.body,
                                     "statusCheckRollup": {
                                         "state": "SUCCESS"
                                     }
@@ -452,8 +451,19 @@ class FakeGithub:
     data_dir: str = field(default="")
     state_file: str = field(default="")
     
-    def __post_init__(self):
-        """Initialize after creation."""
+    def initialize(self, load_state: bool = True):
+        """Initialize the instance with proper setup.
+        
+        This method handles the side effects like creating directories,
+        loading state from disk, and linking objects. Call this after
+        constructing the instance when you want these side effects.
+        
+        Args:
+            load_state: Whether to load state from the state file if it exists
+            
+        Returns:
+            Self, for method chaining
+        """
         # Set up file paths
         if not self.data_dir:
             self.data_dir = os.path.join(os.getcwd(), ".git", "fake_github")
@@ -462,8 +472,9 @@ class FakeGithub:
         if not self.state_file:
             self.state_file = os.path.join(self.data_dir, "fake_github_state.yaml")
         
-        # Load state if file exists
-        self._load_state()
+        # Load state if requested and file exists
+        if load_state:
+            self._load_state()
         
         # Create default user if doesn't exist
         if "yang" not in self.users:
@@ -474,6 +485,8 @@ class FakeGithub:
         
         # Set github_ref for all objects
         self._link_objects()
+        
+        return self
     
     def _link_objects(self):
         """Link all objects to this GitHub instance."""
@@ -502,8 +515,23 @@ class FakeGithub:
                     self.users = data["users"]
                 if "repositories" in data:
                     self.repositories = data["repositories"]
+                    
+                    # Fix next_pr_number to ensure new PRs get unique numbers
+                    for repo in self.repositories.values():
+                        repo.next_pr_number = 1
+                        
                 if "pull_requests" in data:
                     self.pull_requests = data["pull_requests"]
+                    
+                    # Update next_pr_number in repositories based on loaded PRs
+                    for pr in self.pull_requests.values():
+                        repo_name = f"{pr.owner_login}/{pr.repository_name}"
+                        if repo_name in self.repositories:
+                            repo = self.repositories[repo_name]
+                            repo.next_pr_number = max(repo.next_pr_number, pr.number + 1)
+                
+                # Set proper github_ref for all objects after loading
+                self._link_objects()
                 
                 logger.info(f"Loaded state from {self.state_file} - {len(self.users)} users, {len(self.repositories)} repos, {len(self.pull_requests)} PRs")
             else:
@@ -567,10 +595,27 @@ class FakeGithub:
         
         return repo
     
-    def get_pull(self, number: int):
-        """Get pull request by number."""
+    def get_pull(self, number: int, repo_name: str = None):
+        """Get pull request by number.
+        
+        Args:
+            number: The PR number
+            repo_name: Optional repository name (full_name format: "owner/repo")
+                      If not provided, will try to find any PR with this number
+        """
+        # If repo_name provided, use composite key
+        if repo_name and f"{repo_name}:{number}" in self.pull_requests:
+            return self.pull_requests[f"{repo_name}:{number}"]
+            
+        # Otherwise try with simple number (for backward compatibility)
         if number in self.pull_requests:
             return self.pull_requests[number]
+        
+        # If still not found, try looking through all PRs
+        for key, pr in self.pull_requests.items():
+            if pr.number == number:
+                return pr
+                
         raise ValueError(f"Pull request #{number} not found")
     
     # Requester for GraphQL API
@@ -592,9 +637,28 @@ class FakeUnknownObjectException(FakeGithubException):
     """Fake unknown object exception."""
     pass
 
-def create_fake_github(token: Optional[str] = None) -> FakeGithub:
+def create_fake_github(token: Optional[str] = None, 
+                    data_dir: Optional[str] = None,
+                    state_file: Optional[str] = None,
+                    load_state: bool = True) -> FakeGithub:
     """Create a fake GitHub instance for direct injection.
     
     This is the recommended way to create a fake GitHub client.
+    
+    Args:
+        token: Optional GitHub token (not used, but included for API compatibility)
+        data_dir: Directory to store state files in
+        state_file: Path to the state file to use
+        load_state: Whether to load existing state from disk
+        
+    Returns:
+        An initialized FakeGithub instance
     """
-    return FakeGithub(token=token)
+    github = FakeGithub(token=token)
+    
+    if data_dir:
+        github.data_dir = data_dir
+    if state_file:
+        github.state_file = state_file
+        
+    return github.initialize(load_state=load_state)
