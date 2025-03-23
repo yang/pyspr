@@ -117,6 +117,14 @@ def create_mock_repo_context(owner: str, name: str, test_name: str) -> Generator
         # Create GitHub client using our mock_setup helper
         github = create_github_client(None, config)
         
+        # Log mock GitHub state
+        if hasattr(github, 'client'):
+            logger.info(f"Mock GitHub client state: data_dir={github.client.data_dir}")
+            logger.info(f"Mock GitHub state file: {github.client.state_file}")
+            logger.info(f"PRs in dictionary: {len(github.client.pull_requests)}")
+            for key, pr in github.client.pull_requests.items():
+                logger.info(f"PR key {key}: #{pr.number} - {pr.title}")
+        
         # Create and return RepoContext
         ctx = RepoContext(
             owner=owner,

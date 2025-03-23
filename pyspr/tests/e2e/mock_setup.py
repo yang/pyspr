@@ -54,6 +54,24 @@ def create_github_client(ctx: Optional[object], config: Config) -> GitHubClient:
             # Force saving state after initialization
             fake_github._save_state()
             logger.info("Forced saving initial state")
+            
+            # Create a test PR for debugging
+            if True:  # We'll always do this for debugging
+                logger.info("Creating test PR in mock GitHub for debugging")
+                repo = client._repo
+                if repo:
+                    try:
+                        test_pr = repo.create_pull(
+                            title="Test PR from mock setup",
+                            body="This is a test PR",
+                            base="main",
+                            head="test-branch"
+                        )
+                        logger.info(f"Created test PR #{test_pr.number}")
+                        fake_github._save_state()
+                        logger.info(f"Saved state after creating test PR, dictionary now has {len(fake_github.pull_requests)} entries")
+                    except Exception as e:
+                        logger.error(f"Failed to create test PR: {e}")
         
         return client
     else:
