@@ -19,10 +19,6 @@ class FakeGithubState(BaseModel):
     pull_requests: Dict[int, "FakePullRequest"] = Field(default_factory=dict)
     github_root: Optional["FakeGithub"] = Field(default=None, exclude=True)  # Parent reference
     
-    model_config = {
-        "arbitrary_types_allowed": True
-    }
-    
     def __init__(self, **data):
         super().__init__(**data)
         self._link_objects()
@@ -136,10 +132,6 @@ class FakeNamedUser(BaseModel):
     
     # Non-serialized reference to parent state
     state_ref: Optional[FakeGithubState] = Field(default=None, exclude=True)
-    
-    model_config = {
-        "arbitrary_types_allowed": True
-    }
     
     def model_post_init(self, __context):
         """Initialize default values after creation."""
