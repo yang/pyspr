@@ -62,6 +62,7 @@ class RepoContext:
                 for pr_num, pr in pulls.items():
                     log.info(f"PR #{pr_num}: {pr.title}")
         
+        # Otherwise continue with standard approach
         info = self.github.get_info(None, self.git_cmd)
         if not info:
             log.warning("GitHub info is None")
@@ -72,6 +73,7 @@ class RepoContext:
             log.info(f"Checking PR #{pr.number} with commit hash {pr.commit.commit_hash}")
             if pr.from_branch and pr.from_branch.startswith('spr/main/'):
                 try:
+                    # Check the commit message for test tag
                     commit_msg = self.git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
                     log.info(f"PR #{pr.number} commit message: {commit_msg}")
                     if f"test-tag:{self.tag}" in commit_msg:

@@ -331,6 +331,9 @@ class FakeRepository:
         # Generate a unique commit ID
         commit_id = uuid.uuid4().hex[:8]
         
+        # Extract commit message from the title for tag tracking
+        commit_subject = title
+        
         # Use body as provided for tests
         pr = FakePullRequest(
             number=pr_number,
@@ -342,6 +345,7 @@ class FakeRepository:
             owner_login=self.owner_login,
             repository_name=self.name,
             commit_id=commit_id,
+            commit_subject=commit_subject,
             github_ref=self.github_ref
         )
         
@@ -352,8 +356,7 @@ class FakeRepository:
         pr_key = f"{self.full_name}:{pr_number}"
         self.github_ref.pull_requests[pr_key] = pr
         
-        # Add simple key for backward compatibility - many functions expect to find PR by number
-        self.github_ref.pull_requests[str(pr_number)] = pr
+        # Don't add simple key anymore to avoid duplicates that cause serialization issues
         
         # Debug PR dictionary state 
         logger.debug(f"PR dictionary now has {len(self.github_ref.pull_requests)} entries")
@@ -411,8 +414,10 @@ class FakeRequester:
         for key in self.github_ref.pull_requests:
             logger.debug(f"PR key: {key}")
             
-        # Get all open PRs
-        for key, pr in self.github_ref.pull_requests.items():
+        # Get all open PRs - make a copy of the items since we're filtering
+        pr_items = list(self.github_ref.pull_requests.items())
+        
+        for key, pr in pr_items:
             logger.debug(f"Checking PR with key {key}: state={pr.state}, title={pr.title}")
             if pr.state == "open":
                 # Build PR node for response
@@ -520,58 +525,72 @@ class FakeGithub:
             return
         
         try:
+            # Configure YAML to handle object references properly
+            yaml.Loader.ignore_aliases = lambda *args: False
+            
             with open(self.state_file, "r") as f:
-                data = yaml.unsafe_load(f)
+                # Use the Loader that preserves object types and references
+                data = yaml.load(f, Loader=yaml.Loader)
             
             if data:
-                # Copy all loaded data to our instance
-                if "users" in data:
-                    self.users = data["users"]
-                if "repositories" in data:
-                    self.repositories = data["repositories"]
-                    
-                    # Fix next_pr_number to ensure new PRs get unique numbers
-                    for repo in self.repositories.values():
-                        repo.next_pr_number = 1
-                        
-                if "pull_requests" in data:
-                    self.pull_requests = data["pull_requests"]
-                    
-                    # Update next_pr_number in repositories based on loaded PRs
-                    for pr in self.pull_requests.values():
-                        repo_name = f"{pr.owner_login}/{pr.repository_name}"
-                        if repo_name in self.repositories:
-                            repo = self.repositories[repo_name]
-                            repo.next_pr_number = max(repo.next_pr_number, pr.number + 1)
+                if isinstance(data, FakeGithub):
+                    # New format - direct object
+                    self.users = data.users
+                    self.repositories = data.repositories
+                    self.pull_requests = data.pull_requests
+                    self._user = data._user
+                    # Don't copy state_file and data_dir
                 
                 # Set proper github_ref for all objects after loading
                 self._link_objects()
+                
+                # Fix next_pr_number in repositories to ensure new PRs get unique numbers
+                max_pr_numbers = {}
+                for pr in self.pull_requests.values():
+                    repo_name = f"{pr.owner_login}/{pr.repository_name}"
+                    max_pr_numbers[repo_name] = max(max_pr_numbers.get(repo_name, 0), pr.number + 1)
+                
+                # Update next_pr_number in repositories
+                for repo_name, repo in self.repositories.items():
+                    if repo_name in max_pr_numbers:
+                        repo.next_pr_number = max_pr_numbers[repo_name]
+                    else:
+                        repo.next_pr_number = 1
                 
                 logger.info(f"Loaded state from {self.state_file} - {len(self.users)} users, {len(self.repositories)} repos, {len(self.pull_requests)} PRs")
             else:
                 logger.info(f"Empty state file {self.state_file}")
         except Exception as e:
             logger.error(f"Error loading state: {e}")
+            logger.exception(e)  # Log the full exception for debugging
     
     def _save_state(self):
         """Save state to file."""
         logger.info(f"FakeGithub._save_state() called, saving to {self.state_file}")
         logger.info(f"State has {len(self.pull_requests)} PRs")
         
-        # Prepare data for YAML
-        data = {
-            "users": self.users,
-            "repositories": self.repositories,
-            "pull_requests": self.pull_requests
-        }
+        # Clean up any duplicate PRs by using a temporary dict with only composite keys
+        clean_pull_requests = {}
+        for key, pr in self.pull_requests.items():
+            if ":" in key:  # This is a composite key like "owner/repo:number"
+                clean_pull_requests[key] = pr
+            # Skip any numeric keys or non-composite keys
+
+        # Replace the pull_requests dict with the cleaned version
+        self.pull_requests = clean_pull_requests
+        
+        # Configure YAML to properly handle object references
+        yaml.Dumper.ignore_aliases = lambda *args: False
         
         try:
             os.makedirs(os.path.dirname(self.state_file), exist_ok=True)
             with open(self.state_file, "w") as f:
-                yaml.dump(data, f, default_flow_style=False)
+                # Use yaml.Dumper to preserve object types and references
+                yaml.dump(self, f, Dumper=yaml.Dumper, default_flow_style=False)
             logger.info(f"Saved state to {self.state_file}")
         except Exception as e:
             logger.error(f"Error saving state: {e}")
+            logger.exception(e)  # Log the full exception for debugging
     
     def get_user(self, login: str = None, create: bool = False):
         """Get user by login or current authenticated user."""
@@ -626,21 +645,11 @@ class FakeGithub:
         if repo_name and f"{repo_name}:{number}" in self.pull_requests:
             logger.debug(f"Found PR #{number} with composite key {repo_name}:{number}")
             return self.pull_requests[f"{repo_name}:{number}"]
-            
-        # Try with string number key
-        str_num = str(number)
-        if str_num in self.pull_requests:
-            logger.debug(f"Found PR #{number} with string key")
-            return self.pull_requests[str_num]
-            
-        # Otherwise try with integer number (for backward compatibility)
-        if number in self.pull_requests:
-            logger.debug(f"Found PR #{number} with integer key")
-            return self.pull_requests[number]
         
-        # If still not found, try looking through all PRs
+        # If specific repository not provided, look through all PRs to find one with matching number
         for key, pr in self.pull_requests.items():
             if pr.number == number:
+                logger.debug(f"Found PR #{number} with key {key}")
                 return pr
                 
         raise ValueError(f"Pull request #{number} not found")
