@@ -5,11 +5,10 @@ import tempfile
 import uuid
 import logging
 import subprocess
-from typing import Generator, Optional, Dict, Any
+from typing import Generator
 
 from pyspr.config import Config
 from pyspr.git import RealGit
-from pyspr.github import GitHubClient
 from pyspr.tests.e2e.test_helpers import RepoContext, run_cmd
 from pyspr.tests.e2e.mock_setup import create_github_client
 
@@ -31,7 +30,6 @@ def create_mock_repo_context(owner: str, name: str, test_name: str) -> Generator
     test_type = test_name.replace('test_', '')
     unique_tag = f"test-{test_type}-{uuid.uuid4().hex[:8]}"
     
-    repo_name = f"{owner}/{name}"
     test_branch = f"test-spr-{uuid.uuid4().hex[:7]}" 
     logger.info(f"Using test branch {test_branch} for local test repo")
     logger.info(f"Starting in directory: {orig_dir}")
@@ -117,14 +115,6 @@ def create_mock_repo_context(owner: str, name: str, test_name: str) -> Generator
         
         # Create GitHub client using our mock_setup helper
         github = create_github_client(None, config)
-        
-        # Log mock GitHub state
-        if hasattr(github, 'client'):
-            logger.info(f"Mock GitHub client state: data_dir={github.client.data_dir}")
-            logger.info(f"Mock GitHub state file: {github.client.state_file}")
-            logger.info(f"PRs in dictionary: {len(github.client.pull_requests)}")
-            for key, pr in github.client.pull_requests.items():
-                logger.info(f"PR key {key}: #{pr.number} - {pr.title}")
         
         # Create and return RepoContext
         ctx = RepoContext(
