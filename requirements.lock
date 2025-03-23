@@ -27,8 +27,6 @@ debugpy==1.8.12
     # via pyspr
 deprecated==1.2.18
     # via pygithub
-exceptiongroup==1.2.2
-    # via pytest
 execnet==2.1.1
     # via pytest-xdist
 gitdb==4.0.12
@@ -67,9 +65,7 @@ smmap==5.0.2
     # via gitdb
 tomli==2.2.1
     # via pyspr
-    # via pytest
 typing-extensions==4.12.2
-    # via annotated-types
     # via pydantic
     # via pydantic-core
     # via pygithub

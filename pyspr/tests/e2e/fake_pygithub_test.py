@@ -2,16 +2,8 @@
 
 import os
 import tempfile
-import uuid
-from pathlib import Path
 
-import yaml
-import pytest
 from pyspr.tests.e2e.fake_pygithub import (
-    FakeNamedUser,
-    FakeRepository,
-    FakePullRequest,
-    FakeGithub,
     create_fake_github
 )
 
@@ -204,9 +196,3 @@ def test_graphql_functionality():
         pr_numbers = [node["number"] for node in pr_nodes]
         assert pr1.number in pr_numbers
         assert pr2.number in pr_numbers
-
-if __name__ == "__main__":
-    # This allows running the tests directly
-    import sys
-    import pytest
-    sys.exit(pytest.main(["-vs", __file__]))

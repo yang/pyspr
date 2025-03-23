@@ -1,11 +1,11 @@
 """Fake PyGithub implementation for testing."""
 
+from __future__ import annotations
+
 import yaml
-import uuid
 import logging
-import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Any, Tuple, Optional, Set, Union, ClassVar
+from typing import Dict, List, Any, Tuple, Optional
 import subprocess
 from pathlib import Path
 import os
@@ -62,10 +62,6 @@ class FakeRef:
         if not self.github_ref or not self.repository_full_name:
             return None
         return self.github_ref.get_repo(self.repository_full_name)
-    
-    # Allow dict-like access for compatibility
-    def __getitem__(self, key):
-        return getattr(self, key)
 
 @dataclass
 class FakeTeam:
@@ -205,8 +201,8 @@ class FakePullRequest:
             return {"enabled": True, "method": self._data.auto_merge_method}
         return None
     
-    def edit(self, title: str = None, body: str = None, state: str = None, 
-            base: str = None, maintainer_can_modify: bool = None):
+    def edit(self, title: str | None = None, body: str | None = None, state: str | None = None, 
+            base: str | None = None, maintainer_can_modify: bool | None = None):
         """Update pull request properties."""
         if title is not None:
             self._data.title = title
@@ -227,7 +223,7 @@ class FakePullRequest:
         # We don't need to store comments for testing
         logger.info(f"PR #{self.number} comment: {body}")
     
-    def add_to_labels(self, *labels):
+    def add_to_labels(self, *labels: str):
         """Add labels to the pull request."""
         for label in labels:
             if str(label) not in self._data.labels:
@@ -239,15 +235,15 @@ class FakePullRequest:
             logger.debug(f"Saving state after adding labels to PR #{self.number}")
             self._data.github_ref._save_state()
     
-    def get_commits(self):
+    def get_commits(self) -> list[FakeCommit]:
         """Get commits in the pull request."""
         return []  # Not needed for testing
     
-    def get_review_requests(self):
+    def get_review_requests(self) -> tuple[list[Any], list[Any]]:
         """Get users and teams requested for review."""
         return [], []  # No teams for testing
     
-    def create_review_request(self, reviewers=None, team_reviewers=None):
+    def create_review_request(self, reviewers: list[str] | None = None, team_reviewers: list[str] | None = None):
         """Request reviews from users or teams."""
         if reviewers:
             self._data.reviewers.extend(reviewers)
@@ -258,8 +254,8 @@ class FakePullRequest:
             logger.debug(f"Saving state after requesting reviews for PR #{self.number}")
             self._data.github_ref._save_state()
     
-    def merge(self, commit_title: str = None, commit_message: str = None, 
-             sha: str = None, merge_method: str = "merge"):
+    def merge(self, commit_title: str = "", commit_message: str = "", 
+             sha: str = "", merge_method: str = "merge"):
         """Merge the pull request."""
         self._data.merged = True
         self._data.state = "closed"
@@ -295,7 +291,7 @@ class FakeRepository:
             return None
         return self.github_ref.get_user(self.owner_login)
     
-    def get_assignees(self):
+    def get_assignees(self) -> list[FakeNamedUser]:
         """Get assignable users for repository."""
         # For simplicity, just return some default users
         if not self.github_ref:
@@ -304,15 +300,9 @@ class FakeRepository:
         # Always reload state first
         self.github_ref._load_state()
             
-        result = []
-        for login in ["yang", "testuser"]:
-            user = self.github_ref.get_user(login, create=True)
-            if user:
-                result.append(user)
-                
-        return result
+        return [self.github_ref.get_user(login, create=True) for login in ["yang", "testuser"] if login]
     
-    def get_pull(self, number: int):
+    def get_pull(self, number: int) -> FakePullRequest:
         """Get pull request by number."""
         if not self.github_ref:
             raise ValueError("Repository not linked to GitHub instance")
@@ -322,8 +312,8 @@ class FakeRepository:
             
         return self.github_ref.get_pull(number, repo_name=self.full_name)
 
-    def get_pulls(self, state: str = "open", sort: str = None, 
-                 direction: str = None, head: str = None, base: str = None):
+    def get_pulls(self, state: str = "open", sort: str = "", 
+                 direction: str = "", head: str = "", base: str = "") -> list[FakePullRequest]:
         """Get pull requests with optional filtering."""
         if not self.github_ref:
             return []
@@ -331,19 +321,12 @@ class FakeRepository:
         # Always reload state first
         self.github_ref._load_state()
         
-        result = []
-        for key, pr in self.github_ref.pull_requests.items():
-            # Check if PR belongs to this repository
-            if pr._data.owner_login == self.owner_login and pr._data.repository_name == self.name:
-                if state and pr.state != state:
-                    continue
-                if head and pr.head.ref != head:
-                    continue
-                if base and pr.base.ref != base:
-                    continue
-                result.append(pr)
-        return result
-    
+        return [pr for pr in self.github_ref.pull_requests.values()
+                if pr._data.owner_login == self.owner_login and
+                pr._data.repository_name == self.name and
+                (not state or pr.state == state) and
+                (not head or pr.head.ref == head) and
+                (not base or pr.base.ref == base)]
     def create_pull(self, title: str, body: str, base: str, head: str, 
                    maintainer_can_modify: bool = True, draft: bool = False):
         """Create a new pull request."""
