@@ -5,7 +5,7 @@ import json
 import uuid
 import logging
 import re
-from typing import Dict, List, Any, Tuple, Optional, Set, Union, cast, ClassVar
+from typing import Dict, List, Any, Tuple, Optional, Set, Union, cast, ClassVar, ForwardRef
 from dataclasses import dataclass, field
 from pathlib import Path
 from pydantic import BaseModel, TypeAdapter, Field, model_validator
@@ -17,6 +17,11 @@ class FakeGithubState(BaseModel):
     users: Dict[str, "FakeNamedUser"] = Field(default_factory=dict)
     repositories: Dict[str, "FakeRepository"] = Field(default_factory=dict)
     pull_requests: Dict[int, "FakePullRequest"] = Field(default_factory=dict)
+    github_root: Optional["FakeGithub"] = Field(default=None, exclude=True)  # Parent reference
+    
+    model_config = {
+        "arbitrary_types_allowed": True
+    }
     
     def __init__(self, **data):
         super().__init__(**data)
@@ -38,6 +43,14 @@ class FakeGithubState(BaseModel):
         """Link all objects after validation (during deserialization)."""
         self._link_objects()
         return self
+    
+    def save(self):
+        """Save state to disk using github root reference."""
+        if self.github_root:
+            logger.debug(f"Saving state via github_root")
+            self.github_root._save_state()
+        else:
+            logger.warning(f"Cannot save state - github_root is None")
     
     def create_user(self, login: str, **kwargs) -> "FakeNamedUser":
         """Create a new user linked to this state."""
@@ -123,6 +136,10 @@ class FakeNamedUser(BaseModel):
     
     # Non-serialized reference to parent state
     state_ref: Optional[FakeGithubState] = Field(default=None, exclude=True)
+    
+    model_config = {
+        "arbitrary_types_allowed": True
+    }
     
     def model_post_init(self, __context):
         """Initialize default values after creation."""
@@ -299,7 +316,8 @@ class FakePullRequest(BaseModel):
             
         # Save state after updating PR
         if self.state_ref:
-            logger.debug(f"Saved state after editing PR #{self.number}")
+            logger.debug(f"Saving state after editing PR #{self.number}")
+            self.state_ref.save()
     
     def create_issue_comment(self, body: str):
         """Add a comment to the pull request."""
@@ -315,7 +333,8 @@ class FakePullRequest(BaseModel):
         
         # Save state after adding labels
         if self.state_ref:
-            logger.debug(f"Saved state after adding labels to PR #{self.number}")
+            logger.debug(f"Saving state after adding labels to PR #{self.number}")
+            self.state_ref.save()
     
     def get_commits(self):
         """Get commits in the pull request."""
@@ -359,7 +378,8 @@ class FakePullRequest(BaseModel):
         
         # Save state after requesting reviews
         if self.state_ref:
-            logger.debug(f"Saved state after requesting reviews for PR #{self.number}")
+            logger.debug(f"Saving state after requesting reviews for PR #{self.number}")
+            self.state_ref.save()
     
     def merge(self, commit_title: str = None, commit_message: str = None, 
              sha: str = None, merge_method: str = "merge"):
@@ -369,7 +389,8 @@ class FakePullRequest(BaseModel):
         
         # Save state after merging PR
         if self.state_ref:
-            logger.debug(f"Saved state after merging PR #{self.number}")
+            logger.debug(f"Saving state after merging PR #{self.number}")
+            self.state_ref.save()
     
     def enable_automerge(self, merge_method: str = "merge"):
         """Enable auto-merge for the pull request."""
@@ -379,7 +400,8 @@ class FakePullRequest(BaseModel):
         
         # Save state after enabling auto-merge
         if self.state_ref:
-            logger.debug(f"Saved state after enabling auto-merge for PR #{self.number}")
+            logger.debug(f"Saving state after enabling auto-merge for PR #{self.number}")
+            self.state_ref.save()
 
 
 class FakeRepository(BaseModel):
@@ -482,6 +504,14 @@ class FakeRepository(BaseModel):
             pr.body = f"{body}\ncommit-id:{pr.commit_id}"
         
         logger.debug(f"Created PR #{pr.number}")
+        
+        # Save state after creating PR
+        if self.state_ref:
+            logger.debug(f"Saving state after creating PR #{pr.number}")
+            self.state_ref.save()
+        else:
+            logger.warning(f"Cannot save state after creating PR - state_ref is None")
+        
         return pr
 
 
@@ -582,6 +612,9 @@ class FakeGithub:
         # Load or create state
         self.state = FakeGithubState.load_from_file(self.state_file)
         
+        # Set self as the github root for the state
+        self.state.github_root = self
+        
         # Create default user if not exists
         if "yang" not in self.state.users:
             self.state.create_user(login="yang")
@@ -591,6 +624,8 @@ class FakeGithub:
     
     def _save_state(self):
         """Save state to file storage."""
+        logger.info(f"FakeGithub._save_state() called, saving to {self.state_file}")
+        logger.info(f"State has {len(self.state.pull_requests)} PRs")
         self.state.save_to_file(self.state_file)
     
     def get_user(self) -> "FakeNamedUser":
@@ -600,6 +635,7 @@ class FakeGithub:
     def get_repo(self, full_name_or_id: str) -> "FakeRepository":
         """Get repository by full name."""
         repo = self.state.get_repo(full_name_or_id)
+        # Force save state to persist any changes
         self._save_state()
         return repo
     
@@ -608,3 +644,7 @@ class FakeGithub:
     def _Github__requester(self):
         """Fake requester for GraphQL."""
         return FakeRequester(self.state)
+
+
+# Pydantic v2 handles forward references automatically
+# No need to call update_forward_refs
