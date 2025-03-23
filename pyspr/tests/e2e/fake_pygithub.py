@@ -1,214 +1,83 @@
 """Fake PyGithub implementation for testing."""
 
 import os
-import json
+import yaml
 import uuid
 import logging
 import re
-from typing import Dict, List, Any, Tuple, Optional, Set, Union, cast, ClassVar, ForwardRef
 from dataclasses import dataclass, field
-from pathlib import Path
-from pydantic import BaseModel, TypeAdapter, Field, model_validator
+from typing import Dict, List, Any, Tuple, Optional, Set, Union, ClassVar
 
 logger = logging.getLogger(__name__)
 
-class FakeGithubState(BaseModel):
-    """Root state model that contains all GitHub entities with their relationships."""
-    users: Dict[str, "FakeNamedUser"] = Field(default_factory=dict)
-    repositories: Dict[str, "FakeRepository"] = Field(default_factory=dict)
-    pull_requests: Dict[int, "FakePullRequest"] = Field(default_factory=dict)
-    github_root: Optional["FakeGithub"] = Field(default=None, exclude=True)  # Parent reference
-    
-    def __init__(self, **data):
-        super().__init__(**data)
-        self._link_objects()
-    
-    def _link_objects(self):
-        """Link all child objects to this state instance."""
-        for user in self.users.values():
-            user.state_ref = self
-            
-        for repo in self.repositories.values():
-            repo.state_ref = self
-            
-        for pr in self.pull_requests.values():
-            pr.state_ref = self
-    
-    @model_validator(mode='after')
-    def validate_and_link(self):
-        """Link all objects after validation (during deserialization)."""
-        self._link_objects()
-        return self
-    
-    def save(self):
-        """Save state to disk using github root reference."""
-        if self.github_root:
-            logger.debug(f"Saving state via github_root")
-            self.github_root._save_state()
-        else:
-            logger.warning(f"Cannot save state - github_root is None")
-    
-    def create_user(self, login: str, **kwargs) -> "FakeNamedUser":
-        """Create a new user linked to this state."""
-        user = FakeNamedUser(login=login, **kwargs)
-        user.state_ref = self
-        self.users[login] = user
-        return user
-    
-    def create_repository(self, owner_login: str, name: str, **kwargs) -> "FakeRepository":
-        """Create a new repository linked to this state."""
-        full_name = f"{owner_login}/{name}"
-        repo = FakeRepository(
-            owner_login=owner_login,
-            name=name, 
-            full_name=full_name,
-            **kwargs
-        )
-        repo.state_ref = self
-        self.repositories[full_name] = repo
-        return repo
-    
-    def create_pull_request(self, number: int, repo_full_name: str, **kwargs) -> "FakePullRequest":
-        """Create a new PR linked to this state."""
-        owner_login, repo_name = repo_full_name.split('/')
-        # Check if owner_login is already in kwargs
-        if 'owner_login' not in kwargs:
-            kwargs['owner_login'] = owner_login
-        if 'repository_name' not in kwargs:
-            kwargs['repository_name'] = repo_name
-        
-        pr = FakePullRequest(
-            number=number,
-            **kwargs
-        )
-        pr.state_ref = self
-        self.pull_requests[number] = pr
-        return pr
-    
-    def get_repo(self, full_name: str) -> "FakeRepository":
-        """Get repository by full name, creating it if it doesn't exist."""
-        if full_name not in self.repositories:
-            owner_login, repo_name = full_name.split('/')
-            # Create owner if doesn't exist
-            if owner_login not in self.users:
-                self.create_user(login=owner_login)
-            
-            self.create_repository(owner_login=owner_login, name=repo_name)
-            
-        return self.repositories[full_name]
-    
-    def save_to_file(self, file_path: str):
-        """Save state to a JSON file."""
-        try:
-            os.makedirs(os.path.dirname(file_path), exist_ok=True)
-            with open(file_path, "w") as f:
-                f.write(self.model_dump_json(indent=2))
-            logger.info(f"Saved state to {file_path}")
-        except Exception as e:
-            logger.error(f"Error saving state: {e}")
-    
-    @classmethod
-    def load_from_file(cls, file_path: str) -> "FakeGithubState":
-        """Load state from a JSON file."""
-        if os.path.exists(file_path):
-            try:
-                with open(file_path, "r") as f:
-                    state_json = f.read()
-                state = cls.model_validate_json(state_json)
-                logger.info(f"Loaded state from {file_path}")
-                return state
-            except Exception as e:
-                logger.error(f"Error loading state: {e}")
-        
-        # Return empty state if file doesn't exist or loading failed
-        return cls()
-
-
-class FakeNamedUser(BaseModel):
+@dataclass
+class FakeNamedUser:
     """Fake implementation of the NamedUser class from PyGithub."""
     login: str
     name: Optional[str] = None
     email: Optional[str] = None
+    github_ref: Any = field(default=None, repr=False)
     
-    # Non-serialized reference to parent state
-    state_ref: Optional[FakeGithubState] = Field(default=None, exclude=True)
-    
-    def model_post_init(self, __context):
+    def __post_init__(self):
         """Initialize default values after creation."""
         if self.name is None:
             self.name = self.login.capitalize()
         if self.email is None:
             self.email = f"{self.login}@example.com"
-    
-    @property
-    def repositories(self) -> List["FakeRepository"]:
-        """Get repositories owned by this user."""
-        if not self.state_ref:
-            return []
-        return [repo for repo in self.state_ref.repositories.values() 
-                if repo.owner_login == self.login]
 
-
-class FakeCommit(BaseModel):
+@dataclass
+class FakeCommit:
     """Fake implementation of the Commit class from PyGithub."""
     sha: str
     message: str
-    
-    # Non-serialized reference to parent state
-    state_ref: Optional[FakeGithubState] = Field(default=None, exclude=True)
+    github_ref: Any = field(default=None, repr=False)
     
     # Nested structure just like PyGithub
     @property
     def commit(self):
         return self
 
-
-class FakeCommitInfo(BaseModel):
+@dataclass
+class FakeCommitInfo:
     """Fake implementation of a commit object for FakePullRequest."""
     commit_id: str
     commit_hash: str
     subject: str
-    
-    # Non-serialized reference to parent state
-    state_ref: Optional[FakeGithubState] = Field(default=None, exclude=True)
+    github_ref: Any = field(default=None, repr=False)
 
-
-class FakeRef(BaseModel):
+@dataclass
+class FakeRef:
     """Fake implementation of the Ref class from PyGithub."""
     ref: str
     sha: str = "fake-sha"
     repository_full_name: Optional[str] = None
-    
-    # Non-serialized reference to parent state
-    state_ref: Optional[FakeGithubState] = Field(default=None, exclude=True)
+    github_ref: Any = field(default=None, repr=False)
     
     @property
-    def repo(self) -> Optional["FakeRepository"]:
+    def repo(self):
         """Get the repository this ref belongs to."""
-        if not self.state_ref or not self.repository_full_name:
+        if not self.github_ref or not self.repository_full_name:
             return None
-        return self.state_ref.repositories.get(self.repository_full_name)
+        return self.github_ref.get_repo(self.repository_full_name)
     
     # Allow dict-like access for compatibility
     def __getitem__(self, key):
         return getattr(self, key)
 
-
-class FakeTeam(BaseModel):
+@dataclass
+class FakeTeam:
     """Fake implementation of the Team class from PyGithub."""
     name: str
     slug: Optional[str] = None
+    github_ref: Any = field(default=None, repr=False)
     
-    # Non-serialized reference to parent state
-    state_ref: Optional[FakeGithubState] = Field(default=None, exclude=True)
-    
-    def model_post_init(self, __context):
+    def __post_init__(self):
         """Initialize default values after creation."""
         if self.slug is None:
             self.slug = self.name.lower()
 
-
-class FakePullRequest(BaseModel):
+@dataclass
+class FakePullRequest:
     """Fake implementation of the PullRequest class from PyGithub."""
     number: int
     title: str = ""
@@ -220,18 +89,16 @@ class FakePullRequest(BaseModel):
     base_ref: str = "main"
     head_ref: str = ""
     head_sha: str = "fake-sha"
-    reviewers: List[str] = Field(default_factory=list)
-    labels: List[str] = Field(default_factory=list)
+    reviewers: List[str] = field(default_factory=list)
+    labels: List[str] = field(default_factory=list)
     auto_merge_enabled: bool = False
     auto_merge_method: Optional[str] = None
     commit_id: str = ""
     commit_hash: str = ""
     commit_subject: str = ""
+    github_ref: Any = field(default=None, repr=False)
     
-    # Non-serialized reference to parent state
-    state_ref: Optional[FakeGithubState] = Field(default=None, exclude=True)
-    
-    def model_post_init(self, __context):
+    def __post_init__(self):
         """Initialize default values after creation."""
         if not self.head_ref:
             self.head_ref = f"pr-{self.number}-branch"
@@ -243,51 +110,51 @@ class FakePullRequest(BaseModel):
             self.commit_subject = self.title
     
     @property
-    def user(self) -> Optional["FakeNamedUser"]:
+    def user(self):
         """Get the user who created this PR."""
-        if not self.state_ref:
+        if not self.github_ref:
             return None
-        return self.state_ref.users.get(self.owner_login)
+        return self.github_ref.get_user(self.owner_login)
     
     @property
-    def repository(self) -> Optional["FakeRepository"]:
+    def repository(self):
         """Get the repository this PR belongs to."""
-        if not self.state_ref:
+        if not self.github_ref:
             return None
         repo_full_name = f"{self.owner_login}/{self.repository_name}"
-        return self.state_ref.repositories.get(repo_full_name)
+        return self.github_ref.get_repo(repo_full_name)
     
     @property
-    def base(self) -> "FakeRef":
+    def base(self):
         """Get the base ref for this PR."""
         return FakeRef(
             ref=self.base_ref, 
             repository_full_name=f"{self.owner_login}/{self.repository_name}",
-            state_ref=self.state_ref
+            github_ref=self.github_ref
         )
     
     @property
-    def head(self) -> "FakeRef":
+    def head(self):
         """Get the head ref for this PR."""
         return FakeRef(
             ref=self.head_ref,
             sha=self.head_sha,
             repository_full_name=f"{self.owner_login}/{self.repository_name}",
-            state_ref=self.state_ref
+            github_ref=self.github_ref
         )
     
     @property
-    def commit(self) -> "FakeCommitInfo":
+    def commit(self):
         """Get the commit info for this PR."""
         return FakeCommitInfo(
             commit_id=self.commit_id,
             commit_hash=self.commit_hash,
             subject=self.commit_subject,
-            state_ref=self.state_ref
+            github_ref=self.github_ref
         )
     
     @property
-    def auto_merge(self) -> Optional[Dict[str, Any]]:
+    def auto_merge(self):
         """Get auto merge info if enabled."""
         if self.auto_merge_enabled and self.auto_merge_method:
             return {"enabled": True, "method": self.auto_merge_method}
@@ -307,9 +174,9 @@ class FakePullRequest(BaseModel):
             self.base_ref = base
             
         # Save state after updating PR
-        if self.state_ref:
+        if self.github_ref:
             logger.debug(f"Saving state after editing PR #{self.number}")
-            self.state_ref.save()
+            self.github_ref._save_state()
     
     def create_issue_comment(self, body: str):
         """Add a comment to the pull request."""
@@ -324,9 +191,9 @@ class FakePullRequest(BaseModel):
         logger.info(f"PR #{self.number} labels: {labels}")
         
         # Save state after adding labels
-        if self.state_ref:
+        if self.github_ref:
             logger.debug(f"Saving state after adding labels to PR #{self.number}")
-            self.state_ref.save()
+            self.github_ref._save_state()
     
     def get_commits(self):
         """Get commits in the pull request."""
@@ -335,18 +202,18 @@ class FakePullRequest(BaseModel):
             FakeCommit(
                 sha=self.commit_hash, 
                 message=f"{self.commit_subject}\n\ncommit-id:{self.commit_id}",
-                state_ref=self.state_ref
+                github_ref=self.github_ref
             )
         ]
     
-    def get_review_requests(self) -> Tuple[List["FakeNamedUser"], List["FakeTeam"]]:
+    def get_review_requests(self):
         """Get users and teams requested for review."""
         users = []
         teams = []
         
-        if self.state_ref:
+        if self.github_ref:
             for login in self.reviewers:
-                user = self.state_ref.users.get(login)
+                user = self.github_ref.get_user(login)
                 if user:
                     users.append(user)
         
@@ -361,17 +228,17 @@ class FakePullRequest(BaseModel):
                     if reviewer not in self.reviewers:
                         self.reviewers.append(reviewer)
                     # Create user if doesn't exist
-                    if self.state_ref and reviewer not in self.state_ref.users:
-                        self.state_ref.create_user(login=reviewer)
+                    if self.github_ref:
+                        self.github_ref.get_user(reviewer, create=True)
                 else:
                     # Assume it's a FakeNamedUser
                     if reviewer.login not in self.reviewers:
                         self.reviewers.append(reviewer.login)
         
         # Save state after requesting reviews
-        if self.state_ref:
+        if self.github_ref:
             logger.debug(f"Saving state after requesting reviews for PR #{self.number}")
-            self.state_ref.save()
+            self.github_ref._save_state()
     
     def merge(self, commit_title: str = None, commit_message: str = None, 
              sha: str = None, merge_method: str = "merge"):
@@ -380,9 +247,9 @@ class FakePullRequest(BaseModel):
         self.state = "closed"
         
         # Save state after merging PR
-        if self.state_ref:
+        if self.github_ref:
             logger.debug(f"Saving state after merging PR #{self.number}")
-            self.state_ref.save()
+            self.github_ref._save_state()
     
     def enable_automerge(self, merge_method: str = "merge"):
         """Enable auto-merge for the pull request."""
@@ -391,98 +258,84 @@ class FakePullRequest(BaseModel):
         logger.info(f"PR #{self.number} auto-merge enabled with method: {merge_method}")
         
         # Save state after enabling auto-merge
-        if self.state_ref:
+        if self.github_ref:
             logger.debug(f"Saving state after enabling auto-merge for PR #{self.number}")
-            self.state_ref.save()
+            self.github_ref._save_state()
 
-
-class FakeRepository(BaseModel):
+@dataclass
+class FakeRepository:
     """Fake implementation of the Repository class from PyGithub."""
     owner_login: str
     name: str
     full_name: str
     next_pr_number: int = 1
-    
-    # Non-serialized reference to parent state
-    state_ref: Optional[FakeGithubState] = Field(default=None, exclude=True)
+    github_ref: Any = field(default=None, repr=False)
     
     @property
-    def owner(self) -> Optional["FakeNamedUser"]:
+    def owner(self):
         """Get the owner of this repository."""
-        if not self.state_ref:
+        if not self.github_ref:
             return None
-        return self.state_ref.users.get(self.owner_login)
+        return self.github_ref.get_user(self.owner_login)
     
-    @property
-    def _pulls(self) -> Dict[int, "FakePullRequest"]:
-        """Get PRs for this repository (as a dictionary by number)."""
-        if not self.state_ref:
-            return {}
-        
-        result = {}
-        for pr in self.state_ref.pull_requests.values():
-            if pr.owner_login == self.owner_login and pr.repository_name == self.name:
-                result[pr.number] = pr
-        
-        return result
-    
-    def get_assignees(self) -> List["FakeNamedUser"]:
+    def get_assignees(self):
         """Get assignable users for repository."""
         # For simplicity, just return some default users
-        if not self.state_ref:
+        if not self.github_ref:
             return []
             
         result = []
         for login in ["yang", "testuser"]:
-            user = self.state_ref.users.get(login)
-            if not user and self.state_ref:
-                user = self.state_ref.create_user(login=login)
+            user = self.github_ref.get_user(login, create=True)
             if user:
                 result.append(user)
                 
         return result
     
-    def get_pull(self, number: int) -> "FakePullRequest":
+    def get_pull(self, number: int):
         """Get pull request by number."""
-        pulls = self._pulls
-        if number not in pulls:
-            raise ValueError(f"Pull request #{number} not found")
-        return pulls[number]
+        if not self.github_ref:
+            raise ValueError("Repository not linked to GitHub instance")
+        return self.github_ref.get_pull(number)
     
     def get_pulls(self, state: str = "open", sort: str = None, 
-                 direction: str = None, head: str = None, base: str = None) -> List["FakePullRequest"]:
+                 direction: str = None, head: str = None, base: str = None):
         """Get pull requests with optional filtering."""
+        if not self.github_ref:
+            return []
+            
         result = []
-        for pr in self._pulls.values():
-            if state and pr.state != state:
-                continue
-            if head and pr.head_ref != head:
-                continue
-            if base and pr.base_ref != base:
-                continue
-            result.append(pr)
+        for pr in self.github_ref.pull_requests.values():
+            if pr.owner_login == self.owner_login and pr.repository_name == self.name:
+                if state and pr.state != state:
+                    continue
+                if head and pr.head_ref != head:
+                    continue
+                if base and pr.base_ref != base:
+                    continue
+                result.append(pr)
         return result
     
     def create_pull(self, title: str, body: str, base: str, head: str, 
-                   maintainer_can_modify: bool = True, draft: bool = False) -> "FakePullRequest":
+                   maintainer_can_modify: bool = True, draft: bool = False):
         """Create a new pull request."""
-        if not self.state_ref:
-            raise ValueError("Repository not linked to state")
+        if not self.github_ref:
+            raise ValueError("Repository not linked to GitHub instance")
             
         # Create new PR
         pr_number = self.next_pr_number
         self.next_pr_number += 1
         
-        pr = self.state_ref.create_pull_request(
+        pr = FakePullRequest(
             number=pr_number,
-            repo_full_name=self.full_name,
             title=title,
             body=body,
             base_ref=base,
             head_ref=head,
             head_sha="fake-sha",  # Placeholder
             owner_login=self.owner_login,
-            repository_name=self.name
+            repository_name=self.name,
+            github_ref=self.github_ref
         )
         
         # Extract commit-id from branch name if it's in spr format
@@ -497,23 +350,24 @@ class FakeRepository(BaseModel):
         
         logger.debug(f"Created PR #{pr.number}")
         
+        # Add PR to GitHub
+        self.github_ref.pull_requests[pr_number] = pr
+        
         # Save state after creating PR
-        if self.state_ref:
+        if self.github_ref:
             logger.debug(f"Saving state after creating PR #{pr.number}")
-            self.state_ref.save()
+            self.github_ref._save_state()
         else:
-            logger.warning(f"Cannot save state after creating PR - state_ref is None")
+            logger.warning(f"Cannot save state after creating PR - github_ref is None")
         
         return pr
 
-
+@dataclass
 class FakeRequester:
     """Fake implementation of requester for GraphQL."""
+    github_ref: Any = field(default=None, repr=False)
     
-    def __init__(self, state: FakeGithubState):
-        self.state = state
-    
-    def requestJsonAndCheck(self, method: str, url: str, input: Dict[str, Any] = None) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    def requestJsonAndCheck(self, method: str, url: str, input: Dict[str, Any] = None):
         """Handle GraphQL requests."""
         if method == "POST" and url == "https://api.github.com/graphql" and input:
             return self._handle_graphql(input)
@@ -521,7 +375,7 @@ class FakeRequester:
         # Default empty response
         return {}, {}
     
-    def _handle_graphql(self, input: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    def _handle_graphql(self, input: Dict[str, Any]):
         """Handle GraphQL query."""
         query = input.get("query", "")
         variables = input.get("variables", {})
@@ -546,7 +400,7 @@ class FakeRequester:
         pr_nodes = []
         
         # Get all open PRs
-        for pr in self.state.pull_requests.values():
+        for pr in self.github_ref.pull_requests.values():
             if pr.state == "open":
                 # Build PR node for response
                 pr_node = {
@@ -587,56 +441,160 @@ class FakeRequester:
         # Return tuple of (headers, data)
         return {}, response
 
-
+@dataclass
 class FakeGithub:
     """Fake implementation of the Github class from PyGithub."""
+    token: Optional[str] = None
+    users: Dict[str, FakeNamedUser] = field(default_factory=dict)
+    repositories: Dict[str, FakeRepository] = field(default_factory=dict)
+    pull_requests: Dict[int, FakePullRequest] = field(default_factory=dict)
+    _user: Optional[FakeNamedUser] = None
+    data_dir: str = field(default="")
+    state_file: str = field(default="")
     
-    def __init__(self, token: str = None, *args, **kwargs):
-        """Initialize with token, but don't actually use it."""
-        # Initialize state
-        self.token = token
-        self.data_dir = os.path.join(os.getcwd(), ".git", "fake_github")
+    def __post_init__(self):
+        """Initialize after creation."""
+        # Set up file paths
+        if not self.data_dir:
+            self.data_dir = os.path.join(os.getcwd(), ".git", "fake_github")
         os.makedirs(self.data_dir, exist_ok=True)
         
-        # State file path
-        self.state_file = os.path.join(self.data_dir, "fake_github_state.json")
+        if not self.state_file:
+            self.state_file = os.path.join(self.data_dir, "fake_github_state.yaml")
         
-        # Load or create state
-        self.state = FakeGithubState.load_from_file(self.state_file)
+        # Load state if file exists
+        self._load_state()
         
-        # Set self as the github root for the state
-        self.state.github_root = self
-        
-        # Create default user if not exists
-        if "yang" not in self.state.users:
-            self.state.create_user(login="yang")
+        # Create default user if doesn't exist
+        if "yang" not in self.users:
+            self.users["yang"] = FakeNamedUser(login="yang", github_ref=self)
         
         # Set default user
-        self._user = self.state.users["yang"]
+        self._user = self.users["yang"]
+        
+        # Set github_ref for all objects
+        self._link_objects()
+    
+    def _link_objects(self):
+        """Link all objects to this GitHub instance."""
+        for user in self.users.values():
+            user.github_ref = self
+        
+        for repo in self.repositories.values():
+            repo.github_ref = self
+        
+        for pr in self.pull_requests.values():
+            pr.github_ref = self
+    
+    def _load_state(self):
+        """Load state from file."""
+        if not os.path.exists(self.state_file):
+            logger.info(f"State file {self.state_file} does not exist")
+            return
+        
+        try:
+            with open(self.state_file, "r") as f:
+                data = yaml.unsafe_load(f)
+            
+            if data:
+                # Copy all loaded data to our instance
+                if "users" in data:
+                    self.users = data["users"]
+                if "repositories" in data:
+                    self.repositories = data["repositories"]
+                if "pull_requests" in data:
+                    self.pull_requests = data["pull_requests"]
+                
+                logger.info(f"Loaded state from {self.state_file} - {len(self.users)} users, {len(self.repositories)} repos, {len(self.pull_requests)} PRs")
+            else:
+                logger.info(f"Empty state file {self.state_file}")
+        except Exception as e:
+            logger.error(f"Error loading state: {e}")
     
     def _save_state(self):
-        """Save state to file storage."""
+        """Save state to file."""
         logger.info(f"FakeGithub._save_state() called, saving to {self.state_file}")
-        logger.info(f"State has {len(self.state.pull_requests)} PRs")
-        self.state.save_to_file(self.state_file)
+        logger.info(f"State has {len(self.pull_requests)} PRs")
+        
+        # Prepare data for YAML
+        data = {
+            "users": self.users,
+            "repositories": self.repositories,
+            "pull_requests": self.pull_requests
+        }
+        
+        try:
+            os.makedirs(os.path.dirname(self.state_file), exist_ok=True)
+            with open(self.state_file, "w") as f:
+                yaml.dump(data, f, default_flow_style=False)
+            logger.info(f"Saved state to {self.state_file}")
+        except Exception as e:
+            logger.error(f"Error saving state: {e}")
     
-    def get_user(self) -> "FakeNamedUser":
-        """Get current authenticated user."""
-        return self._user
+    def get_user(self, login: str = None, create: bool = False):
+        """Get user by login or current authenticated user."""
+        if login is None:
+            return self._user
+        
+        if login in self.users:
+            return self.users[login]
+        
+        if create:
+            user = FakeNamedUser(login=login, github_ref=self)
+            self.users[login] = user
+            return user
+        
+        return None
     
-    def get_repo(self, full_name_or_id: str) -> "FakeRepository":
+    def get_repo(self, full_name_or_id: str):
         """Get repository by full name."""
-        repo = self.state.get_repo(full_name_or_id)
-        # Force save state to persist any changes
-        self._save_state()
+        if full_name_or_id in self.repositories:
+            return self.repositories[full_name_or_id]
+        
+        # Create repo if it doesn't exist
+        owner_login, name = full_name_or_id.split('/')
+        repo = FakeRepository(
+            owner_login=owner_login,
+            name=name,
+            full_name=full_name_or_id,
+            github_ref=self
+        )
+        self.repositories[full_name_or_id] = repo
+        
+        # Create owner if doesn't exist
+        if owner_login not in self.users:
+            self.users[owner_login] = FakeNamedUser(login=owner_login, github_ref=self)
+        
         return repo
     
-    # Add requester for GraphQL - also acts as a proxy
+    def get_pull(self, number: int):
+        """Get pull request by number."""
+        if number in self.pull_requests:
+            return self.pull_requests[number]
+        raise ValueError(f"Pull request #{number} not found")
+    
+    # Requester for GraphQL API
     @property
     def _Github__requester(self):
         """Fake requester for GraphQL."""
-        return FakeRequester(self.state)
+        return FakeRequester(github_ref=self)
 
+# Fake exceptions
+class FakeGithubException(Exception):
+    """Base exception class for fake GitHub."""
+    pass
 
-# Pydantic v2 handles forward references automatically
-# No need to call update_forward_refs
+class FakeBadCredentialsException(FakeGithubException):
+    """Fake bad credentials exception."""
+    pass
+
+class FakeUnknownObjectException(FakeGithubException):
+    """Fake unknown object exception."""
+    pass
+
+def create_fake_github(token: Optional[str] = None) -> FakeGithub:
+    """Create a fake GitHub instance for direct injection.
+    
+    This is the recommended way to create a fake GitHub client.
+    """
+    return FakeGithub(token=token)

@@ -7,7 +7,6 @@ from typing import Optional, Any
 from pyspr.config import Config
 from pyspr.github import GitHubClient
 from pyspr.tests.e2e.mock_github_module import create_fake_github
-from pyspr.tests.e2e.fake_pygithub import FakeGithub
 
 logger = logging.getLogger(__name__)
 
