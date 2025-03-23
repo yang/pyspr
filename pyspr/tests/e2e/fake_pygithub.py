@@ -285,6 +285,9 @@ class FakeRepository:
         if not self.github_ref:
             return []
             
+        # Always reload state first
+        self.github_ref._load_state()
+            
         result = []
         for login in ["yang", "testuser"]:
             user = self.github_ref.get_user(login, create=True)
@@ -297,14 +300,21 @@ class FakeRepository:
         """Get pull request by number."""
         if not self.github_ref:
             raise ValueError("Repository not linked to GitHub instance")
+            
+        # Always reload state first
+        self.github_ref._load_state()
+            
         return self.github_ref.get_pull(number, repo_name=self.full_name)
-    
+
     def get_pulls(self, state: str = "open", sort: str = None, 
                  direction: str = None, head: str = None, base: str = None):
         """Get pull requests with optional filtering."""
         if not self.github_ref:
             return []
             
+        # Always reload state first
+        self.github_ref._load_state()
+        
         result = []
         for key, pr in self.github_ref.pull_requests.items():
             # Check if PR belongs to this repository
@@ -323,6 +333,9 @@ class FakeRepository:
         """Create a new pull request."""
         if not self.github_ref:
             raise ValueError("Repository not linked to GitHub instance")
+            
+        # Always reload state first
+        self.github_ref._load_state()
             
         # Create new PR with repository-specific number
         pr_number = self.next_pr_number
@@ -387,6 +400,9 @@ class FakeRequester:
     
     def _handle_graphql(self, input: Dict[str, Any]):
         """Handle GraphQL query."""
+        # Always reload state first
+        self.github_ref._load_state()
+        
         query = input.get("query", "")
         variables = input.get("variables", {})
         
@@ -591,6 +607,9 @@ class FakeGithub:
     
     def get_user(self, login: str = None, create: bool = False):
         """Get user by login or current authenticated user."""
+        # Always reload state first
+        self._load_state()
+        
         if login is None:
             return self._user
         
@@ -606,6 +625,9 @@ class FakeGithub:
     
     def get_repo(self, full_name_or_id: str):
         """Get repository by full name."""
+        # Always reload state first
+        self._load_state()
+        
         if full_name_or_id in self.repositories:
             return self.repositories[full_name_or_id]
         
@@ -633,6 +655,9 @@ class FakeGithub:
             repo_name: Optional repository name (full_name format: "owner/repo")
                       If not provided, will try to find any PR with this number
         """
+        # Always reload state first
+        self._load_state()
+        
         # Debug current PR dictionary state
         logger.debug(f"Looking for PR {number} in dictionary with {len(self.pull_requests)} entries")
         for key in self.pull_requests:
