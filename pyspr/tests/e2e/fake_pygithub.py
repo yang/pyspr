@@ -9,6 +9,7 @@ from typing import Dict, List, Any, Tuple, Optional, Set, Union, ClassVar
 import subprocess
 from pathlib import Path
 import os
+import tempfile
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,7 @@ class FakePullRequest:
     owner_login: str
     repository_name: str
     base_ref: str
+    base_sha: str
     head_ref: str
     head_sha: str
     reviewers: List[str]
@@ -131,6 +133,7 @@ class FakePullRequest:
         """Get the base ref for this PR."""
         return FakeRef(
             ref=self.base_ref, 
+            sha=self.base_sha,
             repository_full_name=f"{self.owner_login}/{self.repository_name}",
             github_ref=self.github_ref
         )
@@ -335,33 +338,52 @@ class FakeRepository:
         """Create a new pull request."""
         if not self.github_ref:
             raise ValueError("Repository not linked to GitHub instance")
-            
+        
         # Always reload state first
         self.github_ref._load_state()
-            
+        
         # Create new PR with repository-specific number
         pr_number = self.next_pr_number
         self.next_pr_number += 1
         
         # Get the remote git repository path
-        remote_dir = Path(self.github_ref.data_dir).parent / "remote.git"
+        # Directory structure is:
+        # tmpdir/
+        #   ├── remote.git/    # The bare repository
+        #   └── teststack/     # The working repository
+        #       └── .git/
+        #           └── fake_github/  # Where our state is stored (self.github_ref.data_dir)
+        repo_dir = Path(self.github_ref.data_dir).parent.parent.parent  # Go up to teststack
+        remote_dir = repo_dir / "remote.git"  # Go up to tmpdir and find remote.git
         
         # Get the actual commit information from the remote git repository
-        commit_id, commit_hash, commit_subject = get_commit_info(head, remote_dir)
+        head_id, head_hash, head_subject = get_commit_info(head, remote_dir)
+        
+        # Get base commit info - for main branch, use origin/main
+        base_id, base_hash, base_subject = get_commit_info(base, remote_dir)
+
+        print(f"!! {(base, base_id, base_hash)}")
         
         # Create PR with real commit information
         pr = FakePullRequest(
             number=pr_number,
             title=title,
             body=body,
-            base_ref=base,
-            head_ref=head,
-            head_sha=commit_hash,
+            state="open",  # New PRs are always open
+            merged=False,  # New PRs are never merged
             owner_login=self.owner_login,
             repository_name=self.name,
-            commit_id=commit_id,
-            commit_hash=commit_hash,
-            commit_subject=commit_subject,
+            base_ref=base,  # Keep the original base ref
+            base_sha=base_hash,  # Use the base branch's commit hash
+            head_ref=head,
+            head_sha=head_hash,  # Use the head branch's commit hash
+            reviewers=[],  # Start with no reviewers
+            labels=[],     # Start with no labels
+            auto_merge_enabled=False,  # Auto-merge is off by default
+            auto_merge_method="merge",  # Default merge method
+            commit_id=head_id,
+            commit_hash=head_hash,
+            commit_subject=head_subject,
             github_ref=self.github_ref
         )
         
@@ -381,21 +403,48 @@ class FakeRepository:
         
         return pr
 
-def get_commit_info(ref: str, repo_path: Path) -> Tuple[str, str, str]:
+def get_commit_info(ref: str, remote_path: Path) -> Tuple[str, str, str]:
     """Get commit info (id, hash, subject) for a given ref from the remote repository."""
-    commit_hash = _run_git_command(['rev-parse', ref], repo_path)
-    commit_id = _run_git_command(['rev-parse', '--short', ref], repo_path)
-    commit_subject = _run_git_command(['log', '-1', '--format=%s', ref], repo_path)
-    return commit_id, commit_hash, commit_subject
+    # Create a temporary clone to work with
+    with tempfile.TemporaryDirectory() as tmpdir:
+        clone_dir = Path(tmpdir) / "repo"
+        clone_dir.mkdir()
+        
+        # Clone the bare repository
+        _run_git_command(['clone', str(remote_path), '.'], clone_dir)
+        
+        # Fetch all refs
+        _run_git_command(['fetch', '--all'], clone_dir)
+        
+        # For main branch, get the commit from origin/main
+        if ref == "main":
+            ref = "origin/main"
+        elif not ref.startswith("origin/"):
+            # For other refs, try origin/{ref} first
+            origin_ref = f"origin/{ref}"
+            if _run_git_command(['rev-parse', '--verify', origin_ref], clone_dir, check=False):
+                ref = origin_ref
+        
+        # Get the commit info
+        commit_hash = _run_git_command(['rev-parse', ref], clone_dir)
+        commit_id = _run_git_command(['rev-parse', '--short', commit_hash], clone_dir)
+        commit_subject = _run_git_command(['log', '-1', '--format=%s', commit_hash], clone_dir)
+        
+        return commit_id, commit_hash, commit_subject
 
-def _run_git_command(cmd: List[str], cwd: Path) -> str:
+def _run_git_command(cmd: List[str], cwd: Path, check: bool = True) -> str:
     """Run a git command and return its output."""
-    result = subprocess.run(['git'] + cmd, 
-                          cwd=str(cwd),
-                          capture_output=True, 
-                          text=True, 
-                          check=True)
-    return result.stdout.strip()
+    try:
+        result = subprocess.run(['git'] + cmd, 
+                              cwd=str(cwd),
+                              capture_output=True, 
+                              text=True, 
+                              check=check)
+        return result.stdout.strip()
+    except subprocess.CalledProcessError:
+        if check:
+            raise
+        return ""
 
 @dataclass
 class FakeRequester:

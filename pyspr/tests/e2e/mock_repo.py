@@ -76,15 +76,6 @@ def create_mock_repo_context(owner: str, name: str, test_name: str) -> Generator
         run_cmd("git branch -M main")
         run_cmd("git push -u origin main")
         
-        # Create test branch
-        run_cmd(f"git checkout -b {test_branch}")
-        run_cmd(f"git push -u origin {test_branch}")
-        
-        # Create local branch for tests
-        run_cmd("git checkout -b test_local")
-        
-        repo_dir = os.path.abspath(os.getcwd())
-        
         # Create a .spr.yaml file in the repo to ensure config is read by subprocesses
         config_dict = {
             'repo': {
@@ -104,9 +95,19 @@ def create_mock_repo_context(owner: str, name: str, test_name: str) -> Generator
         with open('.spr.yaml', 'w') as f:
             yaml.dump(config_dict, f)
         
-        # Add .spr.yaml to git
+        # Add .spr.yaml to git and push to main
         run_cmd("git add .spr.yaml")
         run_cmd("git commit -m 'Add .spr.yaml for testing'")
+        run_cmd("git push origin main")
+        
+        # Create test branch from updated main
+        run_cmd(f"git checkout -b {test_branch}")
+        run_cmd(f"git push -u origin {test_branch}")
+        
+        # Create local branch for tests
+        run_cmd("git checkout -b test_local")
+        
+        repo_dir = os.path.abspath(os.getcwd())
         
         # Create config - this will be used by RealGit and GitHubClient
         config = Config(config_dict)
