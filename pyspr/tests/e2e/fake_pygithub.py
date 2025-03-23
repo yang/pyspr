@@ -80,8 +80,8 @@ class FakeTeam:
             self.slug = self.name.lower()
 
 @dataclass
-class FakePullRequest:
-    """Fake implementation of the PullRequest class from PyGithub."""
+class FakePullRequestData:
+    """Database record for a pull request."""
     number: int
     title: str
     body: str
@@ -89,99 +89,138 @@ class FakePullRequest:
     merged: bool
     owner_login: str
     repository_name: str
-    base_ref: str
-    base_sha: str
-    head_ref: str
-    head_sha: str
+    base_ref: str  # The ref name (e.g. main or spr/main/abc123)
+    head_ref: str  # The ref name (e.g. spr/main/def456)
     reviewers: List[str]
     labels: List[str]
     auto_merge_enabled: bool
     auto_merge_method: str
-    commit_id: str
-    commit_hash: str
-    commit_subject: str
     github_ref: Any = field(default=None, repr=False)
+
+@dataclass
+class FakePullRequest:
+    """API response object for a pull request."""
+    _data: FakePullRequestData
     
-    def __post_init__(self):
-        """Initialize default values after creation."""
-        if not self.head_ref:
-            self.head_ref = f"pr-{self.number}-branch"
-        if not self.commit_id:
-            raise ValueError("Commit ID must be provided")
-        if not self.commit_hash:
-            raise ValueError("Commit hash must be provided")
-        if not self.commit_subject and self.title:
-            self.commit_subject = self.title
+    @property
+    def number(self) -> int:
+        return self._data.number
+        
+    @property
+    def title(self) -> str:
+        return self._data.title
+    
+    @title.setter
+    def title(self, value: str):
+        self._data.title = value
+        
+    @property
+    def body(self) -> str:
+        return self._data.body
+    
+    @body.setter
+    def body(self, value: str):
+        self._data.body = value
+        
+    @property
+    def state(self) -> str:
+        return self._data.state
+    
+    @state.setter
+    def state(self, value: str):
+        self._data.state = value
+        
+    @property
+    def merged(self) -> bool:
+        return self._data.merged
+    
+    @merged.setter
+    def merged(self, value: bool):
+        self._data.merged = value
     
     @property
     def user(self):
         """Get the user who created this PR."""
-        if not self.github_ref:
+        if not self._data.github_ref:
             return None
-        return self.github_ref.get_user(self.owner_login)
+        return self._data.github_ref.get_user(self._data.owner_login)
     
     @property
     def repository(self):
         """Get the repository this PR belongs to."""
-        if not self.github_ref:
+        if not self._data.github_ref:
             return None
-        repo_full_name = f"{self.owner_login}/{self.repository_name}"
-        return self.github_ref.get_repo(repo_full_name)
+        repo_full_name = f"{self._data.owner_login}/{self._data.repository_name}"
+        return self._data.github_ref.get_repo(repo_full_name)
     
     @property
     def base(self):
         """Get the base ref for this PR."""
+        # Get the commit info on demand
+        repo_dir = Path(self._data.github_ref.data_dir).parent.parent.parent
+        remote_dir = repo_dir / "remote.git"
+        _, base_sha, _ = get_commit_info(self._data.base_ref, remote_dir)
+        
         return FakeRef(
-            ref=self.base_ref, 
-            sha=self.base_sha,
-            repository_full_name=f"{self.owner_login}/{self.repository_name}",
-            github_ref=self.github_ref
+            ref=self._data.base_ref, 
+            sha=base_sha,
+            repository_full_name=f"{self._data.owner_login}/{self._data.repository_name}",
+            github_ref=self._data.github_ref
         )
     
     @property
     def head(self):
         """Get the head ref for this PR."""
+        # Get the commit info on demand
+        repo_dir = Path(self._data.github_ref.data_dir).parent.parent.parent
+        remote_dir = repo_dir / "remote.git"
+        _, head_sha, _ = get_commit_info(self._data.head_ref, remote_dir)
+        
         return FakeRef(
-            ref=self.head_ref,
-            sha=self.head_sha,
-            repository_full_name=f"{self.owner_login}/{self.repository_name}",
-            github_ref=self.github_ref
+            ref=self._data.head_ref,
+            sha=head_sha,
+            repository_full_name=f"{self._data.owner_login}/{self._data.repository_name}",
+            github_ref=self._data.github_ref
         )
     
     @property
     def commit(self):
         """Get the commit info for this PR."""
+        # Get the commit info on demand
+        repo_dir = Path(self._data.github_ref.data_dir).parent.parent.parent
+        remote_dir = repo_dir / "remote.git"
+        commit_id, commit_hash, commit_subject = get_commit_info(self._data.head_ref, remote_dir)
+        
         return FakeCommitInfo(
-            commit_id=self.commit_id,
-            commit_hash=self.commit_hash,
-            subject=self.commit_subject,
-            github_ref=self.github_ref
+            commit_id=commit_id,
+            commit_hash=commit_hash,
+            subject=commit_subject,
+            github_ref=self._data.github_ref
         )
     
     @property
     def auto_merge(self):
         """Get auto merge info if enabled."""
-        if self.auto_merge_enabled and self.auto_merge_method:
-            return {"enabled": True, "method": self.auto_merge_method}
+        if self._data.auto_merge_enabled and self._data.auto_merge_method:
+            return {"enabled": True, "method": self._data.auto_merge_method}
         return None
     
     def edit(self, title: str = None, body: str = None, state: str = None, 
             base: str = None, maintainer_can_modify: bool = None):
         """Update pull request properties."""
         if title is not None:
-            self.title = title
-            self.commit_subject = title
+            self._data.title = title
         if body is not None:
-            self.body = body
+            self._data.body = body
         if state is not None:
-            self.state = state
+            self._data.state = state
         if base is not None:
-            self.base_ref = base
+            self._data.base_ref = base
             
         # Save state after updating PR
-        if self.github_ref:
+        if self._data.github_ref:
             logger.debug(f"Saving state after editing PR #{self.number}")
-            self.github_ref._save_state()
+            self._data.github_ref._save_state()
     
     def create_issue_comment(self, body: str):
         """Add a comment to the pull request."""
@@ -191,82 +230,54 @@ class FakePullRequest:
     def add_to_labels(self, *labels):
         """Add labels to the pull request."""
         for label in labels:
-            if str(label) not in self.labels:
-                self.labels.append(str(label))
+            if str(label) not in self._data.labels:
+                self._data.labels.append(str(label))
         logger.info(f"PR #{self.number} labels: {labels}")
         
         # Save state after adding labels
-        if self.github_ref:
+        if self._data.github_ref:
             logger.debug(f"Saving state after adding labels to PR #{self.number}")
-            self.github_ref._save_state()
+            self._data.github_ref._save_state()
     
     def get_commits(self):
         """Get commits in the pull request."""
-        # For simplicity, just return a list with the main commit
-        # Use only the commit subject for test compatibility
-        return [
-            FakeCommit(
-                sha=self.commit_hash, 
-                message=self.commit_subject,
-                github_ref=self.github_ref
-            )
-        ]
+        return []  # Not needed for testing
     
     def get_review_requests(self):
         """Get users and teams requested for review."""
-        users = []
-        teams = []
-        
-        if self.github_ref:
-            for login in self.reviewers:
-                user = self.github_ref.get_user(login)
-                if user:
-                    users.append(user)
-        
-        return (users, teams)
+        return [], []  # No teams for testing
     
     def create_review_request(self, reviewers=None, team_reviewers=None):
         """Request reviews from users or teams."""
         if reviewers:
-            for reviewer in reviewers:
-                if isinstance(reviewer, str):
-                    # Add reviewer by login
-                    if reviewer not in self.reviewers:
-                        self.reviewers.append(reviewer)
-                    # Create user if doesn't exist
-                    if self.github_ref:
-                        self.github_ref.get_user(reviewer, create=True)
-                else:
-                    # Assume it's a FakeNamedUser
-                    if reviewer.login not in self.reviewers:
-                        self.reviewers.append(reviewer.login)
-        
+            self._data.reviewers.extend(reviewers)
+            logger.info(f"PR #{self.number} review requested from: {reviewers}")
+            
         # Save state after requesting reviews
-        if self.github_ref:
+        if self._data.github_ref:
             logger.debug(f"Saving state after requesting reviews for PR #{self.number}")
-            self.github_ref._save_state()
+            self._data.github_ref._save_state()
     
     def merge(self, commit_title: str = None, commit_message: str = None, 
              sha: str = None, merge_method: str = "merge"):
         """Merge the pull request."""
-        self.merged = True
-        self.state = "closed"
+        self._data.merged = True
+        self._data.state = "closed"
         
         # Save state after merging PR
-        if self.github_ref:
+        if self._data.github_ref:
             logger.debug(f"Saving state after merging PR #{self.number}")
-            self.github_ref._save_state()
+            self._data.github_ref._save_state()
     
     def enable_automerge(self, merge_method: str = "merge"):
         """Enable auto-merge for the pull request."""
-        self.auto_merge_enabled = True
-        self.auto_merge_method = merge_method
-        logger.info(f"PR #{self.number} auto-merge enabled with method: {merge_method}")
+        self._data.auto_merge_enabled = True
+        self._data.auto_merge_method = merge_method
         
         # Save state after enabling auto-merge
-        if self.github_ref:
+        if self._data.github_ref:
             logger.debug(f"Saving state after enabling auto-merge for PR #{self.number}")
-            self.github_ref._save_state()
+            self._data.github_ref._save_state()
 
 @dataclass
 class FakeRepository:
@@ -323,12 +334,12 @@ class FakeRepository:
         result = []
         for key, pr in self.github_ref.pull_requests.items():
             # Check if PR belongs to this repository
-            if pr.owner_login == self.owner_login and pr.repository_name == self.name:
+            if pr._data.owner_login == self.owner_login and pr._data.repository_name == self.name:
                 if state and pr.state != state:
                     continue
-                if head and pr.head_ref != head:
+                if head and pr.head.ref != head:
                     continue
-                if base and pr.base_ref != base:
+                if base and pr.base.ref != base:
                     continue
                 result.append(pr)
         return result
@@ -365,7 +376,7 @@ class FakeRepository:
         print(f"!! {(base, base_id, base_hash)}")
         
         # Create PR with real commit information
-        pr = FakePullRequest(
+        pr_data = FakePullRequestData(
             number=pr_number,
             title=title,
             body=body,
@@ -374,18 +385,15 @@ class FakeRepository:
             owner_login=self.owner_login,
             repository_name=self.name,
             base_ref=base,  # Keep the original base ref
-            base_sha=base_hash,  # Use the base branch's commit hash
             head_ref=head,
-            head_sha=head_hash,  # Use the head branch's commit hash
             reviewers=[],  # Start with no reviewers
             labels=[],     # Start with no labels
             auto_merge_enabled=False,  # Auto-merge is off by default
             auto_merge_method="merge",  # Default merge method
-            commit_id=head_id,
-            commit_hash=head_hash,
-            commit_subject=head_subject,
             github_ref=self.github_ref
         )
+        
+        pr = FakePullRequest(pr_data)
         
         logger.debug(f"Created PR #{pr.number} in repo {self.full_name}")
         
@@ -500,18 +508,18 @@ class FakeRequester:
                     "number": pr.number,
                     "title": pr.title,
                     "body": pr.body,
-                    "baseRefName": pr.base_ref,
-                    "headRefName": pr.head_ref,
+                    "baseRefName": pr.base.ref,
+                    "headRefName": pr.head.ref,
                     "mergeable": "MERGEABLE",
                     "reviewDecision": None,
                     "repository": {
-                        "id": f"repo_{pr.repository_name}"
+                        "id": f"repo_{pr._data.repository_name}"
                     },
                     "commits": {
                         "nodes": [
                             {
                                 "commit": {
-                                    "oid": pr.commit_hash,
+                                    "oid": pr.commit.commit_hash,
                                     "messageHeadline": pr.title,
                                     "messageBody": pr.body,
                                     "statusCheckRollup": {
@@ -592,7 +600,7 @@ class FakeGithub:
             repo.github_ref = self
         
         for pr in self.pull_requests.values():
-            pr.github_ref = self
+            pr._data.github_ref = self
     
     def _load_state(self):
         """Load state from file."""
@@ -623,7 +631,7 @@ class FakeGithub:
                 # Fix next_pr_number in repositories to ensure new PRs get unique numbers
                 max_pr_numbers = {}
                 for pr in self.pull_requests.values():
-                    repo_name = f"{pr.owner_login}/{pr.repository_name}"
+                    repo_name = f"{pr._data.owner_login}/{pr._data.repository_name}"
                     max_pr_numbers[repo_name] = max(max_pr_numbers.get(repo_name, 0), pr.number + 1)
                 
                 # Update next_pr_number in repositories
