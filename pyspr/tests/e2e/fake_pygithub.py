@@ -352,6 +352,14 @@ class FakeRepository:
         pr_key = f"{self.full_name}:{pr_number}"
         self.github_ref.pull_requests[pr_key] = pr
         
+        # Add simple key for backward compatibility - many functions expect to find PR by number
+        self.github_ref.pull_requests[str(pr_number)] = pr
+        
+        # Debug PR dictionary state 
+        logger.debug(f"PR dictionary now has {len(self.github_ref.pull_requests)} entries")
+        for key in self.github_ref.pull_requests:
+            logger.debug(f"PR key: {key} -> PR #{self.github_ref.pull_requests[key].number}")
+        
         # Save state after creating PR
         if self.github_ref:
             logger.debug(f"Saving state after creating PR #{pr.number}")
@@ -398,8 +406,14 @@ class FakeRequester:
         # For our tests, we just need to build a response with open PRs
         pr_nodes = []
         
+        # Get all open PRs - debug dictionary contents
+        logger.debug(f"GraphQL request - PR dictionary has {len(self.github_ref.pull_requests)} entries")
+        for key in self.github_ref.pull_requests:
+            logger.debug(f"PR key: {key}")
+            
         # Get all open PRs
         for key, pr in self.github_ref.pull_requests.items():
+            logger.debug(f"Checking PR with key {key}: state={pr.state}, title={pr.title}")
             if pr.state == "open":
                 # Build PR node for response
                 pr_node = {
@@ -603,12 +617,25 @@ class FakeGithub:
             repo_name: Optional repository name (full_name format: "owner/repo")
                       If not provided, will try to find any PR with this number
         """
+        # Debug current PR dictionary state
+        logger.debug(f"Looking for PR {number} in dictionary with {len(self.pull_requests)} entries")
+        for key in self.pull_requests:
+            logger.debug(f"  Key: {key} -> PR #{self.pull_requests[key].number}")
+        
         # If repo_name provided, use composite key
         if repo_name and f"{repo_name}:{number}" in self.pull_requests:
+            logger.debug(f"Found PR #{number} with composite key {repo_name}:{number}")
             return self.pull_requests[f"{repo_name}:{number}"]
             
-        # Otherwise try with simple number (for backward compatibility)
+        # Try with string number key
+        str_num = str(number)
+        if str_num in self.pull_requests:
+            logger.debug(f"Found PR #{number} with string key")
+            return self.pull_requests[str_num]
+            
+        # Otherwise try with integer number (for backward compatibility)
         if number in self.pull_requests:
+            logger.debug(f"Found PR #{number} with integer key")
             return self.pull_requests[number]
         
         # If still not found, try looking through all PRs
