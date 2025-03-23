@@ -393,15 +393,12 @@ class FakeRequester:
         # Default empty response structure
         response = {
             "data": {
-                "viewer": {
-                    "login": "yang",
-                    "pullRequests": {
-                        "pageInfo": {
-                            "hasNextPage": False,
-                            "endCursor": None
-                        },
-                        "nodes": []
-                    }
+                "search": {
+                    "pageInfo": {
+                        "hasNextPage": False,
+                        "endCursor": None
+                    },
+                    "nodes": []
                 }
             }
         }
@@ -451,7 +448,7 @@ class FakeRequester:
                 pr_nodes.append(pr_node)
         
         # Add PR nodes to response
-        response["data"]["viewer"]["pullRequests"]["nodes"] = pr_nodes
+        response["data"]["search"]["nodes"] = pr_nodes
         
         # Log for debugging
         logger.info(f"GraphQL returned {len(pr_nodes)} open PRs (newest first)")
