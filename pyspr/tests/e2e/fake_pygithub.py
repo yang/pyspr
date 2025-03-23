@@ -446,10 +446,10 @@ class FakeGithub:
     token: Optional[str] = None
     users: Dict[str, FakeNamedUser] = field(default_factory=dict)
     repositories: Dict[str, FakeRepository] = field(default_factory=dict)
-    pull_requests: Dict[int, FakePullRequest] = field(default_factory=dict)
+    pull_requests: Dict[str, FakePullRequest] = field(default_factory=dict)  # Use string keys format: "owner/repo:number" or str(number) for compat
     _user: Optional[FakeNamedUser] = None
-    data_dir: str = field(default="")
-    state_file: str = field(default="")
+    data_dir: str = field(default_factory=lambda: os.path.join(os.getcwd(), ".git", "fake_github"))
+    state_file: str = field(default_factory=lambda: os.path.join(os.path.join(os.getcwd(), ".git", "fake_github"), "fake_github_state.yaml"))
     
     def initialize(self, load_state: bool = True):
         """Initialize the instance with proper setup.
