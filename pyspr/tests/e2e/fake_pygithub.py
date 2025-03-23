@@ -1,12 +1,14 @@
 """Fake PyGithub implementation for testing."""
 
-import os
 import yaml
 import uuid
 import logging
 import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Any, Tuple, Optional, Set, Union, ClassVar
+import subprocess
+from pathlib import Path
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -14,15 +16,15 @@ logger = logging.getLogger(__name__)
 class FakeNamedUser:
     """Fake implementation of the NamedUser class from PyGithub."""
     login: str
-    name: Optional[str] = None
-    email: Optional[str] = None
+    name: str
+    email: str
     github_ref: Any = field(default=None, repr=False)
     
     def __post_init__(self):
         """Initialize default values after creation."""
-        if self.name is None:
+        if not self.name:
             self.name = self.login.capitalize()
-        if self.email is None:
+        if not self.email:
             self.email = f"{self.login}@example.com"
 
 @dataclass
@@ -49,8 +51,8 @@ class FakeCommitInfo:
 class FakeRef:
     """Fake implementation of the Ref class from PyGithub."""
     ref: str
-    sha: str = "fake-sha"
-    repository_full_name: Optional[str] = None
+    sha: str
+    repository_full_name: str
     github_ref: Any = field(default=None, repr=False)
     
     @property
@@ -68,34 +70,34 @@ class FakeRef:
 class FakeTeam:
     """Fake implementation of the Team class from PyGithub."""
     name: str
-    slug: Optional[str] = None
+    slug: str
     github_ref: Any = field(default=None, repr=False)
     
     def __post_init__(self):
         """Initialize default values after creation."""
-        if self.slug is None:
+        if not self.slug:
             self.slug = self.name.lower()
 
 @dataclass
 class FakePullRequest:
     """Fake implementation of the PullRequest class from PyGithub."""
     number: int
-    title: str = ""
-    body: str = ""
-    state: str = "open"
-    merged: bool = False
-    owner_login: str = "yang"
-    repository_name: str = ""
-    base_ref: str = "main"
-    head_ref: str = ""
-    head_sha: str = "fake-sha"
-    reviewers: List[str] = field(default_factory=list)
-    labels: List[str] = field(default_factory=list)
-    auto_merge_enabled: bool = False
-    auto_merge_method: Optional[str] = None
-    commit_id: str = ""
-    commit_hash: str = ""
-    commit_subject: str = ""
+    title: str
+    body: str
+    state: str
+    merged: bool
+    owner_login: str
+    repository_name: str
+    base_ref: str
+    head_ref: str
+    head_sha: str
+    reviewers: List[str]
+    labels: List[str]
+    auto_merge_enabled: bool
+    auto_merge_method: str
+    commit_id: str
+    commit_hash: str
+    commit_subject: str
     github_ref: Any = field(default=None, repr=False)
     
     def __post_init__(self):
@@ -103,9 +105,9 @@ class FakePullRequest:
         if not self.head_ref:
             self.head_ref = f"pr-{self.number}-branch"
         if not self.commit_id:
-            self.commit_id = uuid.uuid4().hex[:8]
+            raise ValueError("Commit ID must be provided")
         if not self.commit_hash:
-            self.commit_hash = uuid.uuid4().hex
+            raise ValueError("Commit hash must be provided")
         if not self.commit_subject and self.title:
             self.commit_subject = self.title
     
@@ -269,7 +271,7 @@ class FakeRepository:
     owner_login: str
     name: str
     full_name: str
-    next_pr_number: int = 1
+    next_pr_number: int
     github_ref: Any = field(default=None, repr=False)
     
     @property
@@ -341,23 +343,24 @@ class FakeRepository:
         pr_number = self.next_pr_number
         self.next_pr_number += 1
         
-        # Generate a unique commit ID
-        commit_id = uuid.uuid4().hex[:8]
+        # Get the remote git repository path
+        remote_dir = Path(self.github_ref.data_dir).parent / "remote.git"
         
-        # Extract commit message from the title for tag tracking
-        commit_subject = title
+        # Get the actual commit information from the remote git repository
+        commit_id, commit_hash, commit_subject = get_commit_info(head, remote_dir)
         
-        # Use body as provided for tests
+        # Create PR with real commit information
         pr = FakePullRequest(
             number=pr_number,
             title=title,
             body=body,
             base_ref=base,
             head_ref=head,
-            head_sha="fake-sha",  # Placeholder
+            head_sha=commit_hash,
             owner_login=self.owner_login,
             repository_name=self.name,
             commit_id=commit_id,
+            commit_hash=commit_hash,
             commit_subject=commit_subject,
             github_ref=self.github_ref
         )
@@ -369,13 +372,6 @@ class FakeRepository:
         pr_key = f"{self.full_name}:{pr_number}"
         self.github_ref.pull_requests[pr_key] = pr
         
-        # Don't add simple key anymore to avoid duplicates that cause serialization issues
-        
-        # Debug PR dictionary state 
-        logger.debug(f"PR dictionary now has {len(self.github_ref.pull_requests)} entries")
-        for key in self.github_ref.pull_requests:
-            logger.debug(f"PR key: {key} -> PR #{self.github_ref.pull_requests[key].number}")
-        
         # Save state after creating PR
         if self.github_ref:
             logger.debug(f"Saving state after creating PR #{pr.number}")
@@ -384,6 +380,22 @@ class FakeRepository:
             logger.warning(f"Cannot save state after creating PR - github_ref is None")
         
         return pr
+
+def get_commit_info(ref: str, repo_path: Path) -> Tuple[str, str, str]:
+    """Get commit info (id, hash, subject) for a given ref from the remote repository."""
+    commit_hash = _run_git_command(['rev-parse', ref], repo_path)
+    commit_id = _run_git_command(['rev-parse', '--short', ref], repo_path)
+    commit_subject = _run_git_command(['log', '-1', '--format=%s', ref], repo_path)
+    return commit_id, commit_hash, commit_subject
+
+def _run_git_command(cmd: List[str], cwd: Path) -> str:
+    """Run a git command and return its output."""
+    result = subprocess.run(['git'] + cmd, 
+                          cwd=str(cwd),
+                          capture_output=True, 
+                          text=True, 
+                          check=True)
+    return result.stdout.strip()
 
 @dataclass
 class FakeRequester:
@@ -475,13 +487,13 @@ class FakeRequester:
 @dataclass
 class FakeGithub:
     """Fake implementation of the Github class from PyGithub."""
-    token: Optional[str] = None
-    users: Dict[str, FakeNamedUser] = field(default_factory=dict)
-    repositories: Dict[str, FakeRepository] = field(default_factory=dict)
-    pull_requests: Dict[str, FakePullRequest] = field(default_factory=dict)  # Use string keys format: "owner/repo:number" or str(number) for compat
-    _user: Optional[FakeNamedUser] = None
-    data_dir: str = field(default_factory=lambda: os.path.join(os.getcwd(), ".git", "fake_github"))
-    state_file: str = field(default_factory=lambda: os.path.join(os.path.join(os.getcwd(), ".git", "fake_github"), "fake_github_state.yaml"))
+    token: str
+    users: Dict[str, FakeNamedUser]
+    repositories: Dict[str, FakeRepository]
+    pull_requests: Dict[str, FakePullRequest]
+    _user: FakeNamedUser
+    data_dir: Path
+    state_file: Path
     
     def initialize(self, load_state: bool = True):
         """Initialize the instance with proper setup.
@@ -498,11 +510,11 @@ class FakeGithub:
         """
         # Set up file paths
         if not self.data_dir:
-            self.data_dir = os.path.join(os.getcwd(), ".git", "fake_github")
-        os.makedirs(self.data_dir, exist_ok=True)
+            self.data_dir = Path(os.getcwd()) / ".git" / "fake_github"
+        self.data_dir.mkdir(parents=True, exist_ok=True)
         
         if not self.state_file:
-            self.state_file = os.path.join(self.data_dir, "fake_github_state.yaml")
+            self.state_file = self.data_dir / "fake_github_state.yaml"
         
         # Load state if requested and file exists
         if load_state:
@@ -510,12 +522,14 @@ class FakeGithub:
         
         # Create default user if doesn't exist
         if "yang" not in self.users:
-            self.users["yang"] = FakeNamedUser(login="yang", github_ref=self)
+            self.users["yang"] = FakeNamedUser(
+                login="yang",
+                name="Yang",
+                email="yang@example.com",
+                github_ref=self
+            )
         
-        # Set default user
-        self._user = self.users["yang"]
-        
-        # Set github_ref for all objects
+        # Link all objects to this GitHub instance
         self._link_objects()
         
         return self
@@ -533,7 +547,7 @@ class FakeGithub:
     
     def _load_state(self):
         """Load state from file."""
-        if not os.path.exists(self.state_file):
+        if not self.state_file.exists():
             logger.info(f"State file {self.state_file} does not exist")
             return
         
@@ -596,7 +610,7 @@ class FakeGithub:
         yaml.Dumper.ignore_aliases = lambda *args: False
         
         try:
-            os.makedirs(os.path.dirname(self.state_file), exist_ok=True)
+            self.state_file.parent.mkdir(parents=True, exist_ok=True)
             with open(self.state_file, "w") as f:
                 # Use yaml.Dumper to preserve object types and references
                 yaml.dump(self, f, Dumper=yaml.Dumper, default_flow_style=False)
@@ -637,13 +651,12 @@ class FakeGithub:
             owner_login=owner_login,
             name=name,
             full_name=full_name_or_id,
+            next_pr_number=1,
             github_ref=self
         )
-        self.repositories[full_name_or_id] = repo
         
-        # Create owner if doesn't exist
-        if owner_login not in self.users:
-            self.users[owner_login] = FakeNamedUser(login=owner_login, github_ref=self)
+        # Store in repositories dict
+        self.repositories[full_name_or_id] = repo
         
         return repo
     
@@ -696,27 +709,34 @@ class FakeUnknownObjectException(FakeGithubException):
     pass
 
 def create_fake_github(token: Optional[str] = None, 
-                    data_dir: Optional[str] = None,
-                    state_file: Optional[str] = None,
-                    load_state: bool = True) -> FakeGithub:
+                    data_dir: Optional[Path] = None,
+                    state_file: Optional[Path] = None) -> FakeGithub:
     """Create a fake GitHub instance for direct injection.
-    
+
     This is the recommended way to create a fake GitHub client.
     
     Args:
         token: Optional GitHub token (not used, but included for API compatibility)
-        data_dir: Directory to store state files in
-        state_file: Path to the state file to use
-        load_state: Whether to load existing state from disk
-        
-    Returns:
-        An initialized FakeGithub instance
+        data_dir: Directory to store state files in, defaults to $CWD/.git/fake_github
+        state_file: Path to the state file to use, defaults to data_dir/fake_github_state.yaml
     """
-    github = FakeGithub(token=token)
+    if not data_dir:
+        data_dir = Path(os.getcwd()) / ".git" / "fake_github"
+    if not state_file:
+        state_file = data_dir / "fake_github_state.yaml"
     
-    if data_dir:
-        github.data_dir = data_dir
-    if state_file:
-        github.state_file = state_file
-        
-    return github.initialize(load_state=load_state)
+    # Create initial empty state
+    github = FakeGithub(
+        token=token or "",
+        users={},
+        repositories={},
+        pull_requests={},
+        _user=FakeNamedUser(login="yang", name="Yang", email="yang@example.com", github_ref=None),
+        data_dir=data_dir,
+        state_file=state_file
+    )
+    
+    # Initialize with proper setup
+    github.initialize()
+    
+    return github
