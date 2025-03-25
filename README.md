@@ -88,6 +88,8 @@ Use `-r` to tag reviewers.
 
 ## Gotchas
 
+(The fix for this is not implemented so for now please avoid reordering....)
+
 When reordering PRs/commits, we had a bug.
 
 Say you have 4 PRs:
