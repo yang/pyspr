@@ -16,7 +16,7 @@ def should_use_mock_github() -> bool:
     This is determined by the SPR_USE_REAL_GITHUB environment variable.
     If it's not set or set to "false", we use mock GitHub.
     """
-    return os.environ.get("SPR_USE_REAL_GITHUB", "false").lower() != "true"
+    return os.environ.get("SPR_USING_MOCK_GITHUB", "false").lower() == "true"
 
 def create_github_client(ctx: Optional[object], config: Config) -> GitHubClient:
     """Create a GitHub client based on environment, using real GitHubClient always.

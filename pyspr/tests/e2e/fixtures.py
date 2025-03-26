@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 def should_use_real_github() -> bool:
     """Check if tests should use real GitHub API."""
-    return os.environ.get("SPR_USE_REAL_GITHUB", "false").lower() == "true"
+    return os.environ.get("SPR_USING_MOCK_GITHUB", "true").lower() == "false"
 
 @pytest.fixture
 def github_environment():
