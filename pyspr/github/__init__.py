@@ -218,7 +218,8 @@ class GitHubClient:
             # Execute GraphQL query directly like Go version does
             owner = self.config.repo.get('github_repo_owner')
             name = self.config.repo.get('github_repo_name')
-            search_query = f"author:{owner} is:pr is:open repo:{name} sort:updated-desc"
+            current_user = self.client.get_user().login.lower()
+            search_query = f"author:{current_user} is:pr is:open repo:{owner}/{name} sort:updated-desc"
             target_branch = self.config.repo.get('github_branch_target', 'main')
             
             # Variables for GraphQL query
