@@ -114,7 +114,8 @@ def create_mock_repo_context(owner: str, name: str, test_name: str) -> Generator
         git_cmd = RealGit(config)
         
         # Create GitHub client using our mock_setup helper
-        github = create_github_client(None, config)
+        # Force mock GitHub for tests to ensure consistency
+        github = create_github_client(None, config, force_mock=True)
         
         # Create and return RepoContext
         ctx = RepoContext(

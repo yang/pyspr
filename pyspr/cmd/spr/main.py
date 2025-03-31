@@ -77,7 +77,8 @@ def setup_git(directory: Optional[str] = None) -> Tuple[Config, RealGit, GitHubC
     # Use mock GitHub if available and not explicitly disabled
     if MOCK_AVAILABLE and should_use_mock_github():
         logger.info("Using mock GitHub client")
-        github = create_github_client(None, config)
+        # Explicitly set force_mock=False to rely on environment variables
+        github = create_github_client(None, config, force_mock=False)
     else:
         logger.info("Using real GitHub client")
         github = GitHubClient(None, config)

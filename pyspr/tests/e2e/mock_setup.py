@@ -25,21 +25,21 @@ def should_use_mock_github() -> bool:
         return False
     return env_value.lower() == "true"
 
-def create_github_client(ctx: Optional[object], config: Config) -> GitHubClient:
+def create_github_client(ctx: Optional[object], config: Config, force_mock: bool = False) -> GitHubClient:
     """Create a GitHub client based on environment.
     
     When mocking, we directly inject our fake GitHub instance into the GitHub client.
-    For tests, we force the use of mock GitHub to ensure consistency.
-    """
-    # Check if we're running in a test environment
-    in_test = 'PYTEST_CURRENT_TEST' in os.environ
     
-    # For tests, always use mock GitHub unless explicitly disabled
-    if in_test:
-        # In test environment, default to mock GitHub
-        use_mock = os.environ.get("SPR_USING_MOCK_GITHUB", "true").lower() == "true"
+    Args:
+        ctx: The context object to pass to the GitHub client
+        config: The configuration to use
+        force_mock: If True, always use mock GitHub regardless of environment variables
+    """
+    # Determine whether to use mock GitHub
+    # Priority: 1. force_mock parameter, 2. environment variable, 3. default behavior
+    if force_mock:
+        use_mock = True
     else:
-        # In main application, use the standard logic
         use_mock = should_use_mock_github()
         
     if use_mock:
