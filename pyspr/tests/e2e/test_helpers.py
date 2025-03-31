@@ -222,9 +222,11 @@ def run_cmd(cmd: str, cwd: Optional[str] = None, check: bool = True,
         pass
 
     # Replace standalone pyspr command with rye run pyspr from project root
+    # and ensure it uses mock GitHub by setting the environment variable
     actual_cwd = cwd
     if cmd.startswith("pyspr ") or cmd == "pyspr":
-        cmd = "rye run " + cmd
+        # Explicitly set SPR_USING_MOCK_GITHUB=true to ensure pyspr commands use mock GitHub
+        cmd = "SPR_USING_MOCK_GITHUB=true rye run " + cmd
         if project_root:
             actual_cwd = project_root
             cmd = f"cd {actual_cwd} && {cmd} -C {cwd}" if cwd else f"cd {actual_cwd} && {cmd} -C {orig_cwd}"

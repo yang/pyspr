@@ -13,17 +13,36 @@ logger = logging.getLogger(__name__)
 def should_use_mock_github() -> bool:
     """Check if we should use mock GitHub.
     
-    This is determined by the SPR_USE_REAL_GITHUB environment variable.
-    If it's not set or set to "false", we use mock GitHub.
+    This is determined by the SPR_USING_MOCK_GITHUB environment variable.
+    For the main application, defaults to false unless explicitly set to true.
+    For tests, the default is controlled by the test fixtures.
+    
+    Note: This function is used by both the test code and the main application.
     """
-    return os.environ.get("SPR_USING_MOCK_GITHUB", "false").lower() == "true"
+    env_value = os.environ.get("SPR_USING_MOCK_GITHUB")
+    if env_value is None:
+        # Default to false for main application
+        return False
+    return env_value.lower() == "true"
 
 def create_github_client(ctx: Optional[object], config: Config) -> GitHubClient:
-    """Create a GitHub client based on environment, using real GitHubClient always.
+    """Create a GitHub client based on environment.
     
     When mocking, we directly inject our fake GitHub instance into the GitHub client.
+    For tests, we force the use of mock GitHub to ensure consistency.
     """
-    if should_use_mock_github():
+    # Check if we're running in a test environment
+    in_test = 'PYTEST_CURRENT_TEST' in os.environ
+    
+    # For tests, always use mock GitHub unless explicitly disabled
+    if in_test:
+        # In test environment, default to mock GitHub
+        use_mock = os.environ.get("SPR_USING_MOCK_GITHUB", "true").lower() == "true"
+    else:
+        # In main application, use the standard logic
+        use_mock = should_use_mock_github()
+        
+    if use_mock:
         logger.info("Using MOCK GitHub client")
         # Set environment variable to indicate we're using mock GitHub
         os.environ["SPR_USING_MOCK_GITHUB"] = "true"
@@ -76,7 +95,6 @@ def create_github_client(ctx: Optional[object], config: Config) -> GitHubClient:
         return client
     else:
         logger.info("Using REAL GitHub client")
-        # Clear environment variable if it was set
-        if "SPR_USING_MOCK_GITHUB" in os.environ:
-            del os.environ["SPR_USING_MOCK_GITHUB"]
+        # Set environment variable to indicate we're using real GitHub
+        os.environ["SPR_USING_MOCK_GITHUB"] = "false"
         return GitHubClient(ctx, config)

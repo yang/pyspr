@@ -12,8 +12,16 @@ from pyspr.tests.e2e.mock_repo import create_mock_repo_context
 logger = logging.getLogger(__name__)
 
 def should_use_real_github() -> bool:
-    """Check if tests should use real GitHub API."""
-    return os.environ.get("SPR_USING_MOCK_GITHUB", "true").lower() == "false"
+    """Check if tests should use real GitHub API.
+    
+    Default to using mock GitHub (SPR_USING_MOCK_GITHUB=true) unless explicitly set to false.
+    This is the opposite of should_use_mock_github() in mock_setup.py.
+    """
+    env_value = os.environ.get("SPR_USING_MOCK_GITHUB")
+    if env_value is None:
+        # Default to using mock GitHub for tests
+        return False
+    return env_value.lower() != "true"
 
 @pytest.fixture
 def github_environment():
@@ -21,6 +29,9 @@ def github_environment():
     
     This is automatically used by all tests to ensure mock environment
     is properly set up before any tests run.
+    
+    For tests, we explicitly set SPR_USING_MOCK_GITHUB=true by default,
+    which overrides the default in mock_setup.py (which is false for the main application).
     """
     if not should_use_real_github():
         logger.info("Setting up MOCK GitHub environment")
@@ -28,9 +39,8 @@ def github_environment():
         os.environ["SPR_USING_MOCK_GITHUB"] = "true"
     else:
         logger.info("Using REAL GitHub API")
-        # Clear environment variable if it was set
-        if "SPR_USING_MOCK_GITHUB" in os.environ:
-            del os.environ["SPR_USING_MOCK_GITHUB"]
+        # Set environment variable to indicate we're using real GitHub
+        os.environ["SPR_USING_MOCK_GITHUB"] = "false"
     
     yield
 
