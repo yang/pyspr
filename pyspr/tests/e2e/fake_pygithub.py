@@ -242,7 +242,6 @@ class FakePullRequest:
     def get_review_requests(self) -> tuple[list[Any], list[Any]]:
         """Get users and teams requested for review."""
         # Always reload state first to ensure we have the latest data
-        logger.info(f"FakePullRequest.get_review_requests() for PR #{self.number} with id {id(self)}")
         if self._data.github_ref:
             logger.info(f"Reloading state before getting review requests for PR #{self.number}")
             self._data.github_ref._load_state()
@@ -251,28 +250,16 @@ class FakePullRequest:
             pr_key = f"{self._data.owner_login}/{self._data.repository_name}:{self.number}"
             if pr_key in self._data.github_ref.pull_requests:
                 loaded_pr = self._data.github_ref.pull_requests[pr_key]
-                logger.info(f"Found PR #{self.number} in state with key {pr_key}")
-                logger.info(f"Loaded PR has reviewers: {loaded_pr._data.reviewers}")
-                logger.info(f"Current PR has reviewers: {self._data.reviewers}")
-                
-                # Check if the loaded PR is different from the current PR
-                if id(loaded_pr) != id(self):
-                    logger.info(f"Loaded PR has different id: {id(loaded_pr)} vs {id(self)}")
-                    # Update our reviewers with the loaded PR's reviewers
-                    self._data.reviewers = loaded_pr._data.reviewers.copy()
-                    logger.info(f"Updated current PR reviewers to: {self._data.reviewers}")
-            else:
-                logger.warning(f"PR #{self.number} not found in state with key {pr_key}")
+                # Update our reviewers with the loaded PR's reviewers
+                self._data.reviewers = loaded_pr._data.reviewers.copy()
             
         # Convert reviewer login strings to FakeNamedUser objects
         requested_users = []
         logger.info(f"PR #{self.number} has reviewers: {self._data.reviewers}")
         if self._data.github_ref and self._data.reviewers:
             for reviewer_login in self._data.reviewers:
-                logger.info(f"Creating user for reviewer: {reviewer_login}")
                 user = self._data.github_ref.get_user(reviewer_login, create=True)
                 if user:
-                    logger.info(f"Added reviewer user: {user.login}")
                     requested_users.append(user)
                 else:
                     logger.warning(f"Failed to create user for reviewer: {reviewer_login}")
@@ -789,26 +776,16 @@ class FakeGithub:
                       If not provided, will try to find any PR with this number
         """
         # Always reload state first
-        logger.info(f"FakeGithub.get_pull({number}, {repo_name}) - reloading state")
         self._load_state()
-        
-        # Debug current PR dictionary state
-        logger.info(f"Looking for PR {number} in dictionary with {len(self.pull_requests)} entries")
-        for key in self.pull_requests:
-            pr = self.pull_requests[key]
-            logger.info(f"  Key: {key} -> PR #{pr.number}, reviewers: {pr._data.reviewers}")
         
         # If repo_name provided, use composite key
         composite_key = f"{repo_name}:{number}" if repo_name else None
         if composite_key and composite_key in self.pull_requests:
-            pr = self.pull_requests[composite_key]
-            logger.info(f"Found PR #{number} with composite key {composite_key}, reviewers: {pr._data.reviewers}")
-            return pr
+            return self.pull_requests[composite_key]
         
         # If specific repository not provided, look through all PRs to find one with matching number
-        for key, pr in self.pull_requests.items():
+        for _, pr in self.pull_requests.items():
             if pr.number == number:
-                logger.info(f"Found PR #{number} with key {key}, reviewers: {pr._data.reviewers}")
                 return pr
                 
         raise ValueError(f"Pull request #{number} not found")

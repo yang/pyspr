@@ -267,10 +267,6 @@ def test_reviewer_functionality(test_repo_ctx: RepoContext) -> None:
     - First part tests yang token case (can't self-review)
     - Second part tests testluser case (verify request handling)
     """
-    # Enable debug logging for this test
-    import logging
-    logging.getLogger('pyspr.tests.e2e.fake_pygithub').setLevel(logging.DEBUG)
-    
     ctx = test_repo_ctx
     git_cmd = ctx.git_cmd
     github = ctx.github
