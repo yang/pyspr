@@ -267,6 +267,10 @@ def test_reviewer_functionality(test_repo_ctx: RepoContext) -> None:
     - First part tests yang token case (can't self-review)
     - Second part tests testluser case (verify request handling)
     """
+    # Enable debug logging for this test
+    import logging
+    logging.getLogger('pyspr.tests.e2e.fake_pygithub').setLevel(logging.DEBUG)
+    
     ctx = test_repo_ctx
     git_cmd = ctx.git_cmd
     github = ctx.github
@@ -408,19 +412,39 @@ def test_reviewer_functionality(test_repo_ctx: RepoContext) -> None:
         make_commit_2("test_r2.txt", "Second testluser commit")
 
         # Add testluser as reviewer and capture output with verbose mode
+        log.info("Running pyspr update -r testluser command to add reviewer")
         update_output = run_cmd("pyspr update -r testluser -v", cwd=repo_dir)
+        log.info(f"Update output: {update_output}")
 
         # Find our PRs again
+        log.info("Finding PRs after update")
         our_prs = get_test_prs_by_tag(unique_tag2)
         assert len(our_prs) == 2, f"Should have 2 PRs for testluser test, found {len(our_prs)}"
         
         # Get the latest PR
+        log.info("Getting latest PR")
         pr2 = max(our_prs, key=lambda p: p.number)
+        log.info(f"Latest PR: #{pr2.number}")
+        
+        # Directly check the state file to see what's happening with reviewers
+        log.info("Checking state file for reviewers")
+        state_file = os.path.join(repo_dir, ".git", "fake_github", "fake_github_state.yaml")
+        if os.path.exists(state_file):
+            with open(state_file, "r") as f:
+                state_content = f.read()
+                log.info(f"State file exists, size: {len(state_content)} bytes")
+                log.info(f"Reviewers in state file: {'reviewers:' in state_content}")
+        else:
+            log.info("State file does not exist")
+            
         gh_pr2 = github.repo.get_pull(pr2.number)
         
         # Since we're using yang's token and testluser is different user, verify request was added
+        log.info("Getting review requests")
         requested_users, _ = gh_pr2.get_review_requests()
+        log.info(f"Requested users: {[u.login for u in requested_users]}")
         requested_logins = [u.login.lower() for u in requested_users]
+        log.info(f"Requested logins: {requested_logins}")
         assert "testluser" in requested_logins, "Second PR should have testluser reviewer since they're a different user"
         
         log.info("Successfully verified testluser review handling")
