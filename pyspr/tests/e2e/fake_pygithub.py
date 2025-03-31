@@ -87,10 +87,10 @@ class FakePullRequestData:
     repository_name: str
     base_ref: str  # The ref name (e.g. main or spr/main/abc123)
     head_ref: str  # The ref name (e.g. spr/main/def456)
-    reviewers: List[str]
-    labels: List[str]
-    auto_merge_enabled: bool
-    auto_merge_method: str
+    reviewers: List[str] = field(default_factory=list)
+    labels: List[str] = field(default_factory=list)
+    auto_merge_enabled: bool = False
+    auto_merge_method: str = ""
     github_ref: Any = field(default=None, repr=False)
 
 @dataclass
@@ -241,17 +241,28 @@ class FakePullRequest:
     
     def get_review_requests(self) -> tuple[list[Any], list[Any]]:
         """Get users and teams requested for review."""
-        return [], []  # No teams for testing
+        # Convert reviewer login strings to FakeNamedUser objects
+        requested_users = []
+        if self._data.github_ref and self._data.reviewers:
+            for reviewer_login in self._data.reviewers:
+                user = self._data.github_ref.get_user(reviewer_login, create=True)
+                if user:
+                    requested_users.append(user)
+        
+        return requested_users, []  # No teams for testing
     
     def create_review_request(self, reviewers: list[str] | None = None, team_reviewers: list[str] | None = None):
         """Request reviews from users or teams."""
         if reviewers:
-            self._data.reviewers.extend(reviewers)
+            # Make sure we don't add duplicates
+            for reviewer in reviewers:
+                if reviewer not in self._data.reviewers:
+                    self._data.reviewers.append(reviewer)
             logger.info(f"PR #{self.number} review requested from: {reviewers}")
             
         # Save state after requesting reviews
         if self._data.github_ref:
-            logger.debug(f"Saving state after requesting reviews for PR #{self.number}")
+            logger.info(f"Saving state after requesting reviews for PR #{self.number}. Reviewers: {self._data.reviewers}")
             self._data.github_ref._save_state()
     
     def merge(self, commit_title: str = "", commit_message: str = "", 
@@ -355,8 +366,6 @@ class FakeRepository:
         
         # Get base commit info - for main branch, use origin/main
         base_id, base_hash, base_subject = get_commit_info(base, remote_dir)
-
-        print(f"!! {(base, base_id, base_hash)}")
         
         # Create PR with real commit information
         pr_data = FakePullRequestData(
@@ -671,7 +680,8 @@ class FakeGithub:
             return self.users[login]
         
         if create:
-            user = FakeNamedUser(login=login, github_ref=self)
+            # Provide default values for name and email when creating a new user
+            user = FakeNamedUser(login=login, name=login, email=f"{login}@example.com", github_ref=self)
             self.users[login] = user
             return user
         
