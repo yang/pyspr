@@ -99,6 +99,11 @@ class FakePullRequest:
     _data: FakePullRequestData
     
     @property
+    def data(self) -> FakePullRequestData:
+        """Get the pull request data."""
+        return self._data
+    
+    @property
     def number(self) -> int:
         return self._data.number
         
@@ -755,7 +760,7 @@ class FakeGithub:
             repo.github_ref = self
         
         for pr in self.pull_requests.values():
-            pr._data.github_ref = self
+            pr.data.github_ref = self
     
     def _load_state(self):
         """Load state from file."""
@@ -786,7 +791,7 @@ class FakeGithub:
                 # Fix next_pr_number in repositories to ensure new PRs get unique numbers
                 max_pr_numbers = {}
                 for pr in self.pull_requests.values():
-                    repo_name = f"{pr._data.owner_login}/{pr._data.repository_name}"
+                    repo_name = f"{pr.data.owner_login}/{pr.data.repository_name}"
                     max_pr_numbers[repo_name] = max(max_pr_numbers.get(repo_name, 0), pr.number + 1)
                 
                 # Update next_pr_number in repositories
@@ -802,6 +807,10 @@ class FakeGithub:
         except Exception as e:
             logger.error(f"Error loading state: {e}")
             logger.exception(e)  # Log the full exception for debugging
+            
+    def load_state(self):
+        """Public method to load state from file."""
+        return self._load_state()
     
     def _save_state(self):
         """Save state to file."""
@@ -830,6 +839,10 @@ class FakeGithub:
         except Exception as e:
             logger.error(f"Error saving state: {e}")
             logger.exception(e)  # Log the full exception for debugging
+    
+    def save_state(self):
+        """Public method to save state to file."""
+        return self._save_state()
     
     def get_user(self, login: str = None, create: bool = False):
         """Get user by login or current authenticated user."""

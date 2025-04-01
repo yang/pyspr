@@ -155,6 +155,11 @@ class GitHubClient:
             if owner and name:
                 self._repo = self.client.get_repo(f"{owner}/{name}")
         return self._repo
+        
+    @repo.setter
+    def repo(self, value: Repository) -> None:
+        """Set the GitHub repository."""
+        self._repo = value
 
     def get_info(self, ctx: StackedPRContextType, git_cmd: GitInterface) -> Optional[GitHubInfo]:
         """Get GitHub info."""
