@@ -1143,23 +1143,10 @@ def test_no_rebase_pr_stacking(test_repo_ctx: RepoContext) -> None:
     pr1_number = pr1.number
     log.info(f"Created PR #{pr1_number} with commit {pr1.commit.commit_hash[:8]}")
 
-    # Create second commit with commit-id already included
+    # Create second commit
     log.info("\nCreating second commit...")
-    # Generate a commit-id
-    import uuid
-    commit_id = str(uuid.uuid4())[:8]
-    
-    # Create the commit with commit-id in the message
-    file_path = os.path.join(repo_dir, "nr_test2.txt")
-    with open(file_path, "w") as f:
-        f.write("nr_test2.txt\nSecond commit\n")
-    run_cmd("git add nr_test2.txt")
-    # Include commit-id in the commit message so it doesn't need to be added later
-    full_msg = f"Second commit [test-tag:{ctx.tag}]\n\ncommit-id:{commit_id}"
-    run_cmd(f'git commit -m "{full_msg}"')
-    
-    c2_hash = git_cmd.must_git("rev-parse HEAD").strip()
-    log.info(f"Second commit: {c2_hash[:8]} (with commit-id: {commit_id})")
+    ctx.make_commit("nr_test2.txt", "Second commit", "Second commit")
+    # Note: We no longer capture hash here since it will change during PR creation
 
     # Create .spr.yaml with noRebase: true
     import yaml  # Import needed only in this test
@@ -1204,11 +1191,29 @@ def test_no_rebase_pr_stacking(test_repo_ctx: RepoContext) -> None:
         f"PR1 hash changed: {pr1_hash[:8]} -> {pr1_after.commit.commit_hash[:8]}"
     log.info(f"Verified PR #{pr1_number} hash unchanged")
 
-    # Verify PR2 hash matches c2_hash
-    log.info(f"PR2 hash comparison: {c2_hash[:8]} vs {pr2.commit.commit_hash[:8]}")
-    assert pr2.commit.commit_hash == c2_hash, \
-        f"PR2 hash wrong: {pr2.commit.commit_hash[:8]} vs {c2_hash[:8]}"
-    log.info(f"Verified PR #{pr2.number} hash correct")
+    # Capture PR2's hash after creation
+    pr2_hash = pr2.commit.commit_hash
+    log.info(f"Captured PR #{pr2.number} hash: {pr2_hash[:8]}")
+
+    # Make a minor change to trigger another update
+    log.info("\nMaking a minor change to test hash stability...")
+    ctx.make_commit("nr_test3.txt", "Minor change", "Minor change")
+
+    # Update again with --no-rebase
+    log.info("\nUpdating again with --no-rebase...")
+    update_output = run_cmd(f"pyspr update -C {repo_dir} -nr -v")
+
+    # Get updated PR info again
+    prs = sorted(ctx.get_test_prs(), key=lambda pr: pr.number)
+    pr1_after = next((pr for pr in prs if pr.number == pr1_number), None)
+    pr2_after = next((pr for pr in prs if pr.number == pr2.number), None)
+    assert pr2_after is not None, f"PR #{pr2.number} should still exist"
+
+    # Verify PR2 hash unchanged after second update
+    log.info(f"PR2 hash comparison: {pr2_hash[:8]} vs {pr2_after.commit.commit_hash[:8]}")
+    assert pr2_after.commit.commit_hash == pr2_hash, \
+        f"PR2 hash changed: {pr2_hash[:8]} -> {pr2_after.commit.commit_hash[:8]}"
+    log.info(f"Verified PR #{pr2.number} hash unchanged")
 
     # Verify stack structure
     assert pr1_after.base_ref == "main", f"PR1 should target main, got {pr1_after.base_ref}"
