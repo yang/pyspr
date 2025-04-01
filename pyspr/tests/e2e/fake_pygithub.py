@@ -327,6 +327,51 @@ class FakePullRequest:
         self._data.merged = True
         self._data.state = "closed"
         
+        # Create an actual merge commit in the Git repository
+        try:
+            # Get the repository directory
+            repo_dir = Path(self._data.github_ref.data_dir).parent.parent.parent  # Go up to teststack
+            remote_dir = repo_dir / "remote.git"  # Go up to tmpdir and find remote.git
+            
+            # Generate merge commit message
+            if not commit_title:
+                commit_title = f"Merge pull request #{self.number} from {self._data.head_ref}"
+            if not commit_message:
+                commit_message = f"Merge pull request #{self.number}\n\nThis closes #{self.number}"
+            
+            full_message = f"{commit_title}\n\n{commit_message}"
+            
+            # Create a temporary directory to perform the merge
+            with tempfile.TemporaryDirectory() as tmpdir:
+                clone_dir = Path(tmpdir) / "repo"
+                clone_dir.mkdir()
+                
+                # Clone the bare repository
+                _run_git_command(['clone', str(remote_dir), '.'], clone_dir)
+                
+                # Make sure we're on main branch
+                _run_git_command(['checkout', 'main'], clone_dir)
+                
+                # Create a simple merge commit by adding a file and committing with the PR message
+                # This simulates what GitHub does when merging a PR
+                merge_marker_file = clone_dir / f"merge_pr_{self.number}.txt"
+                with open(merge_marker_file, 'w') as f:
+                    f.write(f"This file represents the merge of PR #{self.number}\n")
+                
+                # Add and commit the file with the merge message
+                _run_git_command(['add', f"merge_pr_{self.number}.txt"], clone_dir)
+                
+                # Create the merge commit with the PR reference in the message
+                _run_git_command(['commit', '-m', full_message], clone_dir)
+                
+                # Push the merge commit to the remote repository
+                _run_git_command(['push', 'origin', 'main'], clone_dir)
+                
+                logger.info(f"Created merge commit for PR #{self.number} with message: {commit_title}")
+        except Exception as e:
+            logger.error(f"Error creating merge commit: {e}")
+            logger.exception(e)  # Log the full exception for debugging
+        
         # Save state after merging PR
         if self._data.github_ref:
             logger.debug(f"Saving state after merging PR #{self.number}")
