@@ -4,7 +4,7 @@ import concurrent.futures
 import sys
 import re
 import logging
-from typing import Dict, List, Optional, TypedDict, cast, Sequence
+from typing import Dict, List, Optional, TypedDict, Sequence
 import time
 from concurrent.futures import Future
 
@@ -18,7 +18,8 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 logger.propagate = False  # Don't double log
 
-from ..git import Commit, get_local_commit_stack, branch_name_from_commit, breakup_branch_name_from_commit, ConfigProtocol, GitInterface  
+from ..git import Commit, get_local_commit_stack, branch_name_from_commit, breakup_branch_name_from_commit, GitInterface
+from ..config.models import PysprConfig
 from ..github import GitHubInfo, PullRequest, GitHubInterface
 from ..typing import StackedPRContextProtocol
 
@@ -32,7 +33,7 @@ class UpdateItem(TypedDict):
 class StackedPR:
     """StackedPR implementation."""
 
-    def __init__(self, config: ConfigProtocol, github: GitHubInterface, git_cmd: GitInterface):
+    def __init__(self, config: PysprConfig, github: GitHubInterface, git_cmd: GitInterface):
         """Initialize with config, GitHub and git clients."""
         self.config = config
         self.github = github
@@ -40,7 +41,7 @@ class StackedPR:
         self.output = sys.stdout
         self.input = sys.stdin
         self.pretend = False  # Default to not pretend mode
-        self.concurrency: int = cast(int, config.get('concurrency', 0))  # Get from tool.pyspr config
+        self.concurrency: int = config.tool.concurrency  # Get from tool config
 
     def align_local_commits(self, commits: List[Commit], prs: List[PullRequest]) -> List[Commit]:
         """Align local commits with pull requests."""
@@ -164,8 +165,8 @@ class StackedPR:
     def fetch_and_get_github_info(self, ctx: StackedPRContextProtocol) -> Optional[GitHubInfo]:
         """Fetch from remote and get GitHub info."""
         # Basic fetch and validation
-        remote = self.config.repo.get('github_remote', 'origin')
-        branch = self.config.repo.get('github_branch', 'main')
+        remote = self.config.repo.github_remote
+        branch = self.config.repo.github_branch
 
         try:
             # Check if remote exists
@@ -184,10 +185,10 @@ class StackedPR:
                 return None
 
             # Log config setting
-            logger.debug(f"no_rebase config: {self.config.user.get('no_rebase', False)}")
+            logger.debug(f"no_rebase config: {self.config.user.no_rebase}")
 
             # Check for no-rebase from config
-            no_rebase = self.config.user.get('no_rebase', False)
+            no_rebase = self.config.user.no_rebase
             logger.debug(f"DEBUG: no_rebase={no_rebase}")
             
             if not no_rebase:
@@ -275,7 +276,7 @@ class StackedPR:
             ref_names.append(f"{commit.commit_hash}:refs/heads/{branch_name}")
 
         if ref_names:
-            remote = self.config.repo.get('github_remote', 'origin')
+            remote = self.config.repo.github_remote
             if self.pretend:
                 logger.info("\n[PRETEND] Would push the following branches:")
                 for ref_name in ref_names:
@@ -283,7 +284,9 @@ class StackedPR:
                     logger.info(f"  {branch} ({commit_hash[:8]})")
             else:
                 start_time = time.time()
-                if self.config.repo.get('branch_push_individually', False) or self.concurrency > 0:
+                # Use branch_push_individually if available, default to False
+                branch_push_individually = self.config.repo.branch_push_individually
+                if branch_push_individually or self.concurrency > 0:
                     if self.concurrency > 0 and len(ref_names) > 1:
                         # Push branches in parallel with specified concurrency
                         with concurrent.futures.ThreadPoolExecutor(max_workers=self.concurrency) as executor:
@@ -317,13 +320,14 @@ class StackedPR:
         """Update pull requests for commits."""
         # Combine CLI labels with config labels
         config_labels: List[str] = []  # Initialize with empty list
-        raw_labels = self.config.repo.get('labels', [])
-        # Both checks needed because config can contain str, list, or other types
-        # pyright: ignore[reportUnnecessaryIsInstance]
+        # Use labels if available, default to empty list
+        raw_labels = self.config.repo.labels
+        # Handle different types of label configurations
         if isinstance(raw_labels, str):
             config_labels = [raw_labels]
-        elif isinstance(raw_labels, list):
-            config_labels = cast(List[str], raw_labels)  # Trust user config
+        # For list type, just use it directly
+        elif raw_labels and hasattr(raw_labels, '__iter__') and not isinstance(raw_labels, str):
+            config_labels = raw_labels  # Trust user config
         # else case handled by initialization
             
         all_labels = list(config_labels)
@@ -346,7 +350,7 @@ class StackedPR:
         local_commits = all_local_commits
 
         # Build connected stack like Go version
-        target_branch = self.config.repo.get('github_branch', 'main')
+        target_branch = self.config.repo.github_branch
         all_prs = github_info.pull_requests[:]
         github_info.pull_requests = self.match_pull_request_stack(
             target_branch, local_commits, all_prs
@@ -360,7 +364,8 @@ class StackedPR:
         # Close PRs for deleted commits, but only if auto_close_prs is enabled
         valid_pull_requests: List[PullRequest] = []
         local_commit_map: Dict[str, Commit] = {commit.commit_id: commit for commit in local_commits}
-        auto_close = self.config.repo.get('auto_close_prs', False)
+        # Use auto_close_prs if available, default to False
+        auto_close = self.config.repo.auto_close_prs
         for pr in github_info.pull_requests:
             if pr.commit.commit_id not in local_commit_map:
                 if auto_close:
@@ -434,7 +439,7 @@ class StackedPR:
                     logger.info(f"\n[PRETEND] Would create new PR for commit {commit.commit_hash[:8]}")
                     logger.info(f"  Title: {commit.subject}")
                     branch_name = branch_name_from_commit(self.config, commit)
-                    base_branch = self.config.repo.get('github_branch', 'main')
+                    base_branch = self.config.repo.github_branch
                     if prev_commit:
                         base_branch = f"spr/{base_branch}/{prev_commit.commit_id}"
                     logger.info(f"  Branch: {branch_name}")
@@ -540,7 +545,7 @@ class StackedPR:
                 prev_commit = update['prev_commit']
                 if pr.number == -1:  # Skip dummy PRs we created above
                     continue
-                base_branch = self.config.repo.get('github_branch', 'main')
+                base_branch = self.config.repo.github_branch
                 if prev_commit:
                     base_branch = f"spr/{base_branch}/{prev_commit.commit_id}"
                 logger.info(f"  PR #{pr.number}: Update base branch to {base_branch}")
@@ -561,8 +566,9 @@ class StackedPR:
             print("")  # Empty line after header
             
             # Get repo info for PR URLs
-            owner = self.config.repo.get('github_repo_owner')
-            name = self.config.repo.get('github_repo_name')
+            # Use github_repo_owner and github_repo_name if available, default to None
+            owner = self.config.repo.github_repo_owner
+            name = self.config.repo.github_repo_name
             
             for pr in reversed(github_info.pull_requests):
                 status = "✅ merged" if getattr(pr, 'merged', False) else ""
@@ -579,7 +585,7 @@ class StackedPR:
             return
 
         # MergeCheck handling
-        if self.config.repo.get('merge_check'):
+        if self.config.repo.merge_check:
             local_commits = get_local_commit_stack(self.config, self.git_cmd)
             if local_commits:
                 last_commit = local_commits[-1]
@@ -601,7 +607,7 @@ class StackedPR:
         
         # Find base PR (the one targeting main)
         base_pr: Optional[PullRequest] = None
-        branch = self.config.repo.get('github_branch_target', 'main')
+        branch = self.config.repo.github_branch
         for pr in github_info.pull_requests:
             if pr.base_ref == branch:
                 base_pr = pr
@@ -613,7 +619,7 @@ class StackedPR:
         # Build stack from bottom up
         current_pr: Optional[PullRequest] = base_pr
         # TODO temp measure needed until we switch over to target
-        branch = self.config.repo.get('github_branch', 'main')
+        branch = self.config.repo.github_branch
         while current_pr:
             prs_in_order.append(current_pr)
             next_pr = None
@@ -641,7 +647,7 @@ class StackedPR:
         pr_to_merge = prs_in_order[pr_index]
 
         # Update base of merging PR to target branch
-        main_branch = self.config.repo.get('github_branch_target', 'main')
+        main_branch = self.config.repo.github_branch
         from ..pretty import print_header
         
         # Nice header and status for merge
@@ -656,16 +662,26 @@ class StackedPR:
                                        pr_to_merge, None, None)
 
         # Merge the PR
-        merge_method = self.config.repo.get('merge_method', 'squash')
-        self.github.merge_pull_request(ctx, pr_to_merge, merge_method)
+        # Use merge_method from config, ensure it's valid
+        merge_method_str = self.config.repo.merge_method
+        if merge_method_str not in ('merge', 'squash', 'rebase'):
+            merge_method_str = 'squash'  # Default to squash if invalid value
+            
+        # Pass the merge method string directly
+        self.github.merge_pull_request(ctx, pr_to_merge, merge_method_str)
 
         # Close PRs below the merged one
         for i in range(pr_index):
             pr = github_info.pull_requests[i]
+            # Use github_host from config
+            github_host = self.config.repo.github_host
+            # Get owner and name from config
+            owner = self.config.repo.github_repo_owner or ''
+            name = self.config.repo.github_repo_name or ''
             comment = (
                 f"✓ Commit merged in pull request "
-                f"[#{pr_to_merge.number}](https://{self.config.repo.get('github_host', 'github.com')}/"
-                f"{self.config.repo.get('github_repo_owner')}/{self.config.repo.get('github_repo_name')}"
+                f"[#{pr_to_merge.number}](https://{github_host}/"
+                f"{owner}/{name}"
                 f"/pull/{pr_to_merge.number})"
             )
             self.github.comment_pull_request(ctx, pr, comment)
@@ -746,8 +762,8 @@ class StackedPR:
                         break
         
         # Get the base branch from config - use github_branch_target for breakup PRs
-        base_branch = self.config.repo.get('github_branch_target', self.config.repo.get('github_branch', 'main'))
-        remote = self.config.repo.get('github_remote', 'origin')
+        base_branch = getattr(self.config.repo, 'github_branch_target', self.config.repo.github_branch)
+        remote = self.config.repo.github_remote
         
         # Process each commit
         for i, commit in enumerate(non_wip_commits):
@@ -767,7 +783,7 @@ class StackedPR:
                 except:
                     pass  # Branch doesn't exist, which is fine
                 
-                no_rebase = self.config.user.get('no_rebase', False) or self.config.get('no_rebase', False)
+                no_rebase = self.config.user.no_rebase
                 if no_rebase:
                     # Use local base branch instead of remote
                     # First check if the local base branch exists
@@ -1007,8 +1023,8 @@ class StackedPR:
         
         if created_prs:
             print(f"\nCreated/updated {len(created_prs)} pull requests:")
-            owner = self.config.repo.get('github_repo_owner')
-            name = self.config.repo.get('github_repo_name')
+            owner = self.config.repo.github_repo_owner
+            name = self.config.repo.github_repo_name
             for pr in created_prs:
                 print(f"  PR #{pr.number}: {pr.title}")
                 if owner and name:
@@ -1042,8 +1058,8 @@ class StackedPR:
         print(f"\nAnalyzing {len(non_wip_commits)} commits for independent submission...")
         
         # Get the base branch from config
-        base_branch = self.config.repo.get('github_branch', 'main')
-        remote = self.config.repo.get('github_remote', 'origin')
+        base_branch = self.config.repo.github_branch
+        remote = self.config.repo.github_remote
         
         # Results tracking
         independent_commits: List[Commit] = []

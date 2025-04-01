@@ -6,7 +6,6 @@ import logging
 import yaml
 
 from ...git import GitInterface
-import tomli
 
 # Get module logger
 logger = logging.getLogger(__name__)

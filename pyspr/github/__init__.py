@@ -20,7 +20,8 @@ from .types import (
     parse_graphql_response
 )
 
-from ..git import Commit, GitInterface, ConfigProtocol
+from ..git import Commit, GitInterface
+from ..config.models import PysprConfig
 from ..typing import StackedPRContextProtocol, StackedPRContextType
 
 @dataclass
@@ -36,7 +37,7 @@ class PullRequest:
     title: str = ""
     merged: bool = False  # Added to track merge status
 
-    def mergeable(self, config: ConfigProtocol) -> bool:
+    def mergeable(self, config: PysprConfig) -> bool:
         """Check if PR is mergeable."""
         return True # Simplified for minimal port
 
@@ -99,7 +100,7 @@ class GitHubInterface(Protocol):
 
 class GitHubClient:
     """GitHub client implementation."""
-    def __init__(self, ctx: Optional[StackedPRContextProtocol], config: ConfigProtocol):
+    def __init__(self, ctx: Optional[StackedPRContextProtocol], config: PysprConfig):
         """Initialize with config."""
         self.config = config
         self.token = self._find_token()
@@ -148,8 +149,9 @@ class GitHubClient:
     def repo(self) -> Optional[Repository]:
         """Get GitHub repository."""
         if self._repo is None:
-            owner = self.config.repo.get('github_repo_owner')
-            name = self.config.repo.get('github_repo_name') 
+            # Use github_repo_owner and github_repo_name if available
+            owner = self.config.repo.github_repo_owner
+            name = self.config.repo.github_repo_name
             if owner and name:
                 self._repo = self.client.get_repo(f"{owner}/{name}")
         return self._repo
@@ -221,11 +223,12 @@ class GitHubClient:
             
         try:
             # Execute GraphQL query directly like Go version does
-            owner = self.config.repo.get('github_repo_owner')
-            name = self.config.repo.get('github_repo_name')
+            # Use github_repo_owner and github_repo_name if available
+            owner = self.config.repo.github_repo_owner
+            name = self.config.repo.github_repo_name
             current_user = self.client.get_user().login.lower()
             search_query = f"author:{current_user} is:pr is:open repo:{owner}/{name} sort:updated-desc"
-            target_branch = self.config.repo.get('github_branch_target', 'main')
+            # Note: github_branch_target is used elsewhere in the code
             
             # Variables for GraphQL query
             variables = {
@@ -410,7 +413,8 @@ class GitHubClient:
         if prev_commit:
             base = self.branch_name_from_commit(prev_commit) 
         else:
-            base = self.config.repo.get('github_branch_target', 'main')
+            # Use github_branch_target if available, default to 'main'
+            base = self.config.repo.github_branch_target
             
         logger.info(f"> github create #{info.pull_requests[-1].number + 1 if info.pull_requests else 1} : {commit.subject}")
         
@@ -536,7 +540,8 @@ class GitHubClient:
                 desired_base = self.branch_name_from_commit(prev_commit)
                 logger.debug(f"  Should target: {desired_base} (prev commit: {prev_commit.commit_hash[:8]})")
             else:
-                desired_base = self.config.repo.get('github_branch_target', 'main')
+                # Use github_branch_target if available, default to 'main'
+                desired_base = self.config.repo.github_branch_target
                 logger.debug(f"  Should target: {desired_base} (no prev commit)")
                 
             if current_base != desired_base:
@@ -603,7 +608,8 @@ class GitHubClient:
         gh_pr = self.repo.get_pull(pr.number)
         
         # Check if merge queue is enabled and supported for this repo
-        merge_queue_enabled = self.config.repo.get('merge_queue', False)
+        # Use merge_queue if available, default to False
+        merge_queue_enabled = self.config.repo.merge_queue
         logger.info(f"Merge queue enabled in config: {merge_queue_enabled}")
         
         if merge_queue_enabled:
@@ -646,12 +652,14 @@ class GitHubClient:
 
     def branch_name_from_commit(self, commit: Commit) -> str:
         """Generate branch name from commit. Matches Go implementation."""
-        remote_branch = self.config.repo.get('github_branch', 'main')
+        # Use github_branch if available, default to 'main'
+        remote_branch = self.config.repo.github_branch
         return f"spr/{remote_branch}/{commit.commit_id}"
         
     def format_stack_markdown(self, commit: Commit, stack: List[PullRequest]) -> str:
         """Format stack of PRs as markdown."""
-        show_pr_titles = self.config.repo.get('show_pr_titles_in_stack', False)
+        # Use show_pr_titles_in_stack if available, default to False
+        show_pr_titles = self.config.repo.show_pr_titles_in_stack
         lines: List[str] = []
         # Reverse stack to match Go implementation (top to bottom)
         for pr in reversed(stack):

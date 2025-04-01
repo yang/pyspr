@@ -18,11 +18,22 @@ from ...spr import StackedPR
 from ...typing import GitInterface
 
 # Import from tests - only used when running in test mode
+# Define mock availability flag
+is_mock_available = False
+
 try:
     from ...tests.e2e.mock_setup import create_github_client, should_use_mock_github
-    MOCK_AVAILABLE = True
+    is_mock_available = True
 except ImportError:
-    MOCK_AVAILABLE = False
+    # Define stub functions to avoid unbound variable errors
+    def should_use_mock_github() -> bool:
+        return False
+        
+    def create_github_client(ctx: Optional[Any], config: Any, force_mock: bool = False) -> GitHubClient:
+        # This function should never be called when is_mock_available is False
+        # but we need to define it to avoid unbound variable errors
+        return GitHubClient(ctx, config)
+        
     logger.debug("Mock GitHub not available - running with real GitHub")
 
 def check(err: Exception) -> None:
@@ -105,7 +116,7 @@ def setup_git(directory: Optional[str] = None) -> Tuple[Config, RealGit, GitHubC
     git_cmd = RealGit(config)
     
     # Use mock GitHub if available and not explicitly disabled
-    if MOCK_AVAILABLE and should_use_mock_github():
+    if is_mock_available and should_use_mock_github():
         logger.info("Using mock GitHub client")
         # Explicitly set force_mock=False to rely on environment variables
         github = create_github_client(None, config, force_mock=False)
@@ -135,7 +146,7 @@ def update(ctx: Context, directory: Optional[str], reviewer: List[str],
     setup_logging(verbose)
     
     config, git_cmd, github = setup_git(directory)
-    config.tool['pretend'] = pretend  # Set pretend mode
+    config.tool.pretend = pretend  # Set pretend mode
     
     # Save current git state for recovery
     try:
@@ -147,7 +158,7 @@ def update(ctx: Context, directory: Optional[str], reviewer: List[str],
     
     try:
         if no_rebase:
-            config.user['no_rebase'] = True
+            config.user.no_rebase = True
         stackedpr = StackedPR(config, github, git_cmd)
         stackedpr.pretend = pretend  # Set pretend mode
         stackedpr.update_pull_requests(ctx, reviewer if reviewer else None, count, labels=list(label) if label else None)
@@ -186,7 +197,7 @@ def merge(ctx: Context, directory: Optional[str], count: Optional[int], no_rebas
     config, git_cmd, github = setup_git(directory)
     
     if no_rebase:
-        config.user['no_rebase'] = True
+        config.user.no_rebase = True
     stackedpr = StackedPR(config, github, git_cmd)
     stackedpr.merge_pull_requests(ctx, count)
     # Don't update after merge - this would create new PRs
@@ -210,7 +221,7 @@ def breakup(ctx: Context, directory: Optional[str], verbose: int, pretend: bool,
     setup_logging(verbose)
     
     config, git_cmd, github = setup_git(directory)
-    config.tool['pretend'] = pretend  # Set pretend mode
+    config.tool.pretend = pretend  # Set pretend mode
     
     # Save current git state for recovery
     try:
@@ -222,7 +233,7 @@ def breakup(ctx: Context, directory: Optional[str], verbose: int, pretend: bool,
     
     try:
         if no_rebase:
-            config.user['no_rebase'] = True
+            config.user.no_rebase = True
         stackedpr = StackedPR(config, github, git_cmd)
         stackedpr.pretend = pretend  # Set pretend mode
         

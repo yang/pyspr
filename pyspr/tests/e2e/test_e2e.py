@@ -1015,7 +1015,7 @@ def test_no_rebase_functionality(test_repo_ctx: RepoContext, caplog: pytest.LogC
         try:
             # Manual simulation of fetch_and_get_github_info without GitHub API
             # Set no_rebase in config instead of using env var
-            config.user['no_rebase'] = True
+            config.user.no_rebase = True
 
             # Check remote exists
             remotes = git_cmd.must_git("remote").split()
@@ -1025,13 +1025,13 @@ def test_no_rebase_functionality(test_repo_ctx: RepoContext, caplog: pytest.LogC
             assert git_cmd.must_git("rev-parse --verify origin/main"), "Test requires origin/main ref"
 
             # Verify rebase is skipped (the key test)
-            no_rebase = config.user.get('no_rebase', False)
+            no_rebase = config.user.no_rebase
             log.info(f"DEBUG: no_rebase={no_rebase}")  # Use log.info instead of log
             if not no_rebase:
                 git_cmd.must_git(f"rebase origin/main --autostash")
 
             # Reset config for cleanup
-            config.user['no_rebase'] = False
+            config.user.no_rebase = False
         except Exception as e:
             log.info(f"ERROR: {e}")
         
