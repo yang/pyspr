@@ -73,7 +73,7 @@ def get_local_commit_stack(config: PysprConfig, git_cmd: GitInterface) -> List[C
 
         try:
             commits_new: List[Commit] = []
-            last_good_hash = target
+            # Track the maximum changed index
             max_changed = -1
 
             for i, cid in enumerate(reversed(commit_hashes)):  # Work from newest to oldest

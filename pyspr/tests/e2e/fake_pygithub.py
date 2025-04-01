@@ -517,10 +517,12 @@ class FakeRepository:
         remote_dir = repo_dir / "remote.git"  # Go up to tmpdir and find remote.git
         
         # Get the actual commit information from the remote git repository
-        head_id, head_hash, head_subject = get_commit_info(head, remote_dir)
+        # We get the commit information but don't need it for PR creation in this mock
+        # The PR object in the real GitHub API would use these, but our mock doesn't need them
+        _head_id, _head_hash, _head_subject = get_commit_info(head, remote_dir)
         
         # Get base commit info - for main branch, use origin/main
-        base_id, base_hash, base_subject = get_commit_info(base, remote_dir)
+        _base_id, _base_hash, _base_subject = get_commit_info(base, remote_dir)
         
         # Create PR with real commit information
         pr_data = FakePullRequestData(
@@ -619,8 +621,8 @@ class FakeRequester:
         # Always reload state first
         self.github_ref._load_state()
         
-        query = input.get("query", "")
-        variables = input.get("variables", {})
+        _query = input.get("query", "")
+        _variables = input.get("variables", {})
         
         # Default empty response structure
         response = {
