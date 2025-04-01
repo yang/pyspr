@@ -327,7 +327,7 @@ class FakePullRequest:
         self._data.merged = True
         self._data.state = "closed"
         
-        # Create an actual merge commit in the Git repository
+        # Create an actual merge commit in the Git repository by merging the PR branch into main
         try:
             # Get the repository directory
             repo_dir = Path(self._data.github_ref.data_dir).parent.parent.parent  # Go up to teststack
@@ -352,17 +352,40 @@ class FakePullRequest:
                 # Make sure we're on main branch
                 _run_git_command(['checkout', 'main'], clone_dir)
                 
-                # Create a simple merge commit by adding a file and committing with the PR message
-                # This simulates what GitHub does when merging a PR
-                merge_marker_file = clone_dir / f"merge_pr_{self.number}.txt"
-                with open(merge_marker_file, 'w') as f:
-                    f.write(f"This file represents the merge of PR #{self.number}\n")
+                # Fetch the PR branch
+                head_ref = self._data.head_ref
+                logger.info(f"Fetching PR branch: {head_ref}")
+                _run_git_command(['fetch', 'origin', head_ref], clone_dir)
                 
-                # Add and commit the file with the merge message
-                _run_git_command(['add', f"merge_pr_{self.number}.txt"], clone_dir)
+                # Create a local branch to track the remote PR branch
+                pr_branch = f"pr-{self.number}"
+                _run_git_command(['checkout', '-b', pr_branch, f"origin/{head_ref}"], clone_dir)
                 
-                # Create the merge commit with the PR reference in the message
-                _run_git_command(['commit', '-m', full_message], clone_dir)
+                # Go back to main branch to prepare for merge
+                _run_git_command(['checkout', 'main'], clone_dir)
+                
+                # Prepare the merge message file
+                message_file = clone_dir / "merge_message.txt"
+                with open(message_file, 'w') as f:
+                    f.write(full_message)
+                
+                # Perform the actual merge with the PR branch
+                if merge_method == 'squash':
+                    # For squash merge, we need to squash all commits from the PR branch
+                    # Get the base commit where the PR branch diverged from main
+                    base_ref = self._data.base_ref
+                    logger.info(f"Squash merging PR branch {pr_branch} into {base_ref}")
+                    _run_git_command(['merge', '--squash', pr_branch], clone_dir)
+                    _run_git_command(['commit', '-F', 'merge_message.txt'], clone_dir)
+                elif merge_method == 'rebase':
+                    # For rebase merge, we rebase the PR branch onto main
+                    logger.info(f"Rebase merging PR branch {pr_branch}")
+                    _run_git_command(['rebase', pr_branch], clone_dir)
+                    _run_git_command(['commit', '--amend', '-F', 'merge_message.txt'], clone_dir)
+                else:  # Regular merge
+                    # For regular merge, we do a no-ff merge to ensure a merge commit
+                    logger.info(f"Merging PR branch {pr_branch} with no-ff")
+                    _run_git_command(['merge', '--no-ff', '-F', 'merge_message.txt', pr_branch], clone_dir)
                 
                 # Push the merge commit to the remote repository
                 _run_git_command(['push', 'origin', 'main'], clone_dir)
