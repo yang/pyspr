@@ -590,7 +590,9 @@ def _run_merge_test(
             'user': {}
         })
         git_cmd = RealGit(config)
-        github = GitHubClient(None, config)
+        # Don't create a new GitHub client, just update the config in the existing one
+        # to preserve the connection to the mock GitHub instance
+        github.config = config
     
     log.info("Creating commits...")
     try:

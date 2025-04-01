@@ -129,6 +129,16 @@ class FakePullRequest:
     @property
     def merged(self) -> bool:
         return self._data.merged
+        
+    @property
+    def mergeable(self) -> bool:
+        # For tests, always return True to indicate PRs are mergeable
+        return True
+        
+    @property
+    def mergeable_state(self) -> str:
+        # For tests, always return 'clean' to indicate PRs are ready to merge
+        return "clean"
     
     @merged.setter
     def merged(self, value: bool):
