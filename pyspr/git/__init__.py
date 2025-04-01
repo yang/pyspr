@@ -187,8 +187,7 @@ class RealGit:
         
         # Check for no-rebase flag (support both old and new names)
         no_rebase = (self.config.user.get('no_rebase', False) or 
-                   self.config.user.get('noRebase', False) or 
-                   os.environ.get("SPR_NOREBASE") == "true")
+                   self.config.user.get('noRebase', False))
         if no_rebase:
             # Skip any commands that could modify commit hashes
             if any(cmd_str.startswith(cmd) for cmd in ("rebase",)):

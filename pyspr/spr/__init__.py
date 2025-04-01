@@ -1,7 +1,6 @@
 """Stacked PR implementation."""
 
 import concurrent.futures
-import os
 import sys
 import re
 import logging
@@ -184,15 +183,11 @@ class StackedPR:
                 logger.error(f"Branch '{branch}' not found on remote '{remote}'. First push to the remote.")
                 return None
 
-            # Log env var and config before check
-            logger.debug(f"SPR_NOREBASE env var: {os.environ.get('SPR_NOREBASE')}")
+            # Log config setting
             logger.debug(f"no_rebase config: {self.config.user.get('no_rebase', False)}")
 
-            # Check for no-rebase from env var or config
-            no_rebase = (
-                os.environ.get("SPR_NOREBASE") == "true" or 
-                self.config.user.get('no_rebase', False)
-            )
+            # Check for no-rebase from config
+            no_rebase = self.config.user.get('no_rebase', False)
             logger.debug(f"DEBUG: no_rebase={no_rebase}")
             
             if not no_rebase:

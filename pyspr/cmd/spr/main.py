@@ -104,11 +104,11 @@ def update(ctx: Context, directory: Optional[str], reviewer: List[str],
     from ... import setup_logging
     setup_logging(verbose)
     
-    if no_rebase:
-        os.environ["SPR_NOREBASE"] = "true"
-
     config, git_cmd, github = setup_git(directory)
     config.tool['pretend'] = pretend  # Set pretend mode
+    
+    if no_rebase:
+        config.user['no_rebase'] = True
     stackedpr = StackedPR(config, github, git_cmd)
     stackedpr.pretend = pretend  # Set pretend mode
     stackedpr.update_pull_requests(ctx, reviewer if reviewer else None, count, labels=list(label) if label else None)
@@ -140,10 +140,10 @@ def merge(ctx: Context, directory: Optional[str], count: Optional[int], no_rebas
     from ... import setup_logging
     setup_logging(verbose)
     
-    if no_rebase:
-        os.environ["SPR_NOREBASE"] = "true"
-    
     config, git_cmd, github = setup_git(directory)
+    
+    if no_rebase:
+        config.user['no_rebase'] = True
     stackedpr = StackedPR(config, github, git_cmd)
     stackedpr.merge_pull_requests(ctx, count)
     # Don't update after merge - this would create new PRs
