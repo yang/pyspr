@@ -4,7 +4,7 @@ import os
 import logging
 from typing import Optional, Any
 
-from pyspr.config import Config
+from pyspr.config.models import PysprConfig
 from pyspr.github import GitHubClient
 from pyspr.tests.e2e.fake_pygithub import create_fake_github
 
@@ -25,7 +25,7 @@ def should_use_mock_github() -> bool:
         return False
     return env_value.lower() == "true"
 
-def create_github_client(ctx: Optional[object], config: Config, force_mock: bool = False) -> GitHubClient:
+def create_github_client(ctx: Optional[object], config: PysprConfig, force_mock: bool = False) -> GitHubClient:
     """Create a GitHub client based on environment.
     
     When mocking, we directly inject our fake GitHub instance into the GitHub client.
@@ -64,9 +64,10 @@ def create_github_client(ctx: Optional[object], config: Config, force_mock: bool
         logger.info("Injected fake GitHub instance directly")
         
         # Make sure repo is initialized
-        if config.repo.get('github_repo_owner') and config.repo.get('github_repo_name'):
-            owner = config.repo.get('github_repo_owner')
-            name = config.repo.get('github_repo_name')
+        # Use github_repo_owner and github_repo_name if available
+        owner = config.repo.github_repo_owner
+        name = config.repo.github_repo_name
+        if owner and name:
             client._repo = client.client.get_repo(f"{owner}/{name}")
             logger.info(f"Initialized repository: {owner}/{name}")
             

@@ -1,11 +1,11 @@
 """Common types used across the codebase."""
 
-from typing import Any, Dict, Optional, Protocol, Type, TypeVar, Union, NewType, Literal, overload
+from typing import Any, Dict, Optional, Protocol, Type, TypeVar, Union, NewType, Literal
 from dataclasses import dataclass
 
 # Shared TypeVars
 T = TypeVar('T')
-ConfigT = TypeVar('ConfigT', bound='ConfigProtocol')
+# No config type variables needed
 GitT = TypeVar('GitT', bound='GitInterface')
 ContextT = TypeVar('ContextT', bound='StackedPRContextProtocol')
 
@@ -44,18 +44,7 @@ StackedPRContextType = Optional[Union[StackedPRContextProtocol, Type[None]]]
 
 # Common Protocol definitions - move from their individual modules
 
-class ConfigProtocol(Protocol):
-    """Protocol for config objects."""
-    repo: Dict[str, Any]
-    user: Dict[str, Any]
-    tool: Dict[str, Any]
-    state: Optional[Dict[str, Any]]
-
-    @overload
-    def get(self, key: str) -> Any: ...
-    @overload
-    def get(self, key: str, default: T) -> Union[Any, T]: ...
-    def get(self, key: str, default: Any = None) -> Any: ...
+# We're using PysprConfig directly instead of a protocol
 
 class GitInterface(Protocol):
     """Git interface."""

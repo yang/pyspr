@@ -1,16 +1,30 @@
 """Pydantic models for config types."""
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field
+
+# No dictionary-like access mixins - using pure Pydantic models with attribute access
 
 class RepoConfig(BaseModel):
     """Repository configuration."""
+    # GitHub connection settings
     github_remote: str = "origin"
     github_branch: str = "main" 
+    github_branch_target: str = "main"  # Target branch for PRs, defaults to main
     github_repo_owner: Optional[str] = None
     github_repo_name: Optional[str] = None
+    github_host: str = "github.com"  # GitHub host, defaults to github.com
+    
+    # PR and merge settings
     merge_queue: bool = False
+    merge_method: str = "squash"  # Merge method, one of: merge, squash, rebase
+    merge_check: bool = False  # Whether to run merge checks
     show_pr_titles_in_stack: bool = False
+    branch_push_individually: bool = False  # Whether to push branches individually
+    auto_close_prs: bool = False  # Whether to automatically close PRs
+    
+    # Labels for PRs
+    labels: List[str] = Field(default_factory=list)  # Labels to apply to PRs
 
     class Config:
         """Pydantic config."""
@@ -38,8 +52,10 @@ class PysprConfig(BaseModel):
     """Full pyspr configuration."""
     repo: RepoConfig = Field(default_factory=RepoConfig)
     user: UserConfig = Field(default_factory=UserConfig) 
-    tool: Dict[str, Any] = Field(default_factory=dict)
+    tool: ToolConfig = Field(default_factory=ToolConfig)
     state: Optional[Dict[str, Any]] = None
+    
+    # No get method - use direct attribute access instead
 
     class Config:
         """Pydantic config."""

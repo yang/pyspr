@@ -3,6 +3,7 @@
 import pytest
 import os
 import logging
+from pytest import Config
 
 # Import fixtures to make them available to all tests
 from pyspr.tests.e2e.fixtures import (
@@ -15,7 +16,7 @@ from pyspr.tests.e2e.fixtures import (
 # Configure logging
 logger = logging.getLogger(__name__)
 
-def pytest_configure(config):
+def pytest_configure(config: Config):
     """Configure pytest."""
     # Set SPR_MOCK_GITHUB=true by default
     if "SPR_USE_REAL_GITHUB" not in os.environ:

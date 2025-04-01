@@ -1,43 +1,29 @@
 """Config module."""
 
-from typing import Dict, Any, Optional
-from .models import RepoConfig, UserConfig, PysprConfig
+from typing import Dict, Any
+from .models import RepoConfig, UserConfig, PysprConfig, ToolConfig
 
-class Config:
-    """Config object holding repository and user config."""
+class Config(PysprConfig):
+    """Config object holding repository and user config.
+    
+    This is a subclass of PysprConfig for backward compatibility.
+    It directly exposes the Pydantic models with dictionary-like access.
+    """
     def __init__(self, config: Dict[str, Dict[str, Any]]):
         """Initialize with parsed config dict."""
-        pyspr_config = PysprConfig(
-            repo=RepoConfig(**(config.get('repo', {}))),
-            user=UserConfig(**(config.get('user', {}))),
-            tool=config.get('tool', {}).get('pyspr', {}),
-        )
-        # Convert to lower case dicts for backward compatibility
-        self.repo: Dict[str, Any] = {k.lower(): v for k, v in pyspr_config.repo.model_dump().items()}
-        self.user: Dict[str, Any] = {k.lower(): v for k, v in pyspr_config.user.model_dump().items()}
-        self.tool: Dict[str, Any] = {k.lower(): v for k, v in pyspr_config.tool.items()}
-        self.state: Optional[Dict[str, Any]] = None
-
-        # Convert concurrency to int if present
-        if 'concurrency' in self.tool:
-            try:
-                self.tool['concurrency'] = int(self.tool['concurrency'])
-            except (TypeError, ValueError):
-                self.tool['concurrency'] = 0  # Invalid values become 0
+        # Extract configuration sections with proper defaults
+        repo_config = config.get('repo', {})
+        user_config = config.get('user', {})
+        tool_section = config.get('tool', {})
+        tool_config = tool_section.get('pyspr', {})
         
-    def get(self, key: str, default: Any = None) -> Any:
-        """Get a config value from any section."""
-        key_lower = key.lower()
-        # Check tool section first
-        if key_lower in self.tool:
-            return self.tool[key_lower]
-        # Then repo section
-        if key_lower in self.repo:
-            return self.repo[key_lower]
-        # Then user section 
-        if key_lower in self.user:
-            return self.user[key_lower]
-        return default
+        # Initialize the PysprConfig parent class
+        super().__init__(
+            repo=RepoConfig.model_validate(repo_config),
+            user=UserConfig.model_validate(user_config),
+            tool=ToolConfig.model_validate(tool_config),
+            state=None
+        )
 
 def default_config() -> Config:
     """Get default config without parsing git."""

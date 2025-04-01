@@ -7,16 +7,17 @@ import logging
 from typing import List, Optional, Tuple
 import git
 from git.exc import GitCommandError, InvalidGitRepositoryError
-from ..typing import CommitID, ConfigProtocol, GitInterface, Commit
+from ..typing import CommitID, GitInterface, Commit
+from ..config.models import PysprConfig
 
 # Get module logger
 logger = logging.getLogger(__name__)
 
-def get_local_commit_stack(config: ConfigProtocol, git_cmd: GitInterface) -> List[Commit]:
+def get_local_commit_stack(config: PysprConfig, git_cmd: GitInterface) -> List[Commit]:
     """Get local commit stack. Returns commits ordered with bottom commit first."""
     try:
-        remote = config.repo.get('github_remote', 'origin')
-        branch = config.repo.get('github_branch', 'main')
+        remote = config.repo.github_remote
+        branch = config.repo.github_branch
 
         # Get commit log
         log_cmd = f"log --format=medium --no-color {remote}/{branch}..HEAD"
@@ -35,8 +36,8 @@ def get_local_commit_stack(config: ConfigProtocol, git_cmd: GitInterface) -> Lis
         commit_hashes: List[str] = []
         target = "HEAD"  # Default target
         try:
-            remote = config.repo.get('github_remote', 'origin')
-            branch = config.repo.get('github_branch', 'main')
+            remote = config.repo.github_remote
+            branch = config.repo.github_branch
             target = f"{remote}/{branch}"
             cmd = f"rev-list --reverse {target}..HEAD"
             commit_hashes = git_cmd.must_git(cmd).strip().split("\n")
@@ -170,31 +171,30 @@ def parse_local_commit_stack(commit_log: str) -> Tuple[List[Commit], bool]:
         
     return commits, True
 
-def branch_name_from_commit(config: ConfigProtocol, commit: Commit) -> str:
+def branch_name_from_commit(config: PysprConfig, commit: Commit) -> str:
     """Get branch name for commit. Matches Go implementation."""
-    remote_branch = config.repo.get('github_branch', 'main')
+    remote_branch = config.repo.github_branch
     return f"spr/{remote_branch}/{commit.commit_id}"
 
 class RealGit:
     """Real Git implementation."""
-    def __init__(self, config: ConfigProtocol):
+    def __init__(self, config: PysprConfig):
         """Initialize with config."""
-        self.config: ConfigProtocol = config
+        self.config: PysprConfig = config
 
     def run_cmd(self, command: str, output: Optional[str] = None) -> str:
         """Run git command."""
         cmd_str = command.strip()
         
-        # Check for no-rebase flag (support both old and new names)
-        no_rebase = (self.config.user.get('no_rebase', False) or 
-                   self.config.user.get('noRebase', False))
+        # Check for no-rebase flag
+        no_rebase = self.config.user.no_rebase
         if no_rebase:
             # Skip any commands that could modify commit hashes
             if any(cmd_str.startswith(cmd) for cmd in ("rebase",)):
                 logger.debug(f"Skipping command '{cmd_str}' due to --no-rebase")
                 return ""
 
-        if self.config.get('pretend') and 'push' in cmd_str:
+        if self.config.tool.pretend and 'push' in cmd_str:
             # Pretend mode - just log
             logger.info(f"> git {cmd_str}")
             return ""
