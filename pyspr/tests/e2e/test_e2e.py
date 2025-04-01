@@ -17,7 +17,7 @@ from pyspr.tests.e2e.test_helpers import RepoContext, run_cmd
 from pyspr.config import Config
 from pyspr.git import RealGit
 from pyspr.github import GitHubClient, PullRequest, GitHubInfo
-from pyspr.tests.e2e.fixtures import test_repo_ctx, test_mq_repo_ctx, create_test_repo, github_environment
+from pyspr.tests.e2e.fixtures import create_test_repo
 
 # Configure logging
 logging.basicConfig(
@@ -318,8 +318,8 @@ def test_reviewer_functionality(test_repo_ctx: RepoContext) -> None:
         run_cmd("pyspr update")
 
         # Verify first PR exists with no reviewer
-        info: Optional[GitHubInfo] = github.get_info(None, git_cmd)
-        assert info is not None, "GitHub info should not be None"
+        github_info: Optional[GitHubInfo] = github.get_info(None, git_cmd)
+        assert github_info is not None, "GitHub info should not be None"
         our_prs = ctx.get_test_prs()
         assert len(our_prs) == 1, f"Should have 1 PR for our test, found {len(our_prs)}"
         pr1 = our_prs[0]
@@ -624,8 +624,8 @@ def _run_merge_test(
     run_cmd("pyspr update")
 
     # Verify PRs created
-    info: Optional[GitHubInfo] = github.get_info(None, git_cmd)
-    assert info is not None, "GitHub info should not be None"
+    github_info: Optional[GitHubInfo] = github.get_info(None, git_cmd)
+    assert github_info is not None, "GitHub info should not be None"
     prs = repo_ctx.get_test_prs()
     assert len(prs) == num_commits, f"Should have created {num_commits} PRs for our test, found {len(prs)}"
     prs = sorted(prs, key=lambda pr: pr.number)
