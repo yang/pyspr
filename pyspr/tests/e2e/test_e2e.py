@@ -1113,8 +1113,7 @@ def test_no_rebase_pr_stacking(test_repo_ctx: RepoContext) -> None:
     # Create second commit
     log.info("\nCreating second commit...")
     ctx.make_commit("nr_test2.txt", "Second commit", "Second commit")
-    c2_hash = git_cmd.must_git("rev-parse HEAD").strip()
-    log.info(f"Second commit: {c2_hash[:8]}")
+    # Note: We no longer capture hash here since it will change during PR creation
 
     # Create .spr.yaml with noRebase: true
     import yaml  # Import needed only in this test
@@ -1159,11 +1158,29 @@ def test_no_rebase_pr_stacking(test_repo_ctx: RepoContext) -> None:
         f"PR1 hash changed: {pr1_hash[:8]} -> {pr1_after.commit.commit_hash[:8]}"
     log.info(f"Verified PR #{pr1_number} hash unchanged")
 
-    # Verify PR2 hash matches c2_hash
-    log.info(f"PR2 hash comparison: {c2_hash[:8]} vs {pr2.commit.commit_hash[:8]}")
-    assert pr2.commit.commit_hash == c2_hash, \
-        f"PR2 hash wrong: {pr2.commit.commit_hash[:8]} vs {c2_hash[:8]}"
-    log.info(f"Verified PR #{pr2.number} hash correct")
+    # Capture PR2's hash after creation
+    pr2_hash = pr2.commit.commit_hash
+    log.info(f"Captured PR #{pr2.number} hash: {pr2_hash[:8]}")
+
+    # Make a minor change to trigger another update
+    log.info("\nMaking a minor change to test hash stability...")
+    ctx.make_commit("nr_test3.txt", "Minor change", "Minor change")
+
+    # Update again with --no-rebase
+    log.info("\nUpdating again with --no-rebase...")
+    update_output = run_cmd(f"pyspr update -C {repo_dir} -nr -v")
+
+    # Get updated PR info again
+    prs = sorted(ctx.get_test_prs(), key=lambda pr: pr.number)
+    pr1_after = next((pr for pr in prs if pr.number == pr1_number), None)
+    pr2_after = next((pr for pr in prs if pr.number == pr2.number), None)
+    assert pr2_after is not None, f"PR #{pr2.number} should still exist"
+
+    # Verify PR2 hash unchanged after second update
+    log.info(f"PR2 hash comparison: {pr2_hash[:8]} vs {pr2_after.commit.commit_hash[:8]}")
+    assert pr2_after.commit.commit_hash == pr2_hash, \
+        f"PR2 hash changed: {pr2_hash[:8]} -> {pr2_after.commit.commit_hash[:8]}"
+    log.info(f"Verified PR #{pr2.number} hash unchanged")
 
     # Verify stack structure
     assert pr1_after.base_ref == "main", f"PR1 should target main, got {pr1_after.base_ref}"
