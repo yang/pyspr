@@ -128,6 +128,11 @@ class GitHubPullRequestProtocol(Protocol):
     def mergeable_state(self) -> str:
         """Get the mergeable state of the PR."""
         ...
+        
+    @property
+    def merged(self) -> bool:
+        """Get whether the PR is merged."""
+        ...
     
     def edit(self, title: Optional[str] = None, body: Optional[str] = None, state: Optional[str] = None, 
              base: Optional[str] = None, **kwargs: Any) -> None:
