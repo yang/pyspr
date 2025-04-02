@@ -3,9 +3,26 @@
 import os
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Literal, Protocol, runtime_checkable
-from github.Repository import Repository
+from typing import Any, Dict, List, Optional, Literal, Protocol, runtime_checkable, TypeVar
 import re
+
+T = TypeVar('T')
+
+def ensure(value: Optional[T]) -> T:
+    """Ensure a value is not None, raising RuntimeError if it is.
+    
+    Args:
+        value: The value to check
+        
+    Returns:
+        The value if it is not None
+        
+    Raises:
+        RuntimeError: If the value is None
+    """
+    if value is None:
+        raise RuntimeError("Value is None")
+    return value
 
 # Define merge method type
 MergeMethod = Literal['merge', 'squash', 'rebase']
@@ -55,6 +72,119 @@ class GitHubInfo:
         """Get unique key for this info."""
         return self.local_branch
 
+# Define protocols for GitHub objects
+@runtime_checkable
+class GitHubUserProtocol(Protocol):
+    """Protocol for GitHub user objects (real or fake)."""
+    @property
+    def login(self) -> str:
+        """Get the user's login name."""
+        ...
+
+@runtime_checkable
+class GitHubPullRequestProtocol(Protocol):
+    """Protocol for GitHub pull request objects (real or fake)."""
+    @property
+    def number(self) -> int:
+        """Get the PR number."""
+        ...
+    
+    @property
+    def title(self) -> str:
+        """Get the PR title."""
+        ...
+    
+    @property
+    def body(self) -> str:
+        """Get the PR body."""
+        ...
+    
+    @property
+    def state(self) -> str:
+        """Get the PR state (open, closed)."""
+        ...
+    
+    @property
+    def base(self) -> Any:
+        """Get the base reference."""
+        ...
+    
+    @property
+    def head(self) -> Any:
+        """Get the head reference."""
+        ...
+    
+    @property
+    def user(self) -> GitHubUserProtocol:
+        """Get the user who created the PR."""
+        ...
+    
+    @property
+    def mergeable(self) -> Optional[bool]:
+        """Get whether the PR is mergeable."""
+        ...
+    
+    @property
+    def mergeable_state(self) -> str:
+        """Get the mergeable state of the PR."""
+        ...
+    
+    def edit(self, title: Optional[str] = None, body: Optional[str] = None, state: Optional[str] = None, 
+             base: Optional[str] = None, **kwargs: Any) -> None:
+        """Edit the pull request."""
+        ...
+    
+    def create_issue_comment(self, body: str) -> None:
+        """Add a comment to the pull request."""
+        ...
+    
+    def add_to_labels(self, *labels: str) -> None:
+        """Add labels to the pull request."""
+        ...
+    
+    def get_commits(self) -> List[Any]:
+        """Get commits in the pull request."""
+        ...
+    
+    def get_review_requests(self) -> tuple[List[Any], List[Any]]:
+        """Get users and teams requested for review."""
+        ...
+    
+    def merge(self, commit_title: str = "", commit_message: str = "", 
+             sha: str = "", merge_method: str = "merge") -> None:
+        """Merge the pull request."""
+        ...
+    
+    def enable_automerge(self, merge_method: str = "merge") -> None:
+        """Enable auto-merge for the pull request."""
+        ...
+
+@runtime_checkable
+class GitHubRepoProtocol(Protocol):
+    """Protocol for GitHub repository objects (real or fake)."""
+    @property
+    def owner(self) -> GitHubUserProtocol:
+        """Get the owner of this repository."""
+        ...
+    
+    def get_pull(self, number: int) -> GitHubPullRequestProtocol:
+        """Get a pull request by number."""
+        ...
+    
+    def get_pulls(self, state: str = "open", sort: str = "", 
+                 direction: str = "", head: str = "", base: str = "") -> List[GitHubPullRequestProtocol]:
+        """Get pull requests with optional filtering."""
+        ...
+    
+    def create_pull(self, title: str, body: str, base: str, head: str, 
+                   maintainer_can_modify: bool = True, draft: bool = False) -> GitHubPullRequestProtocol:
+        """Create a new pull request."""
+        ...
+    
+    def get_assignees(self) -> List[GitHubUserProtocol]:
+        """Get assignable users for repository."""
+        ...
+
 @runtime_checkable
 class PyGithubProtocol(Protocol):
     """Protocol for PyGithub implementations (real or fake).
@@ -62,11 +192,11 @@ class PyGithubProtocol(Protocol):
     This protocol defines the interface that both the real PyGithub library
     and our fake implementation must satisfy.
     """
-    def get_repo(self, full_name_or_id: str) -> Any:
+    def get_repo(self, full_name_or_id: str) -> GitHubRepoProtocol:
         """Get a repository by full name or ID."""
         ...
     
-    def get_user(self, login: Any = None, *args: Any, **kwargs: Any) -> Any:
+    def get_user(self, login: Optional[str] = None, **kwargs: Dict[str, Any]) -> Optional[GitHubUserProtocol]:
         """Get a user by login or the authenticated user if login is None.
         
         Note: The signature is intentionally flexible to accommodate both:
@@ -131,12 +261,12 @@ class GitHubClient:
             # No client provided - this will cause AttributeError when client is used
             # This matches the original behavior when no token was found
             logger.warning("No GitHub client provided - operations will fail")
-        self._repo: Optional[Repository] = None
+        self._repo: Optional[GitHubRepoProtocol] = None
 
 
 
     @property
-    def repo(self) -> Optional[Repository]:
+    def repo(self) -> Optional[GitHubRepoProtocol]:
         """Get GitHub repository."""
         if self._repo is None:
             # Use github_repo_owner and github_repo_name if available
@@ -147,7 +277,7 @@ class GitHubClient:
         return self._repo
         
     @repo.setter
-    def repo(self, value: Repository) -> None:
+    def repo(self, value: GitHubRepoProtocol) -> None:
         """Set the GitHub repository."""
         self._repo = value
 
@@ -221,7 +351,7 @@ class GitHubClient:
             # Use github_repo_owner and github_repo_name if available
             owner = self.config.repo.github_repo_owner
             name = self.config.repo.github_repo_name
-            current_user = self.client.get_user().login.lower()
+            current_user = ensure(self.client.get_user()).login.lower()
             search_query = f"author:{current_user} is:pr is:open repo:{owner}/{name} sort:updated-desc"
             # Note: github_branch_target is used elsewhere in the code
             
@@ -324,12 +454,11 @@ class GitHubClient:
             logger.info("Falling back to REST API")
             
             # Fallback to REST API if GraphQL fails
-            current_user = self.client.get_user().login
-            repo = self.repo
-            if not repo:
-                return GitHubInfo(local_branch, [])
+            current_user = ensure(self.client.get_user()).login
+            repo = ensure(self.repo)
+                
             open_prs = list(repo.get_pulls(state='open'))
-            user_prs = [pr for pr in open_prs if pr.user.login == current_user]
+            user_prs = [pr for pr in open_prs if pr.user and pr.user.login == current_user]
             logger.info(f"Found {len(user_prs)} open PRs by {current_user} out of {len(open_prs)} total")
             
             for pr in user_prs:
@@ -549,9 +678,11 @@ class GitHubClient:
             return
             
         logger.info(f"> github add reviewers #{pr.number} : {pr.title} - {user_ids}")
-            
+        
         gh_pr = self.repo.get_pull(pr.number)
-        current_user = self.client.get_user().login.lower()
+        
+        # Get current user and filter out self-reviews
+        current_user = ensure(self.client.get_user()).login.lower()
         filtered_reviewers = [uid for uid in user_ids if uid.lower() != current_user]
         
         if not filtered_reviewers:
