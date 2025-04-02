@@ -3,8 +3,7 @@
 import os
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Literal
-from github import Github
+from typing import Any, Dict, List, Optional, Literal, Protocol, runtime_checkable
 from github.Repository import Repository
 import re
 
@@ -56,52 +55,102 @@ class GitHubInfo:
         """Get unique key for this info."""
         return self.local_branch
 
+@runtime_checkable
+class PyGithubProtocol(Protocol):
+    """Protocol for PyGithub implementations (real or fake).
+    
+    This protocol defines the interface that both the real PyGithub library
+    and our fake implementation must satisfy.
+    """
+    def get_repo(self, full_name_or_id: str) -> Any:
+        """Get a repository by full name or ID."""
+        ...
+        
+    # We use a more flexible signature to accommodate both implementations
+    def get_user(self, login: Any = None, **kwargs: Any) -> Any:
+        """Get a user by login or the authenticated user if login is None."""
+        ...
+
+class RealPyGithubAdapter(PyGithubProtocol):
+    """Adapter that wraps the real PyGithub client and implements PyGithubProtocol."""
+    
+    def __init__(self, github_client: Any):
+        """Initialize with a real PyGithub client instance."""
+        self.github_client = github_client
+    
+    def get_repo(self, full_name_or_id: str) -> Any:
+        """Get a repository by full name or ID."""
+        return self.github_client.get_repo(full_name_or_id)
+    
+    def get_user(self, login: Any = None, **kwargs: Any) -> Any:
+        """Get a user by login or the authenticated user if login is None."""
+        # The real PyGithub client doesn't accept the create parameter
+        # so we just pass the login parameter
+        return self.github_client.get_user(login)
+    
+    # Forward any other attribute access to the wrapped PyGithub client
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.github_client, name)
+
+def find_github_token() -> Optional[str]:
+    """Find GitHub token from env var, gh CLI config, or token file."""
+    import yaml
+    from pathlib import Path
+
+    # First try environment variable
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        return token
+
+    # Then try gh CLI config at ~/.config/gh/hosts.yml
+    try:
+        gh_config_path = Path.home() / ".config" / "gh" / "hosts.yml"
+        if gh_config_path.exists():
+            with open(gh_config_path, "r") as f:
+                gh_config = yaml.safe_load(f)
+                if gh_config and "github.com" in gh_config:
+                    github_config: Dict[str, Any] = gh_config["github.com"]
+                    if "oauth_token" in github_config:
+                        return github_config["oauth_token"]
+    except Exception as e:
+        logger.error(f"Error reading gh CLI config: {e}")
+
+    # Finally try token file
+    token_file = "/home/ubuntu/code/pyspr/token"
+    try:
+        if os.path.exists(token_file):
+            with open(token_file, "r") as f:
+                token = f.read().strip()
+                if token:
+                    return token
+    except Exception as e:
+        logger.error(f"Error reading token file: {e}")
+    return None
+
+
+
 class GitHubClient:
     """GitHub client implementation."""
-    def __init__(self, ctx: Optional[StackedPRContextProtocol], config: PysprConfig):
-        """Initialize with config."""
+    def __init__(self, ctx: Optional[StackedPRContextProtocol], config: PysprConfig, github_client: Optional[PyGithubProtocol] = None):
+        """Initialize with config and GitHub client implementation.
+        
+        Args:
+            ctx: The stacked PR context
+            config: The configuration
+            github_client: GitHub client implementation (real or fake)
+                          If None, the client will be in an invalid state (matching original behavior)
+        """
         self.config = config
-        self.token = self._find_token()
-        if not self.token:
-            logger.error("No GitHub token found. Try one of:\n1. Set GITHUB_TOKEN env var\n2. Log in with 'gh auth login'\n3. Put token in /home/ubuntu/code/pyspr/token file")
-            return
-        self.client = Github(self.token)
+        if github_client is not None:
+            self.client = github_client
+            logger.info("Using provided GitHub client implementation")
+        else:
+            # No client provided - this will cause AttributeError when client is used
+            # This matches the original behavior when no token was found
+            logger.warning("No GitHub client provided - operations will fail")
         self._repo: Optional[Repository] = None
 
-    def _find_token(self) -> Optional[str]:
-        """Find GitHub token from env var, gh CLI config, or token file."""
-        import yaml
-        from pathlib import Path
 
-        # First try environment variable
-        token = os.environ.get("GITHUB_TOKEN")
-        if token:
-            return token
-
-        # Then try gh CLI config at ~/.config/gh/hosts.yml
-        try:
-            gh_config_path = Path.home() / ".config" / "gh" / "hosts.yml"
-            if gh_config_path.exists():
-                with open(gh_config_path, "r") as f:
-                    gh_config = yaml.safe_load(f)
-                    if gh_config and "github.com" in gh_config:
-                        github_config: Dict[str, Any] = gh_config["github.com"]
-                        if "oauth_token" in github_config:
-                            return github_config["oauth_token"]
-        except Exception as e:
-            logger.error(f"Error reading gh CLI config: {e}")
-
-        # Finally try token file
-        token_file = "/home/ubuntu/code/pyspr/token"
-        try:
-            if os.path.exists(token_file):
-                with open(token_file, "r") as f:
-                    token = f.read().strip()
-                    if token:
-                        return token
-        except Exception as e:
-            logger.error(f"Error reading token file: {e}")
-        return None
 
     @property
     def repo(self) -> Optional[Repository]:
