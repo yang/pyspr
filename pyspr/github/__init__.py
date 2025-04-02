@@ -3,7 +3,7 @@
 import os
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Protocol, Literal
+from typing import Any, Dict, List, Optional, Literal
 from github import Github
 from github.Repository import Repository
 import re
@@ -55,48 +55,6 @@ class GitHubInfo:
     def key(self) -> str:
         """Get unique key for this info."""
         return self.local_branch
-
-class GitHubInterface(Protocol):
-    """GitHub interface."""
-    def get_info(self, ctx: StackedPRContextType, git_cmd: GitInterface) -> Optional[GitHubInfo]:
-        """Get GitHub info."""
-        ...
-
-    def create_pull_request(self, ctx: StackedPRContextType, git_cmd: GitInterface, 
-                           info: GitHubInfo, commit: Commit, prev_commit: Optional[Commit], 
-                           labels: Optional[List[str]] = None, use_breakup_branch: bool = False) -> PullRequest:
-        """Create pull request."""
-        ...
-
-    def update_pull_request(self, ctx: StackedPRContextType, git_cmd: GitInterface, 
-                           prs: List[PullRequest], pr: PullRequest, commit: Optional[Commit], 
-                           prev_commit: Optional[Commit], labels: Optional[List[str]] = None) -> None:
-        """Update pull request."""
-        ...
-
-    def add_reviewers(self, ctx: StackedPRContextType, pr: PullRequest, user_ids: List[str]) -> None:
-        """Add reviewers to pull request."""
-        ...
-
-    def comment_pull_request(self, ctx: StackedPRContextType, pr: PullRequest, comment: str) -> None:
-        """Comment on pull request."""
-        ...
-
-    def close_pull_request(self, ctx: StackedPRContextType, pr: PullRequest) -> None:
-        """Close pull request."""
-        ...
-
-    def get_assignable_users(self, ctx: StackedPRContextType) -> List[Dict[str, str]]:
-        """Get assignable users."""
-        ...
-        
-    def merge_pull_request(self, ctx: StackedPRContextType, pr: PullRequest, merge_method: MergeMethod) -> None:
-        """Merge pull request."""
-        ...
-    
-    def get_pull_request_for_branch(self, ctx: StackedPRContextType, branch_name: str) -> Optional[PullRequest]:
-        """Get pull request for a specific branch."""
-        ...
 
 class GitHubClient:
     """GitHub client implementation."""
@@ -221,7 +179,7 @@ class GitHubClient:
         # Match both spr/main/ID and pyspr/cp/main/ID patterns
         spr_branch_pattern = r'^(?:spr|pyspr/cp)/[^/]+/([a-f0-9]{8})'
         
-        logger.info(f"> github fetch pull requests")
+        logger.info("> github fetch pull requests")
         
         # Build PR map keyed by commit ID, like Go version
         pull_request_map: Dict[str, PullRequest] = {}

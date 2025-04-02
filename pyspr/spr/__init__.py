@@ -20,7 +20,7 @@ logger.propagate = False  # Don't double log
 
 from ..git import Commit, get_local_commit_stack, branch_name_from_commit, breakup_branch_name_from_commit, GitInterface
 from ..config.models import PysprConfig
-from ..github import GitHubInfo, PullRequest, GitHubInterface
+from ..github import GitHubInfo, PullRequest, GitHubClient
 from ..typing import StackedPRContextProtocol
 
 class UpdateItem(TypedDict):
@@ -33,7 +33,7 @@ class UpdateItem(TypedDict):
 class StackedPR:
     """StackedPR implementation."""
 
-    def __init__(self, config: PysprConfig, github: GitHubInterface, git_cmd: GitInterface):
+    def __init__(self, config: PysprConfig, github: GitHubClient, git_cmd: GitInterface):
         """Initialize with config, GitHub and git clients."""
         self.config = config
         self.github = github
