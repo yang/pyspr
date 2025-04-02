@@ -6,23 +6,9 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Literal, Protocol, runtime_checkable, TypeVar
 import re
 
-T = TypeVar('T')
+from ..util import ensure
 
-def ensure(value: Optional[T]) -> T:
-    """Ensure a value is not None, raising RuntimeError if it is.
-    
-    Args:
-        value: The value to check
-        
-    Returns:
-        The value if it is not None
-        
-    Raises:
-        RuntimeError: If the value is None
-    """
-    if value is None:
-        raise RuntimeError("Value is None")
-    return value
+T = TypeVar('T')
 
 # Define merge method type
 MergeMethod = Literal['merge', 'squash', 'rebase']
