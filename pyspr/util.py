@@ -1,6 +1,7 @@
-from typing import Optional
+from typing import Optional, TypeVar
 
-from pyspr.github import T
+# Define TypeVar here instead of importing from github to avoid circular imports
+T = TypeVar('T')
 
 
 def ensure(value: Optional[T]) -> T:
