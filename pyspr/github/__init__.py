@@ -65,32 +65,15 @@ class PyGithubProtocol(Protocol):
     def get_repo(self, full_name_or_id: str) -> Any:
         """Get a repository by full name or ID."""
         ...
+    
+    def get_user(self, login: Any = None, *args: Any, **kwargs: Any) -> Any:
+        """Get a user by login or the authenticated user if login is None.
         
-    # We use a more flexible signature to accommodate both implementations
-    def get_user(self, login: Any = None, **kwargs: Any) -> Any:
-        """Get a user by login or the authenticated user if login is None."""
+        Note: The signature is intentionally flexible to accommodate both:
+        - Real PyGithub: get_user(login: Optional[str] = None)
+        - FakeGithub: get_user(login: str = None, create: bool = False)
+        """
         ...
-
-class RealPyGithubAdapter(PyGithubProtocol):
-    """Adapter that wraps the real PyGithub client and implements PyGithubProtocol."""
-    
-    def __init__(self, github_client: Any):
-        """Initialize with a real PyGithub client instance."""
-        self.github_client = github_client
-    
-    def get_repo(self, full_name_or_id: str) -> Any:
-        """Get a repository by full name or ID."""
-        return self.github_client.get_repo(full_name_or_id)
-    
-    def get_user(self, login: Any = None, **kwargs: Any) -> Any:
-        """Get a user by login or the authenticated user if login is None."""
-        # The real PyGithub client doesn't accept the create parameter
-        # so we just pass the login parameter
-        return self.github_client.get_user(login)
-    
-    # Forward any other attribute access to the wrapped PyGithub client
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self.github_client, name)
 
 def find_github_token() -> Optional[str]:
     """Find GitHub token from env var, gh CLI config, or token file."""

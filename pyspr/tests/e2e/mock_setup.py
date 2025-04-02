@@ -5,33 +5,13 @@ import logging
 from typing import Optional
 
 from pyspr.config.models import PysprConfig
-from pyspr.github import GitHubClient, PyGithubProtocol
-from typing import Any
+from pyspr.github import GitHubClient
 from pyspr.typing import StackedPRContextProtocol
 from pyspr.tests.e2e.fake_pygithub import create_fake_github
 
 logger = logging.getLogger(__name__)
 
-class FakeGithubAdapter(PyGithubProtocol):
-    """Adapter that wraps FakeGithub and implements PyGithubProtocol."""
-    
-    def __init__(self, fake_github: Any):
-        """Initialize with a FakeGithub instance."""
-        self.fake_github = fake_github
-    
-    def get_repo(self, full_name_or_id: str) -> Any:
-        """Get a repository by full name or ID."""
-        return self.fake_github.get_repo(full_name_or_id)
-    
-    def get_user(self, login: Any = None, **kwargs: Any) -> Any:
-        """Get a user by login or the authenticated user if login is None."""
-        # Forward only the parameters that FakeGithub.get_user accepts
-        create = kwargs.get('create', False)
-        return self.fake_github.get_user(login, create=create)
-    
-    # Forward any other attribute access to the wrapped FakeGithub instance
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self.fake_github, name)
+# No adapter needed - FakeGithub should satisfy our protocol directly
 
 
 def should_use_mock_github() -> bool:
@@ -74,17 +54,14 @@ def create_github_client(ctx: Optional[StackedPRContextProtocol], config: PysprC
         # Debug current directory before creating fake client
         logger.info(f"Current directory before creating fake GitHub: {os.getcwd()}")
         
-        # Create a fake GitHub instance
-        fake_github = create_fake_github()
+        # Create a fake GitHub instance - it should satisfy our protocol directly
+        github_client = create_fake_github()
         
         # Log fake GitHub's data directory
-        logger.info(f"Fake GitHub data directory: {fake_github.data_dir}")
+        logger.info(f"Fake GitHub data directory: {github_client.data_dir}")
         
-        # Create an adapter that wraps the fake GitHub instance
-        github_adapter = FakeGithubAdapter(fake_github)
-        
-        # Create the GitHub client with the adapter
-        client = GitHubClient(ctx, config, github_client=github_adapter)
+        # Create the GitHub client with the fake GitHub instance
+        client = GitHubClient(ctx, config, github_client=github_client)
         logger.info("Created GitHubClient with fake PyGithub implementation")
         
         # Make sure repo is initialized
@@ -97,7 +74,7 @@ def create_github_client(ctx: Optional[StackedPRContextProtocol], config: PysprC
             logger.info(f"Initialized repository: {owner}/{name}")
             
             # Force saving state after initialization using public method
-            fake_github.save_state()
+            github_client.save_state()
             logger.info("Forced saving initial state")
             
             # Create a test PR for debugging
@@ -113,8 +90,8 @@ def create_github_client(ctx: Optional[StackedPRContextProtocol], config: PysprC
                             head="test-branch"
                         )
                         logger.info(f"Created test PR #{test_pr.number}")
-                        fake_github.save_state()
-                        logger.info(f"Saved state after creating test PR, dictionary now has {len(fake_github.pull_requests)} entries")
+                        github_client.save_state()
+                        logger.info(f"Saved state after creating test PR, dictionary now has {len(github_client.pull_requests)} entries")
                     except Exception as e:
                         logger.error(f"Failed to create test PR: {e}")
         
@@ -125,7 +102,7 @@ def create_github_client(ctx: Optional[StackedPRContextProtocol], config: PysprC
         os.environ["SPR_USING_MOCK_GITHUB"] = "false"
         
         # Import here to avoid circular imports
-        from pyspr.github import find_github_token, RealPyGithubAdapter
+        from pyspr.github import find_github_token
         from github import Github
         
         # Get GitHub token
@@ -135,9 +112,8 @@ def create_github_client(ctx: Optional[StackedPRContextProtocol], config: PysprC
             logger.error(error_msg)
             raise ValueError(error_msg)
         
-        # Create a real PyGithub client and wrap it in an adapter
-        real_client = Github(token)
-        github_client = RealPyGithubAdapter(real_client)
+        # Create a real PyGithub client - it should satisfy our protocol directly
+        github_client = Github(token)
             
         # Create and return the GitHub client
         return GitHubClient(ctx, config, github_client=github_client)
