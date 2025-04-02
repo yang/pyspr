@@ -11,6 +11,8 @@ from pathlib import Path
 import os
 import tempfile
 
+from pyspr.util import ensure
+
 logger = logging.getLogger(__name__)
 
 @dataclass
@@ -19,7 +21,11 @@ class FakeNamedUser:
     login: str
     name: str
     email: str
-    github_ref: Any = field(default=None, repr=False)
+    maybe_github_ref: Any = field(default=None, repr=False)
+    
+    @property
+    def github_ref(self) -> 'FakeGithub':
+        return ensure(self.maybe_github_ref)
     
     def __post_init__(self):
         """Initialize default values after creation."""
@@ -33,7 +39,11 @@ class FakeCommit:
     """Fake implementation of the Commit class from PyGithub."""
     sha: str
     message: str
-    github_ref: Any = field(default=None, repr=False)
+    maybe_github_ref: Any = field(default=None, repr=False)
+    
+    @property
+    def github_ref(self) -> 'FakeGithub':
+        return ensure(self.maybe_github_ref)
     
     # Nested structure just like PyGithub
     @property
@@ -46,7 +56,11 @@ class FakeCommitInfo:
     commit_id: str
     commit_hash: str
     subject: str
-    github_ref: Any = field(default=None, repr=False)
+    maybe_github_ref: Any = field(default=None, repr=False)
+    
+    @property
+    def github_ref(self) -> 'FakeGithub':
+        return ensure(self.maybe_github_ref)
 
 @dataclass
 class FakeRef:
@@ -54,7 +68,11 @@ class FakeRef:
     ref: str
     sha: str
     repository_full_name: str
-    github_ref: Any = field(default=None, repr=False)
+    maybe_github_ref: Any = field(default=None, repr=False)
+    
+    @property
+    def github_ref(self) -> 'FakeGithub':
+        return ensure(self.maybe_github_ref)
     
     @property
     def repo(self):
@@ -68,7 +86,11 @@ class FakeTeam:
     """Fake implementation of the Team class from PyGithub."""
     name: str
     slug: str
-    github_ref: Any = field(default=None, repr=False)
+    maybe_github_ref: Any = field(default=None, repr=False)
+    
+    @property
+    def github_ref(self) -> 'FakeGithub':
+        return ensure(self.maybe_github_ref)
     
     def __post_init__(self):
         """Initialize default values after creation."""
@@ -91,12 +113,21 @@ class FakePullRequestData:
     labels: List[str] = field(default_factory=list)
     auto_merge_enabled: bool = False
     auto_merge_method: str = ""
-    github_ref: Any = field(default=None, repr=False)
+    maybe_github_ref: Any = field(default=None, repr=False)
+    
+    @property
+    def github_ref(self) -> 'FakeGithub':
+        return ensure(self.maybe_github_ref)
 
 @dataclass
 class FakePullRequest:
     """API response object for a pull request."""
     _data: FakePullRequestData
+    
+    @property
+    def _repo(self) -> 'FakeRepository':
+        """Get the repository this PR belongs to (internal helper)."""
+        return ensure(self._data.github_ref).get_repo(f"{self._data.owner_login}/{self._data.repository_name}")
     
     @property
     def data(self) -> FakePullRequestData:
@@ -176,7 +207,7 @@ class FakePullRequest:
             ref=self._data.base_ref, 
             sha=base_sha,
             repository_full_name=f"{self._data.owner_login}/{self._data.repository_name}",
-            github_ref=self._data.github_ref
+            maybe_github_ref=self._data.github_ref
         )
     
     @property
@@ -191,7 +222,7 @@ class FakePullRequest:
             ref=self._data.head_ref,
             sha=head_sha,
             repository_full_name=f"{self._data.owner_login}/{self._data.repository_name}",
-            github_ref=self._data.github_ref
+            maybe_github_ref=self._data.github_ref
         )
     
     @property
@@ -206,7 +237,7 @@ class FakePullRequest:
             commit_id=commit_id,
             commit_hash=commit_hash,
             subject=commit_subject,
-            github_ref=self._data.github_ref
+            maybe_github_ref=self._data.github_ref
         )
     
     @property
@@ -231,7 +262,7 @@ class FakePullRequest:
         # Save state after updating PR
         if self._data.github_ref:
             logger.debug(f"Saving state after editing PR #{self.number}")
-            self._data.github_ref._save_state()
+            self._data.github_ref.save_state()
     
     def create_issue_comment(self, body: str):
         """Add a comment to the pull request."""
@@ -248,7 +279,7 @@ class FakePullRequest:
         # Save state after adding labels
         if self._data.github_ref:
             logger.debug(f"Saving state after adding labels to PR #{self.number}")
-            self._data.github_ref._save_state()
+            self._data.github_ref.save_state()
     
     def get_commits(self) -> list[FakeCommit]:
         """Get commits in the pull request."""
@@ -259,7 +290,7 @@ class FakePullRequest:
         # Always reload state first to ensure we have the latest data
         if self._data.github_ref:
             logger.info(f"Reloading state before getting review requests for PR #{self.number}")
-            self._data.github_ref._load_state()
+            self._data.github_ref.load_state()
             
             # After reloading state, check if our PR is still in the pull_requests dictionary
             pr_key = f"{self._data.owner_login}/{self._data.repository_name}:{self.number}"
@@ -290,7 +321,7 @@ class FakePullRequest:
             # Always reload state first to ensure we have the latest data
             if self._data.github_ref:
                 logger.info(f"Reloading state before adding reviewers to PR #{self.number}")
-                self._data.github_ref._load_state()
+                self._data.github_ref.load_state()
                 
             # Make sure we don't add duplicates
             for reviewer in reviewers:
@@ -314,7 +345,7 @@ class FakePullRequest:
                     # Write directly to state file
                     logger.info(f"Writing state file directly for PR #{self.number}")
                     try:
-                        self._data.github_ref._save_state()
+                        self._data.github_ref.save_state()
                         logger.info(f"Successfully saved state for PR #{self.number}")
                         
                         # Verify the state file was written correctly
@@ -331,7 +362,7 @@ class FakePullRequest:
                 
                 # Force reload state to ensure it's properly saved
                 try:
-                    self._data.github_ref._load_state()
+                    self._data.github_ref.load_state()
                     logger.info(f"Verified reviewers after reload: {self._data.reviewers}")
                 except Exception as e:
                     logger.error(f"Error reloading state: {e}")
@@ -413,7 +444,7 @@ class FakePullRequest:
         # Save state after merging PR
         if self._data.github_ref:
             logger.debug(f"Saving state after merging PR #{self.number}")
-            self._data.github_ref._save_state()
+            self._data.github_ref.save_state()
     
     def enable_automerge(self, merge_method: str = "merge"):
         """Enable auto-merge for the pull request."""
@@ -423,7 +454,7 @@ class FakePullRequest:
         # Save state after enabling auto-merge
         if self._data.github_ref:
             logger.debug(f"Saving state after enabling auto-merge for PR #{self.number}")
-            self._data.github_ref._save_state()
+            self._data.github_ref.save_state()
 
 @dataclass
 class FakeRepository:
@@ -432,7 +463,11 @@ class FakeRepository:
     name: str
     full_name: str
     next_pr_number: int
-    github_ref: Any = field(default=None, repr=False)
+    maybe_github_ref: Any = field(default=None, repr=False)
+    
+    @property
+    def github_ref(self) -> 'FakeGithub':
+        return ensure(self.maybe_github_ref)
     
     @property
     def owner(self):
@@ -441,51 +476,66 @@ class FakeRepository:
             return None
         return self.github_ref.get_user(self.owner_login)
     
-    def get_assignees(self) -> list[FakeNamedUser]:
+    def get_assignees(self) -> List['FakeNamedUser']:
         """Get assignable users for repository."""
         # For simplicity, just return some default users
         if not self.github_ref:
             return []
             
         # Always reload state first
-        self.github_ref._load_state()
+        self.github_ref.load_state()
             
-        return [self.github_ref.get_user(login, create=True) for login in ["yang", "testuser", "testluser"] if login]
+        # Filter out None values to satisfy the return type
+        return [u for u in [self.github_ref.get_user(login, create=True) for login in ["yang", "testuser", "testluser"] if login] if u is not None]
     
-    def get_pull(self, number: int) -> FakePullRequest:
+    def get_pull(self, number: int) -> 'FakePullRequest':
         """Get pull request by number."""
         if not self.github_ref:
             raise ValueError("Repository not linked to GitHub instance")
             
         # Always reload state first to ensure we have the latest data
         logger.info(f"Reloading state before getting PR #{number} from repository {self.full_name}")
-        self.github_ref._load_state()
+        self.github_ref.load_state()
             
-        return self.github_ref.get_pull(number, repo_name=self.full_name)
+        pr = self.github_ref.get_pull(number, repo_name=self.full_name)
+        if pr is None:
+            raise ValueError(f"PR #{number} not found in repository {self.full_name}")
+        return pr
 
     def get_pulls(self, state: str = "open", sort: str = "", 
-                 direction: str = "", head: str = "", base: str = "") -> list[FakePullRequest]:
+                 direction: str = "", head: str = "", base: str = "") -> List['FakePullRequest']:
         """Get pull requests with optional filtering."""
         if not self.github_ref:
             return []
             
         # Always reload state first
-        self.github_ref._load_state()
+        self.github_ref.load_state()
         
-        return [pr for pr in self.github_ref.pull_requests.values()
-                if pr._data.owner_login == self.owner_login and
-                pr._data.repository_name == self.name and
-                (not state or pr.state == state) and
-                (not head or pr.head.ref == head) and
-                (not base or pr.base.ref == base)]
+        # Use a properly typed list and filter PRs based on parameters
+        result: List['FakePullRequest'] = []
+        for pr in self.github_ref.pull_requests.values():
+            # Use a helper method to check if PR belongs to this repo
+            if self._pr_belongs_to_repo(pr) and \
+               (not state or pr.state == state) and \
+               (not head or pr.head.ref == head) and \
+               (not base or pr.base.ref == base):
+                result.append(pr)
+        
+        return result
+        
+    def _pr_belongs_to_repo(self, pr: 'FakePullRequest') -> bool:
+        """Check if a PR belongs to this repository."""
+        # Access data fields through property accessors
+        return pr.data.owner_login == self.owner_login and \
+               pr.data.repository_name == self.name
     def create_pull(self, title: str, body: str, base: str, head: str, 
-                   maintainer_can_modify: bool = True, draft: bool = False):
+                   maintainer_can_modify: bool = True, draft: bool = False) -> 'FakePullRequest':
         """Create a new pull request."""
         if not self.github_ref:
             raise ValueError("Repository not linked to GitHub instance")
         
         # Always reload state first
-        self.github_ref._load_state()
+        self.github_ref.load_state()
         
         # Check if a PR already exists for this branch
         for pr in self.github_ref.pull_requests.values():
@@ -544,7 +594,7 @@ class FakeRepository:
             labels=[],     # Start with no labels
             auto_merge_enabled=False,  # Auto-merge is off by default
             auto_merge_method="merge",  # Default merge method
-            github_ref=self.github_ref
+            maybe_github_ref=self.github_ref
         )
         
         pr = FakePullRequest(pr_data)
@@ -559,9 +609,9 @@ class FakeRepository:
         # Save state after creating PR
         if self.github_ref:
             logger.debug(f"Saving state after creating PR #{pr.number}")
-            self.github_ref._save_state()
+            self.github_ref.save_state()
         else:
-            logger.warning(f"Cannot save state after creating PR - github_ref is None")
+            logger.warning("Cannot save state after creating PR - github_ref is None")
         
         return pr
 
@@ -611,7 +661,11 @@ def _run_git_command(cmd: List[str], cwd: Path, check: bool = True) -> str:
 @dataclass
 class FakeRequester:
     """Fake implementation of requester for GraphQL."""
-    github_ref: Any = field(default=None, repr=False)
+    maybe_github_ref: Any = field(default=None, repr=False)
+    
+    @property
+    def github_ref(self) -> 'FakeGithub':
+        return ensure(self.maybe_github_ref)
     
     def requestJsonAndCheck(self, method: str, url: str, input: Dict[str, Any] = None):
         """Handle GraphQL requests."""
@@ -624,7 +678,7 @@ class FakeRequester:
     def _handle_graphql(self, input: Dict[str, Any]):
         """Handle GraphQL query."""
         # Always reload state first
-        self.github_ref._load_state()
+        self.github_ref.load_state()
         
         _query = input.get("query", "")
         _variables = input.get("variables", {})
@@ -743,7 +797,7 @@ class FakeGithub:
                 login="yang",
                 name="Yang",
                 email="yang@example.com",
-                github_ref=self
+                maybe_github_ref=self
             )
         
         # Link all objects to this GitHub instance
@@ -754,13 +808,13 @@ class FakeGithub:
     def _link_objects(self):
         """Link all objects to this GitHub instance."""
         for user in self.users.values():
-            user.github_ref = self
+            user.maybe_github_ref = self
         
         for repo in self.repositories.values():
-            repo.github_ref = self
+            repo.maybe_github_ref = self
         
         for pr in self.pull_requests.values():
-            pr.data.github_ref = self
+            pr.data.maybe_github_ref = self
     
     def _load_state(self):
         """Load state from file."""
@@ -810,6 +864,7 @@ class FakeGithub:
             
     def load_state(self):
         """Public method to load state from file."""
+        # Protected method is accessible within this class
         return self._load_state()
     
     def _save_state(self):
@@ -842,31 +897,32 @@ class FakeGithub:
     
     def save_state(self):
         """Public method to save state to file."""
+        # Protected method is accessible within this class
         return self._save_state()
     
-    def get_user(self, login: str = None, create: bool = False):
+    def get_user(self, login: Optional[str] = None, **kwargs: Any) -> Optional['FakeNamedUser']:
         """Get user by login or current authenticated user."""
         # Always reload state first
-        self._load_state()
-        
+        self.load_state()        
         if login is None:
             return self._user
         
         if login in self.users:
             return self.users[login]
         
+        create = kwargs.get('create', False)
         if create:
             # Provide default values for name and email when creating a new user
-            user = FakeNamedUser(login=login, name=login, email=f"{login}@example.com", github_ref=self)
+            user = FakeNamedUser(login=login, name=login, email=f"{login}@example.com", maybe_github_ref=self)
             self.users[login] = user
             return user
         
         return None
     
-    def get_repo(self, full_name_or_id: str):
+    def get_repo(self, full_name_or_id: str) -> 'FakeRepository':
         """Get repository by full name."""
         # Always reload state first
-        self._load_state()
+        self.load_state()
         
         if full_name_or_id in self.repositories:
             return self.repositories[full_name_or_id]
@@ -878,7 +934,7 @@ class FakeGithub:
             name=name,
             full_name=full_name_or_id,
             next_pr_number=1,
-            github_ref=self
+            maybe_github_ref=self
         )
         
         # Store in repositories dict
@@ -886,7 +942,7 @@ class FakeGithub:
         
         return repo
     
-    def get_pull(self, number: int, repo_name: str = None):
+    def get_pull(self, number: int, repo_name: Optional[str] = None) -> Optional['FakePullRequest']:
         """Get pull request by number.
         
         Args:
@@ -895,7 +951,7 @@ class FakeGithub:
                       If not provided, will try to find any PR with this number
         """
         # Always reload state first
-        self._load_state()
+        self.load_state()
         
         # If repo_name provided, use composite key
         composite_key = f"{repo_name}:{number}" if repo_name else None
@@ -911,9 +967,9 @@ class FakeGithub:
     
     # Requester for GraphQL API
     @property
-    def _Github__requester(self):
+    def _Github__requester(self) -> FakeRequester:
         """Fake requester for GraphQL."""
-        return FakeRequester(github_ref=self)
+        return FakeRequester(maybe_github_ref=self)
 
 # Fake exceptions
 class FakeGithubException(Exception):
@@ -951,7 +1007,7 @@ def create_fake_github(token: Optional[str] = None,
         users={},
         repositories={},
         pull_requests={},
-        _user=FakeNamedUser(login="yang", name="Yang", email="yang@example.com", github_ref=None),
+        _user=FakeNamedUser(login="yang", name="Yang", email="yang@example.com", maybe_github_ref=None),
         data_dir=data_dir,
         state_file=state_file
     )
