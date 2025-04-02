@@ -5,11 +5,34 @@ import logging
 from typing import Optional
 
 from pyspr.config.models import PysprConfig
-from pyspr.github import GitHubClient
+from pyspr.github import GitHubClient, PyGithubProtocol
+from typing import Any
 from pyspr.typing import StackedPRContextProtocol
 from pyspr.tests.e2e.fake_pygithub import create_fake_github
 
 logger = logging.getLogger(__name__)
+
+class FakeGithubAdapter(PyGithubProtocol):
+    """Adapter that wraps FakeGithub and implements PyGithubProtocol."""
+    
+    def __init__(self, fake_github: Any):
+        """Initialize with a FakeGithub instance."""
+        self.fake_github = fake_github
+    
+    def get_repo(self, full_name_or_id: str) -> Any:
+        """Get a repository by full name or ID."""
+        return self.fake_github.get_repo(full_name_or_id)
+    
+    def get_user(self, login: Any = None, **kwargs: Any) -> Any:
+        """Get a user by login or the authenticated user if login is None."""
+        # Forward only the parameters that FakeGithub.get_user accepts
+        create = kwargs.get('create', False)
+        return self.fake_github.get_user(login, create=create)
+    
+    # Forward any other attribute access to the wrapped FakeGithub instance
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.fake_github, name)
+
 
 def should_use_mock_github() -> bool:
     """Check if we should use mock GitHub.
@@ -48,21 +71,21 @@ def create_github_client(ctx: Optional[StackedPRContextProtocol], config: PysprC
         # Set environment variable to indicate we're using mock GitHub
         os.environ["SPR_USING_MOCK_GITHUB"] = "true"
         
-        # Create the GitHub client with default initialization
-        client = GitHubClient(ctx, config)
-        
         # Debug current directory before creating fake client
         logger.info(f"Current directory before creating fake GitHub: {os.getcwd()}")
         
-        # Create a fake GitHub instance and store it for reuse
+        # Create a fake GitHub instance
         fake_github = create_fake_github()
         
         # Log fake GitHub's data directory
         logger.info(f"Fake GitHub data directory: {fake_github.data_dir}")
         
-        # Always directly replace the client attribute with our FakeGithub
-        client.client = fake_github
-        logger.info("Injected fake GitHub instance directly")
+        # Create an adapter that wraps the fake GitHub instance
+        github_adapter = FakeGithubAdapter(fake_github)
+        
+        # Create the GitHub client with the adapter
+        client = GitHubClient(ctx, config, github_client=github_adapter)
+        logger.info("Created GitHubClient with fake PyGithub implementation")
         
         # Make sure repo is initialized
         # Use github_repo_owner and github_repo_name if available
@@ -100,4 +123,21 @@ def create_github_client(ctx: Optional[StackedPRContextProtocol], config: PysprC
         logger.info("Using REAL GitHub client")
         # Set environment variable to indicate we're using real GitHub
         os.environ["SPR_USING_MOCK_GITHUB"] = "false"
-        return GitHubClient(ctx, config)
+        
+        # Import here to avoid circular imports
+        from pyspr.github import find_github_token, RealPyGithubAdapter
+        from github import Github
+        
+        # Get GitHub token
+        token = find_github_token()
+        if not token:
+            error_msg = "No GitHub token found. Try one of:\n1. Set GITHUB_TOKEN env var\n2. Log in with 'gh auth login'\n3. Put token in /home/ubuntu/code/pyspr/token file"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        
+        # Create a real PyGithub client and wrap it in an adapter
+        real_client = Github(token)
+        github_client = RealPyGithubAdapter(real_client)
+            
+        # Create and return the GitHub client
+        return GitHubClient(ctx, config, github_client=github_client)
