@@ -5,7 +5,7 @@ from __future__ import annotations
 import yaml
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Any, Tuple, Optional
+from typing import Dict, List, Any, Tuple, Optional, cast
 import subprocess
 from pathlib import Path
 import os
@@ -285,7 +285,7 @@ class FakePullRequest:
         """Get commits in the pull request."""
         return []  # Not needed for testing
     
-    def get_review_requests(self) -> tuple[list[Any], list[Any]]:
+    def get_review_requests(self) -> tuple[list['FakeNamedUser'], list[Any]]:
         """Get users and teams requested for review."""
         # Always reload state first to ensure we have the latest data
         if self.data_record.github_ref:
@@ -300,7 +300,7 @@ class FakePullRequest:
                 self.data_record.reviewers = loaded_pr.data_record.reviewers.copy()
             
         # Convert reviewer login strings to FakeNamedUser objects
-        requested_users = []
+        requested_users: List['FakeNamedUser'] = []
         logger.info(f"PR #{self.number} has reviewers: {self.data_record.reviewers}")
         if self.data_record.github_ref and self.data_record.reviewers:
             for reviewer_login in self.data_record.reviewers:
@@ -310,7 +310,7 @@ class FakePullRequest:
                 else:
                     logger.warning(f"Failed to create user for reviewer: {reviewer_login}")
         
-        logger.info(f"Returning requested users: {[u.login for u in requested_users]}")
+        logger.info(f"Returning requested users: {[u.login for u in requested_users if hasattr(u, 'login')]}")
         return requested_users, []  # No teams for testing
     
     def create_review_request(self, reviewers: list[str] | None = None, team_reviewers: list[str] | None = None):
@@ -667,15 +667,15 @@ class FakeRequester:
     def github_ref(self) -> 'FakeGithub':
         return ensure(self.maybe_github_ref)
     
-    def requestJsonAndCheck(self, method: str, url: str, input: Dict[str, Any] = None):
+    def requestJsonAndCheck(self, method: str, url: str, input: Optional[Dict[str, Any]] = None) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Handle GraphQL requests."""
         if method == "POST" and url == "https://api.github.com/graphql" and input:
             return self._handle_graphql(input)
         
         # Default empty response
-        return {}, {}
+        return cast(Tuple[Dict[str, Any], Dict[str, Any]], ({}, {}))
     
-    def _handle_graphql(self, input: Dict[str, Any]):
+    def _handle_graphql(self, input: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Handle GraphQL query."""
         # Always reload state first
         self.github_ref.load_state()
@@ -684,7 +684,7 @@ class FakeRequester:
         _variables = input.get("variables", {})
         
         # Default empty response structure
-        response = {
+        response: Dict[str, Dict[str, Dict[str, Dict[str, bool | None] | List[Dict[str, Any]]]]] = {
             "data": {
                 "search": {
                     "pageInfo": {
@@ -697,7 +697,7 @@ class FakeRequester:
         }
         
         # For our tests, we just need to build a response with open PRs
-        pr_nodes = []
+        pr_nodes: List[Dict[str, Any]] = []
         
         # Get all open PRs - debug dictionary contents
         logger.debug(f"GraphQL request - PR dictionary has {len(self.github_ref.pull_requests)} entries")
@@ -705,13 +705,13 @@ class FakeRequester:
             logger.debug(f"PR key: {key}")
             
         # Get all open PRs - make a copy of the items since we're filtering
-        pr_items = list(self.github_ref.pull_requests.items())
+        pr_items: List[Tuple[str, FakePullRequest]] = list(self.github_ref.pull_requests.items())
         
         for key, pr in pr_items:
             logger.debug(f"Checking PR with key {key}: state={pr.state}, title={pr.title}")
             if pr.state == "open":
                 # Build PR node for response
-                pr_node = {
+                pr_node: Dict[str, Any] = {
                     "id": f"pr_{pr.number}",
                     "number": pr.number,
                     "title": pr.title,
@@ -747,7 +747,7 @@ class FakeRequester:
         logger.info(f"GraphQL returned {len(pr_nodes)} open PRs (newest first)")
         
         # Return tuple of (headers, data)
-        return {}, response
+        return cast(Tuple[Dict[str, Any], Dict[str, Any]], ({}, response))
 
 @dataclass
 class FakeGithub:
@@ -824,7 +824,8 @@ class FakeGithub:
         
         try:
             # Configure YAML to handle object references properly
-            yaml.Loader.ignore_aliases = lambda *args: False
+            # Type ignore for YAML loader configuration - this is a known pattern
+            yaml.Loader.ignore_aliases = lambda *args: False  # type: ignore
             
             with open(self.state_file, "r") as f:
                 # Use the Loader that preserves object types and references
@@ -843,10 +844,11 @@ class FakeGithub:
                 self._link_objects()
                 
                 # Fix next_pr_number in repositories to ensure new PRs get unique numbers
-                max_pr_numbers = {}
+                max_pr_numbers: Dict[str, int] = {}
                 for pr in self.pull_requests.values():
-                    repo_name = f"{pr.data.owner_login}/{pr.data.repository_name}"
-                    max_pr_numbers[repo_name] = max(max_pr_numbers.get(repo_name, 0), pr.number + 1)
+                    repo_name = f"{pr.data_record.owner_login}/{pr.data_record.repository_name}"
+                    current_max = max_pr_numbers.get(repo_name, 0)
+                    max_pr_numbers[repo_name] = max(current_max, pr.number + 1)
                 
                 # Update next_pr_number in repositories
                 for repo_name, repo in self.repositories.items():
@@ -883,7 +885,8 @@ class FakeGithub:
         self.pull_requests = clean_pull_requests
         
         # Configure YAML to properly handle object references
-        yaml.Dumper.ignore_aliases = lambda *args: False
+        # Type ignore for YAML dumper configuration - this is a known pattern
+        yaml.Dumper.ignore_aliases = lambda *args: False  # type: ignore
         
         try:
             self.state_file.parent.mkdir(parents=True, exist_ok=True)
