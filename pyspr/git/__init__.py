@@ -82,7 +82,9 @@ def get_local_commit_stack(config: ConfigProtocol, git_cmd: GitInterface) -> Lis
                     git_cmd.must_git(f"checkout {cid}")
                     
                     # Amend with ID
-                    git_cmd.must_git(f"commit --amend -m \"{new_msg}\"")
+                    # Use direct GitPython call to handle multiline messages properly
+                    repo = git.Repo(os.getcwd(), search_parent_directories=True)
+                    repo.git.commit("--amend", "-m", new_msg)
                     
                     # Get new hash
                     new_hash = git_cmd.must_git("rev-parse HEAD").strip()
@@ -174,6 +176,11 @@ def branch_name_from_commit(config: ConfigProtocol, commit: Commit) -> str:
     """Get branch name for commit. Matches Go implementation."""
     remote_branch = config.repo.get('github_branch', 'main')
     return f"spr/{remote_branch}/{commit.commit_id}"
+
+def breakup_branch_name_from_commit(config: ConfigProtocol, commit: Commit) -> str:
+    """Get branch name for breakup commit. Uses pyspr pattern."""
+    remote_branch = config.repo.get('github_branch', 'main')
+    return f"pyspr/cp/{remote_branch}/{commit.commit_id}"
 
 class RealGit:
     """Real Git implementation."""
