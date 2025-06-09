@@ -63,7 +63,7 @@ class GitHubInterface(Protocol):
 
     def create_pull_request(self, ctx: StackedPRContextType, git_cmd: GitInterface, 
                            info: GitHubInfo, commit: Commit, prev_commit: Optional[Commit], 
-                           labels: Optional[List[str]] = None) -> PullRequest:
+                           labels: Optional[List[str]] = None, use_breakup_branch: bool = False) -> PullRequest:
         """Create pull request."""
         ...
 
@@ -207,7 +207,8 @@ class GitHubClient:
           }
         }
         """
-        spr_branch_pattern = r'^spr/[^/]+/([a-f0-9]{8})'
+        # Match both spr/main/ID and pyspr/cp/main/ID patterns
+        spr_branch_pattern = r'^(?:spr|pyspr/cp)/[^/]+/([a-f0-9]{8})'
         
         logger.info(f"> github fetch pull requests")
         
@@ -333,7 +334,7 @@ class GitHubClient:
                 branch_match = re.match(spr_branch_pattern, str(pr.head.ref))
                 if branch_match:
                     logger.debug(f"Processing PR #{pr.number} with branch {pr.head.ref}")
-                    commit_id = branch_match.group(1)
+                    commit_id = branch_match.group(2)
                     commit_hash = pr.head.sha
                     all_commits: List[Commit] = []
                     try:
@@ -389,11 +390,17 @@ class GitHubClient:
 
     def create_pull_request(self, ctx: StackedPRContextType, git_cmd: GitInterface, info: GitHubInfo,
                          commit: Commit, prev_commit: Optional[Commit], 
-                         labels: Optional[List[str]] = None) -> PullRequest:
+                         labels: Optional[List[str]] = None, use_breakup_branch: bool = False) -> PullRequest:
         """Create pull request."""
         if not self.repo:
             raise Exception("GitHub repo not initialized - check token and repo owner/name config")
-        branch_name = self.branch_name_from_commit(commit)
+        
+        # Use breakup branch name if requested
+        if use_breakup_branch:
+            remote_branch = self.config.repo.get('github_branch', 'main')
+            branch_name = f"pyspr/cp/{remote_branch}/{commit.commit_id}"
+        else:
+            branch_name = self.branch_name_from_commit(commit)
         
         # Find base branch - use prev_commit's branch if exists
         if prev_commit:
@@ -422,7 +429,7 @@ class GitHubClient:
         new_pr.number = pr.number  # Update number in stack
         
         # Now format body with correct PR numbers
-        body = self.format_body(commit, current_prs)
+        body = self.format_body(commit, current_prs, is_breakup=use_breakup_branch)
         logger.debug(f"Formatted body:\n{body}")
         
         # Update PR with proper body
@@ -470,7 +477,9 @@ class GitHubClient:
         
         # Always update body with current stack info 
         if commit:
-            body = self.format_body(commit, prs)
+            # Check if this is a breakup PR by looking at the branch name
+            is_breakup = pr.from_branch and pr.from_branch.startswith('pyspr/cp/')
+            body = self.format_body(commit, prs, is_breakup=is_breakup)
             logger.debug(f"Updating body for PR #{pr.number}:\n{body}")
             gh_pr.edit(body=body)
             pr.body = body
@@ -625,10 +634,14 @@ class GitHubClient:
             lines.append(f"- {title_part}#{pr.number}{suffix}")
         return "\n".join(lines)
 
-    def format_body(self, commit: Commit, stack: List[PullRequest]) -> str:
+    def format_body(self, commit: Commit, stack: List[PullRequest], is_breakup: bool = False) -> str:
         """Format PR body with stack info."""
         body = commit.body if hasattr(commit, 'body') and commit.body else ""
         body = body.strip()
+
+        # For breakup PRs, just return the body without stack info
+        if is_breakup:
+            return body
 
         if len(stack) <= 1:
             return body

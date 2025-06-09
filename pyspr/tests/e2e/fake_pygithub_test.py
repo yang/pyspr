@@ -17,8 +17,7 @@ def test_basic_operations():
         # Create a fresh instance with no previous state
         github = create_fake_github(
             data_dir=tmpdir,
-            state_file=state_file,
-            load_state=False
+            state_file=state_file
         )
         
         # Create repository and verify it exists
@@ -87,8 +86,7 @@ def test_circular_references():
         # Create an entirely fresh instance with no pre-loaded state
         github = create_fake_github(
             data_dir=tmpdir,
-            state_file=state_file,
-            load_state=False
+            state_file=state_file
         )
         
         # Create two repositories that refer to the same owner
@@ -158,8 +156,7 @@ def test_graphql_functionality():
         state_file = os.path.join(tmpdir, "fake_github_state.yaml")
         github = create_fake_github(
             data_dir=tmpdir,
-            state_file=state_file,
-            load_state=False
+            state_file=state_file
         )
         
         repo = github.get_repo("testorg/testrepo")

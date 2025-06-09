@@ -175,6 +175,11 @@ def branch_name_from_commit(config: ConfigProtocol, commit: Commit) -> str:
     remote_branch = config.repo.get('github_branch', 'main')
     return f"spr/{remote_branch}/{commit.commit_id}"
 
+def breakup_branch_name_from_commit(config: ConfigProtocol, commit: Commit) -> str:
+    """Get branch name for breakup commit. Uses pyspr pattern."""
+    remote_branch = config.repo.get('github_branch', 'main')
+    return f"pyspr/cp/{remote_branch}/{commit.commit_id}"
+
 class RealGit:
     """Real Git implementation."""
     def __init__(self, config: ConfigProtocol):
