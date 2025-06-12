@@ -827,6 +827,10 @@ class StackedPR:
                 # Check if PR already exists
                 existing_pr = pr_map.get(branch)
                 
+                # If not in pr_map, check GitHub directly for breakup branches
+                if not existing_pr:
+                    existing_pr = self.github.get_pull_request_for_branch(ctx, branch)
+                
                 if existing_pr:
                     logger.info(f"  PR #{existing_pr.number} already exists for {branch}")
                     # Update the PR if needed

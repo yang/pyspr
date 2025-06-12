@@ -482,6 +482,26 @@ class FakeRepository:
         # Always reload state first
         self.github_ref._load_state()
         
+        # Check if a PR already exists for this branch
+        for pr in self.github_ref.pull_requests.values():
+            if pr.head.ref == head and pr.state == "open":
+                # GitHub returns 422 with specific error message for duplicate PRs
+                from github import GithubException
+                raise GithubException(
+                    422, 
+                    {
+                        "message": "Validation Failed",
+                        "errors": [{
+                            "resource": "PullRequest",
+                            "code": "custom", 
+                            "message": f"A pull request already exists for {self.owner_login}:{head}."
+                        }],
+                        "documentation_url": "https://docs.github.com/rest/pulls/pulls#create-a-pull-request",
+                        "status": "422"
+                    },
+                    None
+                )
+        
         # Create new PR with repository-specific number
         pr_number = self.next_pr_number
         self.next_pr_number += 1
