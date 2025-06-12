@@ -441,9 +441,57 @@ class GitHubClient:
                 existing_pr = self.get_pull_request_for_branch(ctx, branch_name)
                 if existing_pr:
                     logger.info(f"Found existing PR #{existing_pr.number} for branch {branch_name}")
+                    # Remove the temp PR we added to current_prs
+                    current_prs.pop()
                     # Update the existing PR instead
                     return self.update_pull_request(ctx, git_cmd, current_prs, existing_pr, commit, None)
                 else:
+                    # Try using gh CLI directly as fallback
+                    logger.warning(f"Could not find existing PR via API, trying gh CLI")
+                    import subprocess
+                    import json
+                    try:
+                        owner = self.config.repo.get('github_repo_owner')
+                        result = subprocess.run(
+                            ["gh", "pr", "list", "--head", f"{branch_name}", "--json", "number,headRefName,state", "--state", "open"],
+                            capture_output=True, text=True, check=True
+                        )
+                        prs = json.loads(result.stdout)
+                        if prs:
+                            # Take the most recent PR (highest number)
+                            pr_data = max(prs, key=lambda x: x['number'])
+                            logger.info(f"Found PR #{pr_data['number']} via gh CLI for branch {branch_name}")
+                            # Get full PR info
+                            pr_info = subprocess.run(
+                                ["gh", "pr", "view", str(pr_data['number']), "--json", "number,title,body,baseRefName,headRefName"],
+                                capture_output=True, text=True, check=True
+                            )
+                            pr_json = json.loads(pr_info.stdout)
+                            # Create a minimal PR object
+                            commit_for_pr = Commit(
+                                commit_hash=commit.commit_hash,
+                                commit_id=commit.commit_id,
+                                subject=pr_json['title'],
+                                body=pr_json.get('body', ''),
+                                wip=False
+                            )
+                            existing_pr = PullRequest(
+                                number=pr_json['number'],
+                                commit=commit_for_pr,
+                                commits=[commit_for_pr],
+                                base_ref=pr_json['baseRefName'],
+                                from_branch=pr_json['headRefName'],
+                                in_queue=False,
+                                body=pr_json.get('body', ''),
+                                title=pr_json['title']
+                            )
+                            # Remove the temp PR we added to current_prs
+                            current_prs.pop()
+                            # Update the existing PR instead
+                            return self.update_pull_request(ctx, git_cmd, current_prs, existing_pr, commit, None)
+                    except Exception as gh_error:
+                        logger.error(f"Failed to find PR via gh CLI: {gh_error}")
+                    
                     logger.error(f"Could not find existing PR for branch {branch_name} even though GitHub says it exists")
                     raise
             else:
