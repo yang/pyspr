@@ -515,7 +515,7 @@ class GitHubClient:
             except Exception as e:
                 logger.error(f"Failed to add labels to PR #{pr.number}: {e}")
 
-        # Update base branch to maintain stack, but not if in merge queue
+        # Update base branch to maintain stack, but not if in merge queue or for breakup PRs
         # PyGithub typing is wrong; auto_merge exists but isn't in stubs
         try:
             # auto_merge is a GraphQL-only feature, use getattr
@@ -523,7 +523,10 @@ class GitHubClient:
         except:
             in_queue = False
 
-        if not in_queue:
+        # Check if this is a breakup PR by looking at the branch name
+        is_breakup = pr.from_branch and pr.from_branch.startswith('pyspr/cp/')
+        
+        if not in_queue and not is_breakup:
             current_base = gh_pr.base.ref
             desired_base = None
             
@@ -705,7 +708,6 @@ class GitHubClient:
                         commit_id=pr.head.sha[:8],  # Use first 8 chars as ID
                         subject=pr.title,
                         body=pr.body or "",
-                        tree_hash="",  # Not used for this case
                         wip=False
                     )
                     return PullRequest(
