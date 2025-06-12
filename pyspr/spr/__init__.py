@@ -743,16 +743,22 @@ class StackedPR:
                         branch_exists = False
                         existing_hash = None
                     
-                    # Force update the branch
+                    # Compare trees instead of commit hashes to detect actual content changes
                     if branch_exists:
-                        if existing_hash != new_commit_hash:
+                        # Get tree SHAs to compare actual content
+                        existing_tree = self.git_cmd.must_git(f"rev-parse {existing_hash}^{{tree}}").strip()
+                        new_tree = self.git_cmd.must_git(f"rev-parse {new_commit_hash}^{{tree}}").strip()
+                        
+                        if existing_tree != new_tree:
+                            # Content has changed, update the branch
                             if self.pretend:
                                 logger.info(f"[PRETEND] Would update branch {branch_name} from {existing_hash[:8]} to {new_commit_hash[:8]}")
                             else:
                                 self.git_cmd.must_git(f"branch -f {branch_name} {new_commit_hash}")
                                 logger.info(f"  Updated branch {branch_name}")
                         else:
-                            logger.info(f"  Branch {branch_name} already up to date")
+                            # Content is identical, keep existing commit
+                            logger.info(f"  Branch {branch_name} already up to date (same content)")
                     else:
                         if self.pretend:
                             logger.info(f"[PRETEND] Would create branch {branch_name} at {new_commit_hash[:8]}")

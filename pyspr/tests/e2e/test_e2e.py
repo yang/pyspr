@@ -1541,17 +1541,10 @@ def test_breakup_pretend_mode(test_repo_ctx: RepoContext, capsys: pytest.Capture
     ctx.make_commit("file2.txt", "content2", "Second commit")
     
     # Run breakup in pretend mode - capture both stdout and stderr
-    import subprocess
-    result = subprocess.run(
-        ["rye", "run", "pyspr", "breakup", "--pretend", "-C", ctx.repo_dir],
-        capture_output=True,
-        text=True,
-        env={**os.environ, "SPR_USING_MOCK_GITHUB": "true"}
-    )
-    combined_output = result.stdout + result.stderr
+    output = run_cmd("pyspr breakup --pretend -v 2>&1", cwd=ctx.repo_dir)
     
     # Check output shows pretend actions
-    assert "[PRETEND]" in combined_output, f"Should show pretend mode indicators. Got stdout: {result.stdout[:200]}... stderr: {result.stderr[:200]}..."
+    assert "[PRETEND]" in output, f"Should show pretend mode indicators. Got output: {output[:500]}..."
     
     # Verify no actual PRs were created
     info = ctx.github.get_info(None, ctx.git_cmd)
@@ -1562,3 +1555,59 @@ def test_breakup_pretend_mode(test_repo_ctx: RepoContext, capsys: pytest.Capture
     # Verify no branches were created
     branches = run_cmd("git branch -a")
     assert "pyspr/cp/" not in branches, "Should not create branches in pretend mode"
+
+def test_breakup_preserves_unchanged_commit_hashes(test_repo_ctx: RepoContext) -> None:
+    """Test that breakup preserves hashes of commits that haven't changed."""
+    ctx = test_repo_ctx
+    
+    # Create two commits
+    ctx.make_commit("file1.txt", "content1", "First commit")
+    ctx.make_commit("file2.txt", "content2", "Second commit")
+    
+    # Initial breakup
+    run_cmd("pyspr breakup")
+    
+    # Get the branch name and hash for the second commit
+    info = ctx.github.get_info(None, ctx.git_cmd)
+    assert info is not None, "Should get GitHub info"
+    prs = [pr for pr in info.pull_requests if pr.from_branch.startswith("pyspr/cp/main/")]
+    assert len(prs) == 2, f"Should have 2 PRs, found {len(prs)}"
+    
+    # Find the PR for the second commit
+    second_pr = next((pr for pr in prs if "Second commit" in pr.title), None)
+    assert second_pr is not None, "Should find PR for second commit"
+    second_branch_name = second_pr.from_branch
+    
+    # Get the SHA of the second commit's branch after initial breakup
+    initial_second_branch_sha = ctx.git_cmd.must_git(f"rev-parse {second_branch_name}").strip()
+    log.info(f"Initial SHA for second commit branch {second_branch_name}: {initial_second_branch_sha}")
+    
+    # Amend only the first commit
+    run_cmd("git checkout HEAD~1")
+    existing_msg = ctx.git_cmd.must_git("log -1 --format=%B").strip()
+    run_cmd("echo 'updated' >> file1.txt")
+    run_cmd("git add file1.txt")
+    run_cmd(f"git commit --amend -m '{existing_msg.replace('First commit', 'First commit - updated')}'")
+    
+    # Cherry-pick the second commit to preserve the stack
+    # Get the commit with the commit-id from the local branch
+    run_cmd(f"git cherry-pick {second_branch_name}")
+    
+    # Run breakup again with verbose output
+    output = run_cmd("pyspr breakup -v 2>&1", cwd=ctx.repo_dir)
+    log.info(f"Breakup output:\n{output}")
+    
+    # Get the SHA of the second commit's branch after second breakup
+    final_second_branch_sha = ctx.git_cmd.must_git(f"rev-parse {second_branch_name}").strip()
+    log.info(f"Final SHA for second commit branch {second_branch_name}: {final_second_branch_sha}")
+    
+    # Verify the second commit's branch hash hasn't changed
+    assert final_second_branch_sha == initial_second_branch_sha, \
+        f"Second commit branch hash should remain unchanged. " \
+        f"Initial: {initial_second_branch_sha}, Final: {final_second_branch_sha}"
+    
+    # Verify the output shows the branch was not updated
+    assert "already up to date (same content)" in output, \
+        f"Output should indicate branch has same content"
+    
+    log.info("Successfully verified that unchanged commit preserved its hash")
