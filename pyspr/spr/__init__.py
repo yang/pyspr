@@ -18,7 +18,7 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 logger.propagate = False  # Don't double log
 
-from ..git import Commit, get_local_commit_stack, branch_name_from_commit, ConfigProtocol, GitInterface  
+from ..git import Commit, get_local_commit_stack, branch_name_from_commit, breakup_branch_name_from_commit, ConfigProtocol, GitInterface  
 from ..github import GitHubInfo, PullRequest, GitHubInterface
 from ..typing import StackedPRContextProtocol
 
@@ -676,3 +676,190 @@ class StackedPR:
             pr = github_info.pull_requests[i]
             pr.merged = True
             print(str(pr))
+
+    def breakup_pull_requests(self, ctx: StackedPRContextProtocol) -> None:
+        """Break up current commit stack into independent branches/PRs."""
+        from ..pretty import print_header
+        
+        # Get local commits
+        local_commits = get_local_commit_stack(self.config, self.git_cmd)
+        if not local_commits:
+            logger.info("No commits to break up")
+            return
+            
+        # Filter out WIP commits
+        non_wip_commits: List[Commit] = []
+        for commit in local_commits:
+            if commit.wip:
+                break
+            non_wip_commits.append(commit)
+            
+        if not non_wip_commits:
+            logger.info("No non-WIP commits to break up")
+            return
+            
+        logger.info(f"Breaking up {len(non_wip_commits)} commits into independent branches/PRs")
+        
+        # Get current branch to restore at the end
+        current_branch = self.git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
+        
+        # Get GitHub info 
+        github_info = self.github.get_info(ctx, self.git_cmd)
+        
+        # Track successfully created branches and PRs
+        created_branches: List[str] = []
+        created_prs: List[PullRequest] = []
+        skipped_commits: List[Commit] = []
+        
+        # Get the base branch from config
+        base_branch = self.config.repo.get('github_branch', 'main')
+        remote = self.config.repo.get('github_remote', 'origin')
+        
+        # Process each commit
+        for i, commit in enumerate(non_wip_commits):
+            branch_name = breakup_branch_name_from_commit(self.config, commit)
+            logger.info(f"\nProcessing commit {i+1}/{len(non_wip_commits)}: {commit.subject}")
+            logger.debug(f"  Commit hash: {commit.commit_hash}")
+            logger.debug(f"  Branch name: {branch_name}")
+            
+            # Try to cherry-pick the commit onto the base branch
+            try:
+                # Create a temporary branch from the base
+                temp_branch = f"pyspr-temp-{commit.commit_id}"
+                self.git_cmd.must_git(f"checkout -b {temp_branch} {remote}/{base_branch}")
+                
+                # Try to cherry-pick
+                try:
+                    self.git_cmd.must_git(f"cherry-pick {commit.commit_hash}")
+                    
+                    # Get the new commit hash after cherry-pick
+                    new_commit_hash = self.git_cmd.must_git("rev-parse HEAD").strip()
+                    
+                    # Check if branch already exists
+                    try:
+                        existing_hash = self.git_cmd.must_git(f"rev-parse {branch_name}").strip()
+                        branch_exists = True
+                    except:
+                        branch_exists = False
+                        existing_hash = None
+                    
+                    # Force update the branch
+                    if branch_exists:
+                        if existing_hash != new_commit_hash:
+                            if self.pretend:
+                                logger.info(f"[PRETEND] Would update branch {branch_name} from {existing_hash[:8]} to {new_commit_hash[:8]}")
+                            else:
+                                self.git_cmd.must_git(f"branch -f {branch_name} {new_commit_hash}")
+                                logger.info(f"  Updated branch {branch_name}")
+                        else:
+                            logger.info(f"  Branch {branch_name} already up to date")
+                    else:
+                        if self.pretend:
+                            logger.info(f"[PRETEND] Would create branch {branch_name} at {new_commit_hash[:8]}")
+                        else:
+                            self.git_cmd.must_git(f"branch {branch_name} {new_commit_hash}")
+                            logger.info(f"  Created branch {branch_name}")
+                    
+                    created_branches.append(branch_name)
+                    
+                except Exception as e:
+                    # Cherry-pick failed - this commit depends on earlier ones
+                    logger.info(f"  Skipping - cannot cherry-pick independently: {str(e)}")
+                    skipped_commits.append(commit)
+                    # Abort cherry-pick if in progress
+                    try:
+                        self.git_cmd.run_cmd("cherry-pick --abort")
+                    except:
+                        pass
+                        
+            finally:
+                # Always go back to original branch and clean up temp branch
+                self.git_cmd.must_git(f"checkout {current_branch}")
+                try:
+                    self.git_cmd.must_git(f"branch -D {temp_branch}")
+                except:
+                    pass
+        
+        # Push all created branches
+        if created_branches and not self.pretend:
+            logger.info(f"\nPushing {len(created_branches)} branches to remote...")
+            ref_names = []
+            for branch in created_branches:
+                ref_names.append(f"{branch}:refs/heads/{branch}")
+            
+            if self.pretend:
+                logger.info("[PRETEND] Would push the following branches:")
+                for branch in created_branches:
+                    logger.info(f"  {branch}")
+            else:
+                # Push all branches at once
+                cmd = f"push --force {remote} " + " ".join(ref_names)
+                self.git_cmd.must_git(cmd)
+                logger.info(f"Pushed {len(created_branches)} branches")
+        
+        # Create or update PRs for each successfully created branch
+        if created_branches:
+            logger.info(f"\nCreating/updating PRs for {len(created_branches)} branches...")
+            
+            # Build a map of existing PRs by branch name
+            pr_map: Dict[str, PullRequest] = {}
+            if github_info and github_info.pull_requests:
+                for pr in github_info.pull_requests:
+                    pr_map[pr.from_branch] = pr
+            
+            for branch in created_branches:
+                # Find the commit for this branch
+                commit = None
+                for c in non_wip_commits:
+                    if breakup_branch_name_from_commit(self.config, c) == branch:
+                        commit = c
+                        break
+                        
+                if not commit:
+                    continue
+                    
+                # Check if PR already exists
+                existing_pr = pr_map.get(branch)
+                
+                if existing_pr:
+                    logger.info(f"  PR #{existing_pr.number} already exists for {branch}")
+                    # Update the PR if needed
+                    if existing_pr.base_ref != base_branch:
+                        if self.pretend:
+                            logger.info(f"[PRETEND] Would update PR #{existing_pr.number} base from {existing_pr.base_ref} to {base_branch}")
+                        else:
+                            self.github.update_pull_request(ctx, self.git_cmd, [existing_pr], 
+                                                          existing_pr, commit, None)
+                            logger.info(f"  Updated PR #{existing_pr.number}")
+                    created_prs.append(existing_pr)
+                else:
+                    # Create new PR
+                    if self.pretend:
+                        logger.info(f"[PRETEND] Would create PR for {branch}: {commit.subject}")
+                        logger.info(f"  Base: {base_branch}")
+                    else:
+                        # Create PR with base_branch as base (no stacking)
+                        pr = self.github.create_pull_request(ctx, self.git_cmd, github_info, 
+                                                           commit, None, use_breakup_branch=True)  # None for prev_commit means use base_branch
+                        logger.info(f"  Created PR #{pr.number} for {branch}")
+                        created_prs.append(pr)
+        
+        # Summary
+        print_header("Breakup Summary", use_emoji=True)
+        print(f"\nProcessed {len(non_wip_commits)} commits:")
+        print(f"  ✅ Successfully created/updated: {len(created_branches)} branches")
+        print(f"  ⏭️  Skipped (dependent commits): {len(skipped_commits)}")
+        
+        if created_prs:
+            print(f"\nCreated/updated {len(created_prs)} pull requests:")
+            owner = self.config.repo.get('github_repo_owner')
+            name = self.config.repo.get('github_repo_name')
+            for pr in created_prs:
+                print(f"  PR #{pr.number}: {pr.title}")
+                if owner and name:
+                    print(f"    https://github.com/{owner}/{name}/pull/{pr.number}")
+                    
+        if skipped_commits:
+            print(f"\nSkipped {len(skipped_commits)} commits that depend on earlier commits:")
+            for commit in skipped_commits:
+                print(f"  {commit.commit_hash[:8]} {commit.subject}")

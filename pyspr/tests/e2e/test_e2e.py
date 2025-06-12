@@ -10,6 +10,7 @@ import subprocess
 import time
 import datetime
 import logging
+import re
 from typing import Dict, Generator, List, Optional, Set, Tuple, Union
 import pytest
 
@@ -17,6 +18,7 @@ from pyspr.tests.e2e.test_helpers import RepoContext, run_cmd
 from pyspr.config import Config
 from pyspr.git import RealGit
 from pyspr.github import GitHubClient, PullRequest, GitHubInfo
+from pyspr.typing import Commit
 from pyspr.tests.e2e.fixtures import test_repo_ctx, test_mq_repo_ctx, create_test_repo, github_environment
 
 # Configure logging
@@ -1348,3 +1350,215 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
     assert pr2b.number in remaining_prs, f"PR2B #{pr2b.number} should still exist"
     assert remaining_prs[pr2a.number] == "main", f"PR2A should target main, got {remaining_prs[pr2a.number]}"
     assert remaining_prs[pr2b.number] == f"spr/main/{c2a_id}", f"PR2B should target PR2A, got {remaining_prs[pr2b.number]}"
+
+def test_breakup_command(test_repo_ctx: RepoContext) -> None:
+    """Test the breakup command creates independent branches/PRs."""
+    ctx = test_repo_ctx
+    
+    # Create a stack of commits where some depend on others
+    ctx.make_commit("base.txt", "base content", "Base commit")
+    base_hash = ctx.git_cmd.must_git("rev-parse HEAD").strip()
+    
+    # Independent commit
+    ctx.make_commit("independent1.txt", "independent content 1", "Independent commit 1") 
+    independent1_hash = ctx.git_cmd.must_git("rev-parse HEAD").strip()
+    
+    # Commit that modifies base.txt (depends on base commit)
+    with open("base.txt", "a") as f:
+        f.write("\nAdditional content")
+    run_cmd("git add base.txt")
+    run_cmd('git commit -m "Dependent commit - modifies base.txt [test-tag:' + ctx.tag + ']"')
+    dependent_hash = ctx.git_cmd.must_git("rev-parse HEAD").strip()
+    
+    # Another independent commit
+    ctx.make_commit("independent2.txt", "independent content 2", "Independent commit 2")
+    independent2_hash = ctx.git_cmd.must_git("rev-parse HEAD").strip()
+    
+    # Run breakup command
+    run_cmd("pyspr breakup")
+    
+    # Get created PRs - need to get all PRs since cherry-pick changes hashes
+    info = ctx.github.get_info(None, ctx.git_cmd)
+    assert info is not None, "Should get GitHub info"
+    
+    # Log what we have
+    log.info(f"GitHub info has {len(info.pull_requests)} total PRs")
+    for pr in info.pull_requests:
+        log.info(f"  PR #{pr.number}: branch={pr.from_branch}")
+    
+    # Filter PRs created by breakup command (pyspr branches)
+    prs = [pr for pr in info.pull_requests if pr.from_branch.startswith("pyspr/cp/main/")]
+    log.info(f"Found {len(prs)} pyspr PRs")
+    
+    # We should have PRs for the independent commits at minimum
+    # The dependent commit may or may not get a PR depending on cherry-pick success
+    assert len(prs) >= 3, f"Should create at least 3 PRs for independent commits, found {len(prs)}"
+    
+    # Verify PRs use pyspr branches
+    for pr in prs:
+        assert pr.from_branch.startswith("pyspr/cp/main/"), f"PR branch should start with pyspr/cp/main/, got {pr.from_branch}"
+        assert pr.base_ref == "main", f"All breakup PRs should target main, got {pr.base_ref}"
+    
+    # Verify we can still run normal update without conflicts
+    run_cmd("pyspr update")
+    
+    # Should now have both spr and pyspr branches/PRs
+    info = ctx.github.get_info(None, ctx.git_cmd)
+    assert info is not None, "Should get GitHub info"
+    all_prs = info.pull_requests
+    spr_prs = [pr for pr in all_prs if pr.from_branch.startswith("spr/main/")]
+    pyspr_prs = [pr for pr in all_prs if pr.from_branch.startswith("pyspr/cp/main/")]
+    
+    assert len(spr_prs) > 0, "Should have spr PRs after update"
+    assert len(pyspr_prs) > 0, "Should still have pyspr PRs after update"
+
+def test_breakup_with_existing_prs(test_repo_ctx: RepoContext) -> None:
+    """Test breakup command creates and updates breakup PRs correctly."""
+    ctx = test_repo_ctx
+    
+    # Create commits
+    ctx.make_commit("file1.txt", "content1", "First commit")
+    commit1_hash = ctx.git_cmd.must_git("rev-parse HEAD").strip()
+    
+    ctx.make_commit("file2.txt", "content2", "Second commit")
+    commit2_hash = ctx.git_cmd.must_git("rev-parse HEAD").strip()
+    
+    # Run breakup once - this will add commit-ids to the commits
+    run_cmd("pyspr breakup")
+    
+    # Get initial PRs
+    info = ctx.github.get_info(None, ctx.git_cmd)
+    assert info is not None, "Should get GitHub info"
+    initial_prs = [pr for pr in info.pull_requests if pr.from_branch.startswith("pyspr/cp/main/")]
+    initial_pr_count = len(initial_prs)
+    assert initial_pr_count >= 2, f"Should create at least 2 PRs, found {initial_pr_count}"
+    
+    # Save initial PR numbers
+    initial_pr_numbers = {pr.number for pr in initial_prs}
+    
+    # Get the updated commit hashes after breakup (which added commit-ids)
+    updated_commit1_hash = ctx.git_cmd.must_git("rev-parse HEAD~1").strip()
+    updated_commit2_hash = ctx.git_cmd.must_git("rev-parse HEAD").strip()
+    
+    # Modify the first commit
+    run_cmd("git checkout HEAD~1")
+    # Get existing commit message to preserve commit-id
+    existing_msg = ctx.git_cmd.must_git("log -1 --format=%B").strip()
+    run_cmd("echo 'updated' >> file1.txt")
+    run_cmd("git add file1.txt")
+    # Amend but preserve the commit-id tag
+    updated_msg = existing_msg.replace("First commit", "First commit - updated")
+    run_cmd(f"git commit --amend -m '{updated_msg}'")
+    new_commit1_hash = ctx.git_cmd.must_git("rev-parse HEAD").strip()
+    
+    # Cherry-pick second commit using the UPDATED hash that has commit-id
+    run_cmd(f"git cherry-pick {updated_commit2_hash}")
+    
+    # Debug: Check if commit-id was preserved
+    cherry_picked_msg = ctx.git_cmd.must_git("log -1 --format=%B").strip()
+    log.info(f"Cherry-picked commit message: {cherry_picked_msg}")
+    assert "commit-id:" in cherry_picked_msg, "commit-id should be preserved during cherry-pick"
+    
+    # Run breakup again
+    run_cmd("pyspr breakup")
+    
+    # Get all PRs from GitHub (not just ones matching our current commits)
+    # We need to access the repo directly to get ALL PRs, not just those matching local commits
+    repo = ctx.github.repo
+    assert repo is not None, "Should have GitHub repo"
+    
+    # Get all open PRs from the repository
+    all_open_prs = list(repo.get_pulls(state='open'))
+    log.info(f"Total open PRs in repo: {len(all_open_prs)}")
+    for pr in all_open_prs:
+        log.info(f"  PR #{pr.number}: branch={pr.head.ref}, state={pr.state}")
+    
+    # Filter to pyspr PRs - include all pyspr branches
+    all_pyspr_prs = []
+    for pr in all_open_prs:
+        if pr.head.ref.startswith("pyspr/cp/main/"):
+            # Extract commit ID from branch name
+            branch_parts = pr.head.ref.split('/')
+            commit_id = branch_parts[-1] if len(branch_parts) > 3 else 'unknown'
+            
+            # Create a simple commit object
+            commit = Commit.from_strings(commit_id, pr.head.sha, pr.title)
+            
+            # Create PullRequest object that matches our test expectations
+            pr_obj = PullRequest(
+                number=pr.number,
+                commit=commit,
+                commits=[commit],
+                base_ref=pr.base.ref,
+                from_branch=pr.head.ref,
+                in_queue=False,
+                title=pr.title,
+                body=pr.body
+            )
+            all_pyspr_prs.append(pr_obj)
+    
+    log.info(f"Found {len(all_pyspr_prs)} pyspr PRs total")
+    for pr in all_pyspr_prs:
+        log.info(f"  PR #{pr.number}: branch={pr.from_branch}, title={pr.title}")
+    
+    # We expect 2 PRs total:
+    # 1. PR #2 for the first commit (reused since commit-id was preserved)
+    # 2. PR #3 for the second commit (reused since commit-id was preserved)
+    
+    assert len(all_pyspr_prs) == 2, f"Should have exactly 2 pyspr PRs total, found {len(all_pyspr_prs)}"
+    
+    # Get the expected branch names from initial PRs
+    initial_branches = {pr.from_branch for pr in initial_prs}
+    log.info(f"Initial PR branches: {initial_branches}")
+    
+    # Sort PRs by number to make it easier to identify them
+    all_pyspr_prs.sort(key=lambda pr: pr.number)
+    
+    # Verify we have the expected PRs
+    # PR #2 should be the reused PR for the first commit (it preserved its commit-id)
+    pr2 = next((pr for pr in all_pyspr_prs if pr.number == 2), None)
+    assert pr2 is not None, "Should find PR #2"
+    assert pr2.number in initial_pr_numbers, "PR #2 should be from initial PRs"
+    assert "First commit" in pr2.title, f"PR #2 should be for first commit, got title: {pr2.title}"
+    log.info(f"First commit PR #{pr2.number} was correctly reused with branch {pr2.from_branch}")
+    
+    # PR #3 should be the reused PR for the second commit (it preserved its commit-id)
+    pr3 = next((pr for pr in all_pyspr_prs if pr.number == 3), None)
+    assert pr3 is not None, "Should find PR #3"
+    assert pr3.number in initial_pr_numbers, "PR #3 should be from initial PRs"
+    assert pr3.from_branch in initial_branches, f"PR #3 should have original branch, got {pr3.from_branch}"
+    assert "Second commit" in pr3.title, f"PR #3 should be for second commit, got title: {pr3.title}"
+    log.info(f"Second commit PR #{pr3.number} was correctly reused with branch {pr3.from_branch}")
+    
+    log.info(f"Success: Both commits reused their PRs - PR #{pr2.number} and PR #{pr3.number}")
+
+def test_breakup_pretend_mode(test_repo_ctx: RepoContext, capsys: pytest.CaptureFixture[str]) -> None:
+    """Test breakup command in pretend mode."""
+    ctx = test_repo_ctx
+    
+    # Create commits
+    ctx.make_commit("file1.txt", "content1", "First commit")
+    ctx.make_commit("file2.txt", "content2", "Second commit")
+    
+    # Run breakup in pretend mode - capture both stdout and stderr
+    import subprocess
+    result = subprocess.run(
+        ["rye", "run", "pyspr", "breakup", "--pretend", "-C", ctx.repo_dir],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "SPR_USING_MOCK_GITHUB": "true"}
+    )
+    combined_output = result.stdout + result.stderr
+    
+    # Check output shows pretend actions
+    assert "[PRETEND]" in combined_output, f"Should show pretend mode indicators. Got stdout: {result.stdout[:200]}... stderr: {result.stderr[:200]}..."
+    
+    # Verify no actual PRs were created
+    info = ctx.github.get_info(None, ctx.git_cmd)
+    if info is not None:
+        prs = [pr for pr in info.pull_requests if pr.from_branch.startswith("pyspr/cp/main/")]
+        assert len(prs) == 0, "Should not create actual PRs in pretend mode"
+    
+    # Verify no branches were created
+    branches = run_cmd("git branch -a")
+    assert "pyspr/cp/" not in branches, "Should not create branches in pretend mode"

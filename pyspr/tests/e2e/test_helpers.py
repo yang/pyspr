@@ -71,7 +71,7 @@ class RepoContext:
         log.info(f"Found {len(info.pull_requests)} PRs in info")
         for pr in info.pull_requests:
             log.info(f"Checking PR #{pr.number} with commit hash {pr.commit.commit_hash}")
-            if pr.from_branch and pr.from_branch.startswith('spr/main/'):
+            if pr.from_branch and (pr.from_branch.startswith('spr/main/') or pr.from_branch.startswith('pyspr/cp/main/')):
                 try:
                     # Check the commit message for test tag
                     commit_msg = self.git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")

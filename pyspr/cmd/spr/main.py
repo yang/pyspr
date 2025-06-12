@@ -148,6 +148,24 @@ def merge(ctx: Context, directory: Optional[str], count: Optional[int], no_rebas
     stackedpr.merge_pull_requests(ctx, count)
     # Don't update after merge - this would create new PRs
 
+@cli.command(name="breakup", help="Break up current commit stack into independent branches/PRs")
+@click.option('-C', '--directory', type=click.Path(exists=True, file_okay=False, dir_okay=True),
+              help='Run as if spr was started in DIRECTORY instead of the current working directory')
+@click.option('-v', '--verbose', count=True, help="Increase verbosity (can be used multiple times for more verbosity)")
+@click.option('--pretend', is_flag=True, help="Don't actually push or create/update pull requests, just show what would happen")
+@click.pass_context
+def breakup(ctx: Context, directory: Optional[str], verbose: int, pretend: bool) -> None:
+    """Breakup command."""
+    from ... import setup_logging
+    setup_logging(verbose)
+    
+    config, git_cmd, github = setup_git(directory)
+    config.tool['pretend'] = pretend  # Set pretend mode
+    
+    stackedpr = StackedPR(config, github, git_cmd)
+    stackedpr.pretend = pretend  # Set pretend mode
+    stackedpr.breakup_pull_requests(ctx)
+
 
 def main() -> None:
     """Main entry point."""
