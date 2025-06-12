@@ -429,8 +429,26 @@ class GitHubClient:
         logger.debug(f"Added new PR, stack now has {len(current_prs)} PRs")
         
         # Create PR first to get number
-        pr = self.repo.create_pull(title=title, body="Creating...", head=branch_name, base=base)
-        new_pr.number = pr.number  # Update number in stack
+        try:
+            pr = self.repo.create_pull(title=title, body="Creating...", head=branch_name, base=base)
+            new_pr.number = pr.number  # Update number in stack
+        except Exception as e:
+            # Check if this is a "PR already exists" error
+            error_msg = str(e)
+            if "A pull request already exists" in error_msg:
+                logger.warning(f"PR already exists for branch {branch_name}, attempting to find it")
+                # Try to find the existing PR
+                existing_pr = self.get_pull_request_for_branch(ctx, branch_name)
+                if existing_pr:
+                    logger.info(f"Found existing PR #{existing_pr.number} for branch {branch_name}")
+                    # Update the existing PR instead
+                    return self.update_pull_request(ctx, git_cmd, current_prs, existing_pr, commit, None)
+                else:
+                    logger.error(f"Could not find existing PR for branch {branch_name} even though GitHub says it exists")
+                    raise
+            else:
+                # Re-raise other errors
+                raise
         
         # Now format body with correct PR numbers
         body = self.format_body(commit, current_prs, is_breakup=use_breakup_branch)
