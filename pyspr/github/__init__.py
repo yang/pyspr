@@ -665,10 +665,15 @@ class GitHubClient:
             return None
             
         try:
+            # Use the head filter to find PRs for this specific branch
+            owner = self.config.repo.get('github_repo_owner')
+            logger.debug(f"Searching for PR with branch {branch_name}")
+            
             # Search for open PRs with this branch as head
-            pulls = self.repo.get_pulls(state='open', head=f"{self.config.repo.get('github_repo_owner')}:{branch_name}")
+            pulls = self.repo.get_pulls(state='open', head=f"{owner}:{branch_name}")
             for pr in pulls:
                 if pr.head.ref == branch_name:
+                    logger.debug(f"Found PR #{pr.number} for branch {branch_name}")
                     # Convert to our PullRequest type
                     commit = Commit(
                         commit_hash=pr.head.sha,
