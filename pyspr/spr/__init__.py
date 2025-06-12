@@ -726,10 +726,17 @@ class StackedPR:
             try:
                 # Create a temporary branch from the base
                 temp_branch = f"pyspr-temp-{commit.commit_id}"
-                no_rebase = self.config.user.get('no_rebase', False)
+                no_rebase = self.config.user.get('no_rebase', False) or self.config.get('no_rebase', False)
                 if no_rebase:
                     # Use local base branch instead of remote
-                    self.git_cmd.must_git(f"checkout -b {temp_branch} {base_branch}")
+                    # First check if the local base branch exists
+                    try:
+                        self.git_cmd.must_git(f"rev-parse --verify {base_branch}")
+                        self.git_cmd.must_git(f"checkout -b {temp_branch} {base_branch}")
+                    except:
+                        # Fallback to master if configured base branch doesn't exist
+                        logger.warning(f"Base branch '{base_branch}' not found locally, falling back to 'master'")
+                        self.git_cmd.must_git(f"checkout -b {temp_branch} master")
                 else:
                     # Use remote base branch (default behavior)
                     self.git_cmd.must_git(f"checkout -b {temp_branch} {remote}/{base_branch}")
