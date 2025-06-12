@@ -92,6 +92,10 @@ class GitHubInterface(Protocol):
     def merge_pull_request(self, ctx: StackedPRContextType, pr: PullRequest, merge_method: MergeMethod) -> None:
         """Merge pull request."""
         ...
+    
+    def get_pull_request_for_branch(self, ctx: StackedPRContextType, branch_name: str) -> Optional[PullRequest]:
+        """Get pull request for a specific branch."""
+        ...
 
 class GitHubClient:
     """GitHub client implementation."""
@@ -654,3 +658,38 @@ class GitHubClient:
             return f"**Stack**:\n{stack_markdown}{warning}"
         else:
             return f"{body}\n\n---\n\n**Stack**:\n{stack_markdown}{warning}"
+    
+    def get_pull_request_for_branch(self, ctx: StackedPRContextType, branch_name: str) -> Optional[PullRequest]:
+        """Get pull request for a specific branch."""
+        if not self.repo:
+            return None
+            
+        try:
+            # Search for open PRs with this branch as head
+            pulls = self.repo.get_pulls(state='open', head=f"{self.config.repo.get('github_repo_owner')}:{branch_name}")
+            for pr in pulls:
+                if pr.head.ref == branch_name:
+                    # Convert to our PullRequest type
+                    commit = Commit(
+                        commit_hash=pr.head.sha,
+                        commit_id=pr.head.sha[:8],  # Use first 8 chars as ID
+                        subject=pr.title,
+                        body=pr.body or "",
+                        tree_hash="",  # Not used for this case
+                        wip=False
+                    )
+                    return PullRequest(
+                        number=pr.number,
+                        commit=commit,
+                        commits=[commit],
+                        base_ref=pr.base.ref,
+                        from_branch=pr.head.ref,
+                        in_queue=False,
+                        body=pr.body or "",
+                        title=pr.title,
+                        merged=pr.merged
+                    )
+            return None
+        except Exception as e:
+            logger.debug(f"Error getting PR for branch {branch_name}: {e}")
+            return None
