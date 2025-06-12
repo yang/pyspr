@@ -153,8 +153,9 @@ def merge(ctx: Context, directory: Optional[str], count: Optional[int], no_rebas
               help='Run as if spr was started in DIRECTORY instead of the current working directory')
 @click.option('-v', '--verbose', count=True, help="Increase verbosity (can be used multiple times for more verbosity)")
 @click.option('--pretend', is_flag=True, help="Don't actually push or create/update pull requests, just show what would happen")
+@click.option('--no-rebase', '-nr', is_flag=True, help="Disable rebasing on latest upstream")
 @click.pass_context
-def breakup(ctx: Context, directory: Optional[str], verbose: int, pretend: bool) -> None:
+def breakup(ctx: Context, directory: Optional[str], verbose: int, pretend: bool, no_rebase: bool) -> None:
     """Breakup command."""
     from ... import setup_logging
     setup_logging(verbose)
@@ -162,6 +163,8 @@ def breakup(ctx: Context, directory: Optional[str], verbose: int, pretend: bool)
     config, git_cmd, github = setup_git(directory)
     config.tool['pretend'] = pretend  # Set pretend mode
     
+    if no_rebase:
+        config.user['no_rebase'] = True
     stackedpr = StackedPR(config, github, git_cmd)
     stackedpr.pretend = pretend  # Set pretend mode
     stackedpr.breakup_pull_requests(ctx)

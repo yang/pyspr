@@ -726,7 +726,13 @@ class StackedPR:
             try:
                 # Create a temporary branch from the base
                 temp_branch = f"pyspr-temp-{commit.commit_id}"
-                self.git_cmd.must_git(f"checkout -b {temp_branch} {remote}/{base_branch}")
+                no_rebase = self.config.user.get('no_rebase', False)
+                if no_rebase:
+                    # Use local base branch instead of remote
+                    self.git_cmd.must_git(f"checkout -b {temp_branch} {base_branch}")
+                else:
+                    # Use remote base branch (default behavior)
+                    self.git_cmd.must_git(f"checkout -b {temp_branch} {remote}/{base_branch}")
                 
                 # Try to cherry-pick
                 try:
