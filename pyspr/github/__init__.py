@@ -662,18 +662,25 @@ class GitHubClient:
     def get_pull_request_for_branch(self, ctx: StackedPRContextType, branch_name: str) -> Optional[PullRequest]:
         """Get pull request for a specific branch."""
         if not self.repo:
+            logger.debug(f"No repo available for finding PR for branch {branch_name}")
             return None
             
         try:
             # Use the head filter to find PRs for this specific branch
             owner = self.config.repo.get('github_repo_owner')
-            logger.debug(f"Searching for PR with branch {branch_name}")
+            logger.debug(f"Searching for PR with branch {branch_name}, owner={owner}")
             
             # Search for open PRs with this branch as head
-            pulls = self.repo.get_pulls(state='open', head=f"{owner}:{branch_name}")
+            head_filter = f"{owner}:{branch_name}"
+            logger.debug(f"Using head filter: {head_filter}")
+            pulls = self.repo.get_pulls(state='open', head=head_filter)
+            
+            found_count = 0
             for pr in pulls:
+                found_count += 1
+                logger.debug(f"Checking PR #{pr.number}: head.ref={pr.head.ref}")
                 if pr.head.ref == branch_name:
-                    logger.debug(f"Found PR #{pr.number} for branch {branch_name}")
+                    logger.debug(f"Found matching PR #{pr.number} for branch {branch_name}")
                     # Convert to our PullRequest type
                     commit = Commit(
                         commit_hash=pr.head.sha,
@@ -694,6 +701,8 @@ class GitHubClient:
                         title=pr.title,
                         merged=pr.merged
                     )
+                    return result
+            logger.debug(f"No PR found for branch {branch_name} after checking {found_count} PRs")
             return None
         except Exception as e:
             logger.debug(f"Error getting PR for branch {branch_name}: {e}")

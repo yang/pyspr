@@ -711,8 +711,8 @@ class StackedPR:
         created_prs: List[PullRequest] = []
         skipped_commits: List[Commit] = []
         
-        # Get the base branch from config
-        base_branch = self.config.repo.get('github_branch', 'main')
+        # Get the base branch from config - use github_branch_target for breakup PRs
+        base_branch = self.config.repo.get('github_branch_target', self.config.repo.get('github_branch', 'main'))
         remote = self.config.repo.get('github_remote', 'origin')
         
         # Process each commit
@@ -835,7 +835,12 @@ class StackedPR:
                 
                 # If not in pr_map, check GitHub directly for breakup branches
                 if not existing_pr:
+                    logger.debug(f"PR not in pr_map for branch {branch}, checking GitHub directly")
                     existing_pr = self.github.get_pull_request_for_branch(ctx, branch)
+                    if existing_pr:
+                        logger.debug(f"Found PR #{existing_pr.number} via get_pull_request_for_branch")
+                    else:
+                        logger.debug(f"No PR found via get_pull_request_for_branch for branch {branch}")
                 
                 if existing_pr:
                     logger.info(f"  PR #{existing_pr.number} already exists for {branch}")
