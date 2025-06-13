@@ -1611,3 +1611,52 @@ def test_breakup_preserves_unchanged_commit_hashes(test_repo_ctx: RepoContext) -
         f"Output should indicate branch has same content"
     
     log.info("Successfully verified that unchanged commit preserved its hash")
+
+
+def test_breakup_pr_already_exists_error(test_repo_ctx: RepoContext) -> None:
+    """Test that breakup handles 'PR already exists' GitHub API error correctly."""
+    ctx = test_repo_ctx
+    
+    # Create a commit
+    ctx.make_commit("file1.txt", "content1", "Test commit for PR exists")
+    
+    # Run breakup once to create the PR
+    run_cmd("pyspr breakup")
+    
+    # Get the PR info
+    info = ctx.github.get_info(None, ctx.git_cmd)
+    assert info is not None
+    breakup_prs = [pr for pr in info.pull_requests if pr.from_branch.startswith("pyspr/cp/")]
+    
+    # We should have 0 breakup PRs in the regular PR list (they're not part of the stack)
+    # But let's check via the repo directly
+    repo = ctx.github.repo
+    assert repo is not None
+    
+    all_prs = list(repo.get_pulls(state='open'))
+    initial_breakup_prs = [pr for pr in all_prs if pr.head.ref.startswith("pyspr/cp/")]
+    initial_count = len(initial_breakup_prs)
+    assert initial_count >= 1, f"Should have created at least 1 breakup PR, found {initial_count}"
+    
+    log.info(f"Initial breakup PRs: {[(pr.number, pr.head.ref) for pr in initial_breakup_prs]}")
+    
+    # Now simulate the scenario where GitHub API would return "PR already exists"
+    # by running breakup again without any changes
+    output = run_cmd("pyspr breakup")
+    
+    # Check that we didn't create duplicate PRs
+    all_prs_after = list(repo.get_pulls(state='open'))
+    final_breakup_prs = [pr for pr in all_prs_after if pr.head.ref.startswith("pyspr/cp/")]
+    final_count = len(final_breakup_prs)
+    
+    log.info(f"Final breakup PRs: {[(pr.number, pr.head.ref) for pr in final_breakup_prs]}")
+    
+    # We should have the same number of PRs (no duplicates created)
+    assert final_count == initial_count, \
+        f"Should not create duplicate PRs. Initial: {initial_count}, Final: {final_count}"
+    
+    # The output should indicate PRs already exist
+    assert "already exists for" in output or "already up to date" in output, \
+        "Output should indicate PRs already exist or branches are up to date"
+    
+    log.info("Successfully verified breakup handles existing PRs without creating duplicates")
