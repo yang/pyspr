@@ -677,7 +677,7 @@ class StackedPR:
             pr.merged = True
             print(str(pr))
 
-    def breakup_pull_requests(self, ctx: StackedPRContextProtocol) -> None:
+    def breakup_pull_requests(self, ctx: StackedPRContextProtocol, reviewers: Optional[List[str]] = None) -> None:
         """Break up current commit stack into independent branches/PRs."""
         from ..pretty import print_header
         
@@ -710,6 +710,18 @@ class StackedPR:
         created_branches: List[str] = []
         created_prs: List[PullRequest] = []
         skipped_commits: List[Commit] = []
+        
+        # Get assignable users for reviewer filtering if reviewers were provided
+        assignable = []
+        filtered_reviewers: List[str] = []
+        if reviewers:
+            assignable = self.github.get_assignable_users(ctx)
+            # Filter reviewers by assignable users
+            for r in reviewers:
+                for u in assignable:
+                    if r.lower() == u['login'].lower():
+                        filtered_reviewers.append(r)  # Keep original login case
+                        break
         
         # Get the base branch from config - use github_branch_target for breakup PRs
         base_branch = self.config.repo.get('github_branch_target', self.config.repo.get('github_branch', 'main'))
@@ -871,6 +883,14 @@ class StackedPR:
                                                            commit, None, use_breakup_branch=True)  # None for prev_commit means use base_branch
                         logger.info(f"  Created PR #{pr.number} for {branch}")
                         created_prs.append(pr)
+                        
+                        # Add reviewers to newly created PR
+                        if filtered_reviewers:
+                            try:
+                                self.github.add_reviewers(ctx, pr, filtered_reviewers)
+                                logger.info(f"  Added reviewers: {', '.join(filtered_reviewers)}")
+                            except Exception as e:
+                                logger.error(f"  Failed to add reviewers: {e}")
         
         # Summary
         print_header("Breakup Summary", use_emoji=True)
