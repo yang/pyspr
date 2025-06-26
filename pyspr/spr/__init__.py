@@ -742,6 +742,13 @@ class StackedPR:
             try:
                 # Create a temporary branch from the base
                 temp_branch = f"pyspr-temp-{commit.commit_id}"
+                
+                # Delete the temp branch if it already exists from a previous failed run
+                try:
+                    self.git_cmd.must_git(f"branch -D {temp_branch}")
+                except:
+                    pass  # Branch doesn't exist, which is fine
+                
                 no_rebase = self.config.user.get('no_rebase', False) or self.config.get('no_rebase', False)
                 if no_rebase:
                     # Use local base branch instead of remote
