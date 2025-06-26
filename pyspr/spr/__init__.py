@@ -834,10 +834,14 @@ class StackedPR:
                 for branch in created_branches:
                     logger.info(f"  {branch}")
             else:
-                # Push all branches at once
-                cmd = f"push --force {remote} " + " ".join(ref_names)
-                self.git_cmd.must_git(cmd)
-                logger.info(f"Pushed {len(created_branches)} branches")
+                # Push branches in batches of 5 (Git's limit)
+                batch_size = 5
+                for i in range(0, len(ref_names), batch_size):
+                    batch = ref_names[i:i + batch_size]
+                    cmd = f"push --force {remote} " + " ".join(batch)
+                    self.git_cmd.must_git(cmd)
+                    logger.info(f"Pushed batch {i//batch_size + 1}/{(len(ref_names) + batch_size - 1)//batch_size} ({len(batch)} branches)")
+                logger.info(f"Pushed all {len(created_branches)} branches")
         
         # Create or update PRs for each successfully created branch
         if created_branches:
