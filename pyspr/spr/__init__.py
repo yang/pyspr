@@ -816,7 +816,19 @@ class StackedPR:
                         
             finally:
                 # Always go back to original branch and clean up temp branch
-                self.git_cmd.must_git(f"checkout {current_branch}")
+                # Use force checkout to handle any uncommitted changes from cherry-pick
+                try:
+                    # First try regular checkout
+                    self.git_cmd.must_git(f"checkout {current_branch}")
+                except:
+                    # If that fails due to uncommitted changes, force it
+                    try:
+                        self.git_cmd.must_git(f"checkout -f {current_branch}")
+                    except:
+                        # As a last resort, reset and then checkout
+                        self.git_cmd.must_git("reset --hard HEAD")
+                        self.git_cmd.must_git(f"checkout {current_branch}")
+                
                 try:
                     self.git_cmd.must_git(f"branch -D {temp_branch}")
                 except:
