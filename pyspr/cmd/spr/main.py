@@ -156,8 +156,10 @@ def merge(ctx: Context, directory: Optional[str], count: Optional[int], no_rebas
 @click.option('--no-rebase', '-nr', is_flag=True, help="Disable rebasing on latest upstream")
 @click.option('--reviewer', '-r', multiple=True, 
               help="Add the specified reviewer to newly created pull requests")
+@click.option('--count', '-c', type=int,
+              help="Break up a specified number of commits from the bottom of the stack")
 @click.pass_context
-def breakup(ctx: Context, directory: Optional[str], verbose: int, pretend: bool, no_rebase: bool, reviewer: List[str]) -> None:
+def breakup(ctx: Context, directory: Optional[str], verbose: int, pretend: bool, no_rebase: bool, reviewer: List[str], count: Optional[int]) -> None:
     """Breakup command."""
     from ... import setup_logging
     setup_logging(verbose)
@@ -169,7 +171,7 @@ def breakup(ctx: Context, directory: Optional[str], verbose: int, pretend: bool,
         config.user['no_rebase'] = True
     stackedpr = StackedPR(config, github, git_cmd)
     stackedpr.pretend = pretend  # Set pretend mode
-    stackedpr.breakup_pull_requests(ctx, reviewer if reviewer else None)
+    stackedpr.breakup_pull_requests(ctx, reviewer if reviewer else None, count)
 
 
 def main() -> None:

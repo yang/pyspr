@@ -677,7 +677,7 @@ class StackedPR:
             pr.merged = True
             print(str(pr))
 
-    def breakup_pull_requests(self, ctx: StackedPRContextProtocol, reviewers: Optional[List[str]] = None) -> None:
+    def breakup_pull_requests(self, ctx: StackedPRContextProtocol, reviewers: Optional[List[str]] = None, count: Optional[int] = None) -> None:
         """Break up current commit stack into independent branches/PRs."""
         from ..pretty import print_header
         
@@ -697,6 +697,10 @@ class StackedPR:
         if not non_wip_commits:
             logger.info("No non-WIP commits to break up")
             return
+            
+        # Limit commits to count if specified
+        if count is not None and count > 0:
+            non_wip_commits = non_wip_commits[:count]
             
         logger.info(f"Breaking up {len(non_wip_commits)} commits into independent branches/PRs")
         
