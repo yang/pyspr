@@ -79,6 +79,24 @@ def get_local_commit_stack(config: ConfigProtocol, git_cmd: GitInterface) -> Lis
                     new_msg = f"{full_msg}\n\ncommit-id:{new_id}"
                     
                     # Checkout commit
+                    # Debug: Check for git processes
+                    import subprocess
+                    try:
+                        ps_output = subprocess.run(['ps', 'aux'], capture_output=True, text=True).stdout
+                        git_processes = [line for line in ps_output.split('\n') if 'git' in line and 'grep' not in line and 'gitstatus' not in line and 'rsync' not in line]
+                        if git_processes:
+                            logging.info(f"Active git processes before checkout {cid}:")
+                            for proc in git_processes:
+                                logging.info(f"  {proc}")
+                        
+                        # Check for index.lock
+                        import os
+                        lock_path = os.path.join(os.getcwd(), '.git', 'index.lock')
+                        if os.path.exists(lock_path):
+                            logging.warning(f"index.lock already exists before checkout {cid}!")
+                    except Exception as e:
+                        logging.warning(f"Failed to check git processes: {e}")
+                    
                     git_cmd.must_git(f"checkout {cid}")
                     
                     # Amend with ID
@@ -107,6 +125,24 @@ def get_local_commit_stack(config: ConfigProtocol, git_cmd: GitInterface) -> Lis
             return commits_new
         except Exception as e:
             # Clean up on error
+            # Debug: Check for git processes before cleanup checkout
+            import subprocess
+            try:
+                ps_output = subprocess.run(['ps', 'aux'], capture_output=True, text=True).stdout
+                git_processes = [line for line in ps_output.split('\n') if 'git' in line and 'grep' not in line and 'gitstatus' not in line and 'rsync' not in line]
+                if git_processes:
+                    logging.info(f"Active git processes before cleanup checkout {curr_branch}:")
+                    for proc in git_processes:
+                        logging.info(f"  {proc}")
+                
+                # Check for index.lock
+                import os
+                lock_path = os.path.join(os.getcwd(), '.git', 'index.lock')
+                if os.path.exists(lock_path):
+                    logging.warning(f"index.lock already exists before cleanup checkout {curr_branch}!")
+            except Exception as debug_e:
+                logging.warning(f"Failed to check git processes: {debug_e}")
+            
             git_cmd.must_git(f"checkout {curr_branch}")
             git_cmd.must_git(f"reset --hard {original_head}")
             raise Exception(f"Failed to add commit IDs: {e}")

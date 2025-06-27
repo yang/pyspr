@@ -835,11 +835,14 @@ class StackedPR:
                     pass
         
         # Push all created branches
+        successfully_pushed = []
+        failed_pushes = []
+        
         if created_branches and not self.pretend:
             logger.info(f"\nPushing {len(created_branches)} branches to remote...")
             ref_names = []
             for branch in created_branches:
-                ref_names.append(f"{branch}:refs/heads/{branch}")
+                ref_names.append((branch, f"{branch}:refs/heads/{branch}"))
             
             if self.pretend:
                 logger.info("[PRETEND] Would push the following branches:")
@@ -850,10 +853,39 @@ class StackedPR:
                 batch_size = 5
                 for i in range(0, len(ref_names), batch_size):
                     batch = ref_names[i:i + batch_size]
-                    cmd = f"push --force {remote} " + " ".join(batch)
-                    self.git_cmd.must_git(cmd)
-                    logger.info(f"Pushed batch {i//batch_size + 1}/{(len(ref_names) + batch_size - 1)//batch_size} ({len(batch)} branches)")
-                logger.info(f"Pushed all {len(created_branches)} branches")
+                    batch_refs = [ref for _, ref in batch]
+                    cmd = f"push --force {remote} " + " ".join(batch_refs)
+                    
+                    try:
+                        self.git_cmd.must_git(cmd)
+                        # If successful, all branches in batch were pushed
+                        for branch, _ in batch:
+                            successfully_pushed.append(branch)
+                        logger.info(f"Pushed batch {i//batch_size + 1}/{(len(ref_names) + batch_size - 1)//batch_size} ({len(batch)} branches)")
+                    except Exception as e:
+                        # If batch fails, try pushing individually to identify which ones fail
+                        logger.warning(f"Batch push failed, trying individually: {str(e)}")
+                        for branch, ref in batch:
+                            try:
+                                self.git_cmd.must_git(f"push --force {remote} {ref}")
+                                successfully_pushed.append(branch)
+                                logger.info(f"  ✓ Pushed {branch}")
+                            except Exception as individual_e:
+                                failed_pushes.append((branch, str(individual_e)))
+                                # Check if it's a merge queue error
+                                if "has been added to a merge queue" in str(individual_e):
+                                    logger.warning(f"  ⚠️  {branch} is in merge queue, skipping update")
+                                else:
+                                    logger.error(f"  ✗ Failed to push {branch}: {individual_e}")
+                
+                if failed_pushes:
+                    logger.info(f"\nPushed {len(successfully_pushed)} branches successfully, {len(failed_pushes)} failed")
+                else:
+                    logger.info(f"Pushed all {len(created_branches)} branches successfully")
+        
+        # Update created_branches to only include successfully pushed ones
+        if not self.pretend and created_branches:
+            created_branches = successfully_pushed
         
         # Create or update PRs for each successfully created branch
         if created_branches:
@@ -924,6 +956,16 @@ class StackedPR:
         print(f"\nProcessed {len(non_wip_commits)} commits:")
         print(f"  ✅ Successfully created/updated: {len(created_branches)} branches")
         print(f"  ⏭️  Skipped (dependent commits): {len(skipped_commits)}")
+        
+        # Show push failures if any
+        if not self.pretend and 'failed_pushes' in locals() and failed_pushes:
+            merge_queue_failures = [b for b, e in failed_pushes if "has been added to a merge queue" in e]
+            other_failures = [b for b, e in failed_pushes if "has been added to a merge queue" not in e]
+            
+            if merge_queue_failures:
+                print(f"  ⚠️  In merge queue (not updated): {len(merge_queue_failures)}")
+            if other_failures:
+                print(f"  ❌ Failed to push: {len(other_failures)}")
         
         if created_prs:
             print(f"\nCreated/updated {len(created_prs)} pull requests:")
