@@ -5,18 +5,20 @@ import functools
 import logging
 from typing import Callable, TypeVar, Any
 import pytest
+from pyspr.tests.e2e.test_helpers import RepoContext, run_cmd
 
 logger = logging.getLogger(__name__)
 
 F = TypeVar('F', bound=Callable[..., Any])
 
 def run_twice_in_mock_mode(func: F) -> F:
-    """Decorator to run a test twice in mock mode, reusing fake GitHub state.
+    """Decorator to run a test twice in mock mode, reusing fake GitHub state and git repo.
     
     This decorator:
     1. Only runs when in mock mode (SPR_USING_MOCK_GITHUB=true)
-    2. Runs the test function twice with the same fake GitHub state
-    3. Helps ensure tests are idempotent and work with existing state
+    2. Runs the test function twice with the same git repo and fake GitHub state
+    3. Resets git working directory between runs but preserves GitHub state
+    4. Helps ensure tests work correctly with existing PRs and state
     
     Usage:
         @run_twice_in_mock_mode
@@ -33,24 +35,58 @@ def run_twice_in_mock_mode(func: F) -> F:
             logger.info(f"Running {func.__name__} once (real GitHub mode)")
             return func(*args, **kwargs)
         
-        # In mock mode, run twice
-        logger.info(f"=== Running {func.__name__} FIRST time (mock mode) ===")
+        # Find the test_repo_ctx in args/kwargs
+        test_repo_ctx = None
+        if args and isinstance(args[0], RepoContext):
+            test_repo_ctx = args[0]
+        elif 'test_repo_ctx' in kwargs:
+            test_repo_ctx = kwargs['test_repo_ctx']
         
-        # First run - normal
-        result = func(*args, **kwargs)
+        if not test_repo_ctx:
+            # Can't find repo context, just run normally
+            logger.warning("Could not find test_repo_ctx, running test normally")
+            return func(*args, **kwargs)
         
-        logger.info(f"=== Running {func.__name__} SECOND time (mock mode with existing state) ===")
+        # Save current directory
+        orig_dir = os.getcwd()
         
-        # Set environment variable to preserve state for second run
-        os.environ["SPR_PRESERVE_FAKE_GITHUB_STATE"] = "true"
         try:
-            # Second run - with preserved state
+            logger.info(f"=== Running {func.__name__} FIRST time (mock mode) ===")
+            
+            # First run - normal
             result = func(*args, **kwargs)
+            
+            logger.info(f"=== Resetting git state for second run ===")
+            
+            # Reset git state but preserve fake GitHub state
+            os.chdir(test_repo_ctx.repo_dir)
+            
+            # Save current branch name (usually test_local)
+            current_branch = run_cmd("git rev-parse --abbrev-ref HEAD").strip()
+            
+            # Clean up any uncommitted changes
+            run_cmd("git reset --hard HEAD")
+            run_cmd("git clean -fd")
+            
+            # Go back to main branch
+            run_cmd("git checkout main")
+            
+            # Delete the test branch
+            run_cmd(f"git branch -D {current_branch} || true")
+            
+            # Create a fresh test branch
+            run_cmd(f"git checkout -b {current_branch}")
+            
+            logger.info(f"=== Running {func.__name__} SECOND time (mock mode with existing GitHub state) ===")
+            
+            # Second run - with same repo and preserved GitHub state
+            result = func(*args, **kwargs)
+            
+            return result
+            
         finally:
-            # Clean up environment variable
-            os.environ.pop("SPR_PRESERVE_FAKE_GITHUB_STATE", None)
-        
-        return result
+            # Restore original directory
+            os.chdir(orig_dir)
     
     return wrapper
 
