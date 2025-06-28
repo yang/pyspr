@@ -1002,6 +1002,7 @@ class StackedPR:
     def analyze(self, ctx: StackedPRContextProtocol) -> None:
         """Analyze which commits can be independently submitted without stacking."""
         from ..pretty import print_header
+        import os
         
         # Get local commits
         local_commits = get_local_commit_stack(self.config, self.git_cmd)
@@ -1035,15 +1036,18 @@ class StackedPR:
             for i, commit in enumerate(non_wip_commits):
                 logger.debug(f"Analyzing commit {i+1}/{len(non_wip_commits)}: {commit.commit_hash[:8]} {commit.subject}")
                 
+                # Create a subdirectory for this commit's patch
+                commit_patch_dir = os.path.join(tmpdir, commit.commit_id)
+                os.makedirs(commit_patch_dir, exist_ok=True)
+                
                 # Generate patch for this commit
-                patch_file = f"{tmpdir}/{commit.commit_id}.patch"
+                patch_file = f"{commit_patch_dir}/{commit.commit_id}.patch"
                 try:
                     # Create patch from the commit
-                    self.git_cmd.must_git(f"format-patch -1 {commit.commit_hash} -o {tmpdir}")
+                    self.git_cmd.must_git(f"format-patch -1 {commit.commit_hash} -o {commit_patch_dir}")
                     
                     # Find the generated patch file (git format-patch creates numbered files)
-                    import os
-                    patch_files = [f for f in os.listdir(tmpdir) if f.endswith('.patch')]
+                    patch_files = [f for f in os.listdir(commit_patch_dir) if f.endswith('.patch')]
                     if not patch_files:
                         dependent_commits.append((commit, "Failed to generate patch"))
                         continue
@@ -1065,7 +1069,7 @@ class StackedPR:
                         self.git_cmd.must_git(f"checkout -q {remote}/{base_branch}")
                         
                         # Try to apply the patch
-                        patch_path = os.path.join(tmpdir, patch_files[0])
+                        patch_path = os.path.join(commit_patch_dir, patch_files[0])
                         try:
                             # Use --check to test without actually applying
                             self.git_cmd.must_git(f"apply --check {patch_path}")

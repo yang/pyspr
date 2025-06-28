@@ -1660,3 +1660,97 @@ def test_breakup_pr_already_exists_error(test_repo_ctx: RepoContext) -> None:
         "Output should indicate PRs already exist or branches are up to date"
     
     log.info("Successfully verified breakup handles existing PRs without creating duplicates")
+
+
+def test_analyze(test_repo_ctx: RepoContext) -> None:
+    """Test the analyze command that identifies independent commits."""
+    log.info("=== TEST ANALYZE STARTED ===")
+    ctx = test_repo_ctx
+    git_cmd = ctx.git_cmd
+    
+    # Create a set of commits where some are independent and some are dependent
+    # First create a base file that will be modified by multiple commits
+    ctx.make_commit("base.txt", "line1\nline2\nline3\nline4\nline5\n", "Initial base file")
+    
+    # Create an independent commit (modifies a different file)
+    ctx.make_commit("independent1.txt", "independent content", "Independent commit 1")
+    
+    # Create a dependent commit (modifies base.txt in a way that depends on initial state)
+    base_content = git_cmd.must_git("show HEAD~1:base.txt")
+    modified_base = base_content.replace("line2", "modified-line2")
+    ctx.make_commit("base.txt", modified_base, "Dependent commit - modify line 2")
+    
+    # Create another dependent commit (modifies the same line, will conflict)
+    base_content2 = git_cmd.must_git("show HEAD:base.txt")
+    modified_base2 = base_content2.replace("line3", "another-modified-line3")
+    ctx.make_commit("base.txt", modified_base2, "Dependent commit - modify line 3")
+    
+    # Create another independent commit
+    ctx.make_commit("independent2.txt", "more independent content", "Independent commit 2")
+    
+    # Create a WIP commit (should be ignored by analyze)
+    ctx.make_commit("wip.txt", "work in progress", "WIP: Work in progress")
+    
+    # Run analyze command
+    log.info("Running pyspr analyze...")
+    output = run_cmd("pyspr analyze -v")
+    log.info(f"Analyze output:\n{output}")
+    
+    # Verify output contains expected sections
+    assert "Commit Stack Analysis" in output, "Output should contain analysis header"
+    assert "Independent commits" in output, "Output should have independent commits section"
+    assert "Dependent commits" in output, "Output should have dependent commits section"
+    assert "Summary:" in output, "Output should have summary section"
+    
+    # Verify independent commits are identified
+    assert "Independent commit 1" in output, "Should identify first independent commit"
+    assert "Independent commit 2" in output, "Should identify second independent commit"
+    
+    # Verify dependent commits are identified
+    assert "Dependent commit - modify line 2" in output, "Should identify first dependent commit"
+    assert "Dependent commit - modify line 3" in output, "Should identify second dependent commit"
+    
+    # Verify WIP commit is not analyzed
+    assert "Work in progress" not in output or "No non-WIP commits" in output, \
+        "WIP commits should be excluded from analysis"
+    
+    # Verify summary counts
+    assert "Total commits: 5" in output, "Should count 5 non-WIP commits"
+    assert "Independent: 3" in output, "Should have 3 independent commits"
+    assert "Dependent: 2" in output, "Should have 2 dependent commits"
+    
+    # Verify tip about breakup command
+    assert "pyspr breakup" in output, "Should suggest using breakup for independent commits"
+    
+    log.info("=== TEST ANALYZE COMPLETED SUCCESSFULLY ===")
+
+
+def test_analyze_no_commits(test_repo_ctx: RepoContext) -> None:
+    """Test analyze command with no commits."""
+    log.info("=== TEST ANALYZE NO COMMITS STARTED ===")
+    
+    # Run analyze without any commits
+    output = run_cmd("pyspr analyze")
+    
+    # Should indicate no commits to analyze
+    assert "No commits to analyze" in output, "Should indicate no commits to analyze"
+    
+    log.info("=== TEST ANALYZE NO COMMITS COMPLETED SUCCESSFULLY ===")
+
+
+def test_analyze_only_wip(test_repo_ctx: RepoContext) -> None:
+    """Test analyze command with only WIP commits."""
+    log.info("=== TEST ANALYZE ONLY WIP STARTED ===")
+    ctx = test_repo_ctx
+    
+    # Create only WIP commits
+    ctx.make_commit("wip1.txt", "wip content 1", "WIP: First WIP")
+    ctx.make_commit("wip2.txt", "wip content 2", "WIP: Second WIP")
+    
+    # Run analyze
+    output = run_cmd("pyspr analyze")
+    
+    # Should indicate no non-WIP commits
+    assert "No non-WIP commits to analyze" in output, "Should indicate no non-WIP commits"
+    
+    log.info("=== TEST ANALYZE ONLY WIP COMPLETED SUCCESSFULLY ===")
