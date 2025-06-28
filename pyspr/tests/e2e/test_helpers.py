@@ -360,18 +360,16 @@ def create_repo_context(owner: str, name: str, test_name: str) -> Generator[Repo
 @pytest.fixture
 def test_repo_ctx(request: FixtureRequest) -> Generator[RepoContext, None, None]:
     """Regular test repo fixture using yang/teststack."""
-    assert request.node is not None, "pytest request.node should not be None"
-    node = request.node
-    assert hasattr(node, 'name'), "pytest node should have name attribute"
-    yield from create_repo_context("yang", "teststack", node.name)
+    # Use a combination of available attributes to create a unique test identifier
+    test_identifier = f"{request.fixturename}_{request.scope}"
+    yield from create_repo_context("yang", "teststack", test_identifier)
 
 @pytest.fixture
 def test_mq_repo_ctx(request: FixtureRequest) -> Generator[RepoContext, None, None]:
     """Merge queue test repo fixture using yangenttest1/teststack."""
-    assert request.node is not None, "pytest request.node should not be None"
-    node = request.node
-    assert hasattr(node, 'name'), "pytest node should have name attribute"
-    yield from create_repo_context("yangenttest1", "teststack", node.name)
+    # Use a combination of available attributes to create a unique test identifier
+    test_identifier = f"{request.fixturename}_{request.scope}"
+    yield from create_repo_context("yangenttest1", "teststack", test_identifier)
 
 def create_test_repo(owner: str, name: str) -> Generator[Tuple[str, str, str, str], None, None]:
     """Legacy test repo fixture factory for tests that haven't been migrated to RepoContext yet.

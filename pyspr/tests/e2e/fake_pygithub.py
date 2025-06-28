@@ -12,7 +12,7 @@ import os
 import tempfile
 
 from pyspr.util import ensure
-from pyspr.github import PyGithubProtocol
+from pyspr.github import PyGithubProtocol, GitHubRepoProtocol, GitHubPullRequestProtocol, GitHubUserProtocol, GitHubCommitProtocol, GitHubRefProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +126,7 @@ class FakePullRequest:
     data_record: FakePullRequestData
     
     @property
-    def _repo(self) -> 'FakeRepository':
+    def _repo(self) -> GitHubRepoProtocol:
         """Get the repository this PR belongs to (internal helper)."""
         return ensure(self.data_record.github_ref).get_repo(f"{self.data_record.owner_login}/{self.data_record.repository_name}")
     
@@ -168,7 +168,7 @@ class FakePullRequest:
         return self.data_record.merged
         
     @property
-    def mergeable(self) -> bool:
+    def mergeable(self) -> Optional[bool]:
         # For tests, always return True to indicate PRs are mergeable
         return True
         
@@ -182,11 +182,13 @@ class FakePullRequest:
         self.data_record.merged = value
     
     @property
-    def user(self):
+    def user(self) -> GitHubUserProtocol:
         """Get the user who created this PR."""
         if not self.data_record.github_ref:
-            return None
-        return self.data_record.github_ref.get_user(self.data_record.owner_login)
+            # Return a default user if no github ref
+            return FakeNamedUser(login=self.data_record.owner_login, name=self.data_record.owner_login, email=f"{self.data_record.owner_login}@example.com")
+        user = self.data_record.github_ref.get_user(self.data_record.owner_login, create=True)
+        return ensure(user)
     
     @property
     def repository(self):
@@ -197,7 +199,7 @@ class FakePullRequest:
         return self.data_record.github_ref.get_repo(repo_full_name)
     
     @property
-    def base(self):
+    def base(self) -> GitHubRefProtocol:
         """Get the base ref for this PR."""
         # Get the commit info on demand
         repo_dir = Path(self.data_record.github_ref.data_dir).parent.parent.parent
@@ -212,7 +214,7 @@ class FakePullRequest:
         )
     
     @property
-    def head(self):
+    def head(self) -> GitHubRefProtocol:
         """Get the head ref for this PR."""
         # Get the commit info on demand
         repo_dir = Path(self.data_record.github_ref.data_dir).parent.parent.parent
@@ -248,8 +250,8 @@ class FakePullRequest:
             return {"enabled": True, "method": self.data_record.auto_merge_method}
         return None
     
-    def edit(self, title: str | None = None, body: str | None = None, state: str | None = None, 
-            base: str | None = None, maintainer_can_modify: bool | None = None):
+    def edit(self, title: Optional[str] = None, body: Optional[str] = None, state: Optional[str] = None, 
+            base: Optional[str] = None, **kwargs: object) -> None:
         """Update pull request properties."""
         if title is not None:
             self.data_record.title = title
@@ -265,12 +267,12 @@ class FakePullRequest:
             logger.debug(f"Saving state after editing PR #{self.number}")
             self.data_record.github_ref.save_state()
     
-    def create_issue_comment(self, body: str):
+    def create_issue_comment(self, body: str) -> None:
         """Add a comment to the pull request."""
         # We don't need to store comments for testing
         logger.info(f"PR #{self.number} comment: {body}")
     
-    def add_to_labels(self, *labels: str):
+    def add_to_labels(self, *labels: str) -> None:
         """Add labels to the pull request."""
         for label in labels:
             if str(label) not in self.data_record.labels:
@@ -282,11 +284,11 @@ class FakePullRequest:
             logger.debug(f"Saving state after adding labels to PR #{self.number}")
             self.data_record.github_ref.save_state()
     
-    def get_commits(self) -> list[FakeCommit]:
+    def get_commits(self) -> List[GitHubCommitProtocol]:
         """Get commits in the pull request."""
         return []  # Not needed for testing
     
-    def get_review_requests(self) -> tuple[list['FakeNamedUser'], list[Any]]:
+    def get_review_requests(self) -> Tuple[List[object], List[object]]:
         """Get users and teams requested for review."""
         # Always reload state first to ensure we have the latest data
         if self.data_record.github_ref:
@@ -300,8 +302,8 @@ class FakePullRequest:
                 # Update our reviewers with the loaded PR's reviewers
                 self.data_record.reviewers = loaded_pr.data_record.reviewers.copy()
             
-        # Convert reviewer login strings to FakeNamedUser objects
-        requested_users: List['FakeNamedUser'] = []
+        # Convert reviewer login strings to user objects
+        requested_users: List[object] = []
         logger.info(f"PR #{self.number} has reviewers: {self.data_record.reviewers}")
         if self.data_record.github_ref and self.data_record.reviewers:
             for reviewer_login in self.data_record.reviewers:
@@ -311,10 +313,10 @@ class FakePullRequest:
                 else:
                     logger.warning(f"Failed to create user for reviewer: {reviewer_login}")
         
-        logger.info(f"Returning requested users: {[u.login for u in requested_users if hasattr(u, 'login')]}")
+        logger.info(f"Returning requested users for PR #{self.number}: {len(requested_users)} users")
         return requested_users, []  # No teams for testing
     
-    def create_review_request(self, reviewers: list[str] | None = None, team_reviewers: list[str] | None = None):
+    def create_review_request(self, reviewers: List[str]) -> None:
         """Request reviews from users or teams."""
         if reviewers:
             logger.info(f"PR #{self.number} adding reviewers: {reviewers}")
@@ -369,7 +371,7 @@ class FakePullRequest:
                     logger.error(f"Error reloading state: {e}")
     
     def merge(self, commit_title: str = "", commit_message: str = "", 
-             sha: str = "", merge_method: str = "merge"):
+             sha: str = "", merge_method: str = "merge") -> None:
         """Merge the pull request."""
         self.data_record.merged = True
         self.data_record.state = "closed"
@@ -447,7 +449,7 @@ class FakePullRequest:
             logger.debug(f"Saving state after merging PR #{self.number}")
             self.data_record.github_ref.save_state()
     
-    def enable_automerge(self, merge_method: str = "merge"):
+    def enable_automerge(self, merge_method: str = "merge") -> None:
         """Enable auto-merge for the pull request."""
         self.data_record.auto_merge_enabled = True
         self.data_record.auto_merge_method = merge_method
@@ -471,12 +473,12 @@ class FakeRepository:
         return ensure(self.maybe_github_ref)
     
     @property
-    def owner(self):
+    def owner(self) -> GitHubUserProtocol:
         """Get the owner of this repository."""
         # Always return a user, create one if needed
         return ensure(self.github_ref.get_user(self.owner_login, create=True))
     
-    def get_assignees(self) -> List['FakeNamedUser']:
+    def get_assignees(self) -> List[GitHubUserProtocol]:
         """Get assignable users for repository."""
         # For simplicity, just return some default users
         if not self.github_ref:
@@ -488,7 +490,7 @@ class FakeRepository:
         # Filter out None values to satisfy the return type
         return [u for u in [self.github_ref.get_user(login, create=True) for login in ["yang", "testuser", "testluser"] if login] if u is not None]
     
-    def get_pull(self, number: int) -> 'FakePullRequest':
+    def get_pull(self, number: int) -> GitHubPullRequestProtocol:
         """Get pull request by number."""
         if not self.github_ref:
             raise ValueError("Repository not linked to GitHub instance")
@@ -503,7 +505,7 @@ class FakeRepository:
         return pr
 
     def get_pulls(self, state: str = "open", sort: str = "", 
-                 direction: str = "", head: str = "", base: str = "") -> List['FakePullRequest']:
+                 direction: str = "", head: str = "", base: str = "") -> List[GitHubPullRequestProtocol]:
         """Get pull requests with optional filtering."""
         if not self.github_ref:
             return []
@@ -512,14 +514,14 @@ class FakeRepository:
         self.github_ref.load_state()
         
         # Use a properly typed list and filter PRs based on parameters
-        result: List['FakePullRequest'] = []
+        result: List[GitHubPullRequestProtocol] = []
         for pr in self.github_ref.pull_requests.values():
             # Use a helper method to check if PR belongs to this repo
             if self._pr_belongs_to_repo(pr) and \
                (not state or pr.state == state) and \
                (not head or pr.head.ref == head) and \
                (not base or pr.base.ref == base):
-                result.append(pr)
+                result.append(cast(GitHubPullRequestProtocol, pr))
         
         return result
         
@@ -529,7 +531,7 @@ class FakeRepository:
         return pr.data_record.owner_login == self.owner_login and \
                pr.data_record.repository_name == self.name
     def create_pull(self, title: str, body: str, base: str, head: str, 
-                   maintainer_can_modify: bool = True, draft: bool = False) -> 'FakePullRequest':
+                   maintainer_can_modify: bool = True, draft: bool = False) -> GitHubPullRequestProtocol:
         """Create a new pull request."""
         if not self.github_ref:
             raise ValueError("Repository not linked to GitHub instance")
@@ -613,7 +615,7 @@ class FakeRepository:
         else:
             logger.warning("Cannot save state after creating PR - github_ref is None")
         
-        return pr
+        return cast(GitHubPullRequestProtocol, pr)
 
 def get_commit_info(ref: str, remote_path: Path) -> Tuple[str, str, str]:
     """Get commit info (id, hash, subject) for a given ref from the remote repository."""
@@ -673,7 +675,7 @@ class FakeRequester:
             return self._handle_graphql(input)
         
         # Default empty response
-        return cast(Tuple[Dict[str, Any], Dict[str, Any]], ({}, {}))
+        return ({}, {})
     
     def _handle_graphql(self, input: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Handle GraphQL query."""
@@ -747,7 +749,7 @@ class FakeRequester:
         logger.info(f"GraphQL returned {len(pr_nodes)} open PRs (newest first)")
         
         # Return tuple of (headers, data)
-        return cast(Tuple[Dict[str, Any], Dict[str, Any]], ({}, response))
+        return ({}, response)
 
 @dataclass
 class FakeGithub(PyGithubProtocol):
@@ -903,7 +905,7 @@ class FakeGithub(PyGithubProtocol):
         # Protected method is accessible within this class
         return self._save_state()
     
-    def get_user(self, login: Optional[str] = None, **kwargs: Any) -> Optional['FakeNamedUser']:
+    def get_user(self, login: Optional[str] = None, **kwargs: Any) -> Optional[GitHubUserProtocol]:
         """Get user by login or current authenticated user."""
         # Always reload state first
         self.load_state()        
@@ -922,7 +924,7 @@ class FakeGithub(PyGithubProtocol):
         
         return None
     
-    def get_repo(self, full_name_or_id: str, lazy: bool = False) -> 'FakeRepository':
+    def get_repo(self, full_name_or_id: str, lazy: bool = False) -> GitHubRepoProtocol:
         """Get repository by full name."""
         # Always reload state first
         self.load_state()
@@ -945,7 +947,7 @@ class FakeGithub(PyGithubProtocol):
         
         return repo
     
-    def get_pull(self, number: int, repo_name: Optional[str] = None) -> Optional['FakePullRequest']:
+    def get_pull(self, number: int, repo_name: Optional[str] = None) -> Optional[GitHubPullRequestProtocol]:
         """Get pull request by number.
         
         Args:
@@ -959,12 +961,12 @@ class FakeGithub(PyGithubProtocol):
         # If repo_name provided, use composite key
         composite_key = f"{repo_name}:{number}" if repo_name else None
         if composite_key and composite_key in self.pull_requests:
-            return self.pull_requests[composite_key]
+            return cast(GitHubPullRequestProtocol, self.pull_requests[composite_key])
         
         # If specific repository not provided, look through all PRs to find one with matching number
         for _, pr in self.pull_requests.items():
             if pr.number == number:
-                return pr
+                return cast(GitHubPullRequestProtocol, pr)
                 
         raise ValueError(f"Pull request #{number} not found")
     

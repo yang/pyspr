@@ -11,7 +11,7 @@ import time
 import datetime
 import logging
 import re
-from typing import Dict, Generator, List, Optional, Set, Tuple, Union
+from typing import Dict, Generator, List, Optional, Set, Tuple, Union, Protocol, runtime_checkable
 import pytest
 
 from pyspr.tests.e2e.test_helpers import RepoContext, run_cmd
@@ -21,6 +21,16 @@ from pyspr.git import RealGit
 from pyspr.github import GitHubClient, PullRequest, GitHubInfo
 from pyspr.typing import Commit
 from pyspr.tests.e2e.fixtures import test_repo_ctx, test_mq_repo_ctx, create_test_repo, github_environment
+
+
+@runtime_checkable
+class UserWithLogin(Protocol):
+    """Protocol for objects with login attribute."""
+    @property
+    def login(self) -> str:
+        """User login name."""
+        ...
+
 
 # Configure logging
 logging.basicConfig(
@@ -340,7 +350,12 @@ def test_reviewer_functionality(test_repo_ctx: RepoContext) -> None:
         log.info("\nDEBUG: First PR review requests")
         try:
             requested_users, requested_teams = gh_pr1.get_review_requests()
-            requested_logins = [u.login.lower() for u in requested_users]
+            # Extract login names - in tests, we know these are user objects
+            requested_logins: List[str] = []
+            for u in requested_users:
+                # Use protocol check to ensure type safety
+                if isinstance(u, UserWithLogin):
+                    requested_logins.append(u.login.lower())
             log.info(f"Requested Users: {requested_logins}")
             log.info(f"Requested Teams: {list(requested_teams)}")
         except Exception as e:
@@ -367,7 +382,10 @@ def test_reviewer_functionality(test_repo_ctx: RepoContext) -> None:
         gh_pr1 = github.repo.get_pull(pr1.number)
         try:
             requested_users, _ = gh_pr1.get_review_requests()
-            requested_logins1 = [u.login.lower() for u in requested_users]
+            requested_logins1: List[str] = []
+            for u in requested_users:
+                if isinstance(u, UserWithLogin):
+                    requested_logins1.append(u.login.lower())
             log.info(f"First PR requested users: {requested_logins1}")
         except Exception as e:
             log.info(f"Error getting review data: {e}")
@@ -379,7 +397,10 @@ def test_reviewer_functionality(test_repo_ctx: RepoContext) -> None:
         gh_pr2 = github.repo.get_pull(pr2.number)
         try:
             requested_users, _ = gh_pr2.get_review_requests()
-            requested_logins2 = [u.login.lower() for u in requested_users]
+            requested_logins2: List[str] = []
+            for u in requested_users:
+                if isinstance(u, UserWithLogin):
+                    requested_logins2.append(u.login.lower())
             log.info(f"Second PR requested users: {requested_logins2}")
         except Exception as e:
             log.info(f"Error getting review data: {e}")
@@ -408,7 +429,10 @@ def test_reviewer_functionality(test_repo_ctx: RepoContext) -> None:
         
         # Verify no reviewer on first PR
         requested_users, _ = gh_pr1.get_review_requests()
-        requested_logins = [u.login.lower() for u in requested_users]
+        requested_logins: List[str] = []
+        for u in requested_users:
+            if isinstance(u, UserWithLogin):
+                requested_logins.append(u.login.lower())
         assert "testluser" not in requested_logins, "First PR correctly has no testluser reviewer"
         log.info(f"Verified PR #{pr1.number} has no reviewer")
 
@@ -457,7 +481,36 @@ def test_reviewer_functionality(test_repo_ctx: RepoContext) -> None:
         log.info(f"Second PR requested logins: {requested_logins2}")
         assert "testluser" in requested_logins2, "Second PR should have testluser reviewer"
         
+<<<<<<< HEAD
         log.info("Successfully verified testluser review handling for both PRs")
+||||||| parent of 6b2b370 (more typing)
+        # Since we're using yang's token and testluser is different user, verify request was added
+        log.info("Getting review requests")
+        requested_users, _ = gh_pr2.get_review_requests()
+        log.info(f"Requested users: {[u.login for u in requested_users]}")
+        requested_logins = [u.login.lower() for u in requested_users]
+        log.info(f"Requested logins: {requested_logins}")
+        assert "testluser" in requested_logins, "Second PR should have testluser reviewer since they're a different user"
+        
+        log.info("Successfully verified testluser review handling")
+=======
+        # Since we're using yang's token and testluser is different user, verify request was added
+        log.info("Getting review requests")
+        requested_users, _ = gh_pr2.get_review_requests()
+        user_names: List[str] = []
+        for u in requested_users:
+            if isinstance(u, UserWithLogin):
+                user_names.append(u.login)
+        log.info(f"Requested users: {user_names}")
+        requested_logins: List[str] = []
+        for u in requested_users:
+            if isinstance(u, UserWithLogin):
+                requested_logins.append(u.login.lower())
+        log.info(f"Requested logins: {requested_logins}")
+        assert "testluser" in requested_logins, "Second PR should have testluser reviewer since they're a different user"
+        
+        log.info("Successfully verified testluser review handling")
+>>>>>>> 6b2b370 (more typing)
 
     finally:
         # Change back to original directory

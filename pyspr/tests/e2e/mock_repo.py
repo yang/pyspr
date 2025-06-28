@@ -5,7 +5,7 @@ import tempfile
 import uuid
 import logging
 import subprocess
-from typing import Generator
+from typing import Generator, Dict
 
 from pyspr.config import Config
 from pyspr.git import RealGit
@@ -103,7 +103,7 @@ def create_mock_repo_context(owner: str, name: str, test_name: str) -> Generator
         
         if not is_second_run:
             # Create a .spr.yaml file in the repo to ensure config is read by subprocesses
-            config_dict = {
+            config_dict: Dict[str, Dict[str, object]] = {
                 'repo': {
                     'github_remote': 'origin',
                     'github_branch': 'main',

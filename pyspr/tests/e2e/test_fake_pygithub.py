@@ -8,7 +8,8 @@ from pyspr.tests.e2e.fake_pygithub import (
     create_fake_github,
     FakeGithub,
     FakeRepository,
-    FakePullRequest
+    FakePullRequest,
+    FakeRef
 )
 
 def test_basic_operations() -> None:
@@ -25,19 +26,21 @@ def test_basic_operations() -> None:
         )
         
         # Create repository and verify it exists
-        repo: FakeRepository = github.get_repo("testorg/testrepo")
+        repo = github.get_repo("testorg/testrepo")
+        assert isinstance(repo, FakeRepository)
         assert repo.full_name == "testorg/testrepo"
         assert repo.owner_login == "testorg"
         assert repo.name == "testrepo"
         assert repo.github_ref is github
         
         # Create a PR
-        pr: FakePullRequest = repo.create_pull(
+        pr = repo.create_pull(
             title="Test PR",
             body="Test body",
             base="main",
             head="feature-branch"
         )
+        assert isinstance(pr, FakePullRequest)
         
         # Verify PR was created and stored properly
         assert pr.number == 1
@@ -45,6 +48,8 @@ def test_basic_operations() -> None:
         assert pr.body == "Test body"
         # PR should have reference to the github instance via its repository
         assert pr.repository is not None
+        # Since we're testing FakeGithub internals, we know repository is FakeRepository
+        assert isinstance(pr.repository, FakeRepository)
         assert pr.repository.github_ref is github
         
         # PR should be in pull_requests dict with composite key
@@ -95,17 +100,20 @@ def test_circular_references() -> None:
         )
         
         # Create two repositories that refer to the same owner
-        repo1: FakeRepository = github.get_repo("testuser/repo1")
-        repo2: FakeRepository = github.get_repo("testuser/repo2")
+        repo1 = github.get_repo("testuser/repo1")
+        repo2 = github.get_repo("testuser/repo2")
+        assert isinstance(repo1, FakeRepository)
+        assert isinstance(repo2, FakeRepository)
         assert repo1.owner is repo2.owner
         
         # Create PRs with cross-references
-        pr1: FakePullRequest = repo1.create_pull(
+        pr1 = repo1.create_pull(
             title="PR1",
             body="PR1 body",
             base="main",
             head="feature1"
         )
+        assert isinstance(pr1, FakePullRequest)
         # Create PR2 (used for testing circular references after reload)
         _ = repo2.create_pull(
             title="PR2",
@@ -148,6 +156,8 @@ def test_circular_references() -> None:
         # Verify properties work after reload
         assert loaded_pr1.repository is github2.repositories["testuser/repo1"]
         assert loaded_pr1.base.ref == "main"
+        # Since we're testing FakeGithub internals, we know base is FakeRef
+        assert isinstance(loaded_pr1.base, FakeRef)
         assert loaded_pr1.base.repo is github2.repositories["testuser/repo1"]
         
         # Verify reviewers
@@ -164,21 +174,24 @@ def test_graphql_functionality() -> None:
             state_file=Path(state_file),
         )
         
-        repo: FakeRepository = github.get_repo("testorg/testrepo")
+        repo = github.get_repo("testorg/testrepo")
+        assert isinstance(repo, FakeRepository)
         
         # Create PRs
-        pr1: FakePullRequest = repo.create_pull(
+        pr1 = repo.create_pull(
             title="GraphQL Test PR1",
             body="PR1 body",
             base="main",
             head="spr/main/abcd1234"
         )
-        pr2: FakePullRequest = repo.create_pull(
+        assert isinstance(pr1, FakePullRequest)
+        pr2 = repo.create_pull(
             title="GraphQL Test PR2",
             body="PR2 body",
             base=f"spr/main/{pr1.commit.commit_id}",
             head="spr/main/1234abcd"
         )
+        assert isinstance(pr2, FakePullRequest)
         
         # Request GraphQL data
         from pyspr.tests.e2e.fake_pygithub import FakeRequester
