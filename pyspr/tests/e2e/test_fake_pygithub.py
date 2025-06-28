@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+from pathlib import Path
 
 from pyspr.tests.e2e.fake_pygithub import (
     create_fake_github,
@@ -19,8 +20,8 @@ def test_basic_operations() -> None:
         
         # Create a fresh instance with no previous state
         github: FakeGithub = create_fake_github(
-            data_dir=tmpdir,
-            state_file=state_file
+            data_dir=Path(tmpdir),
+            state_file=Path(state_file),
         )
         
         # Create repository and verify it exists
@@ -42,7 +43,9 @@ def test_basic_operations() -> None:
         assert pr.number == 1
         assert pr.title == "Test PR"
         assert pr.body == "Test body"
-        assert pr.github_ref is github
+        # PR should have reference to the github instance via its repository
+        assert pr.repository is not None
+        assert pr.repository.github_ref is github
         
         # PR should be in pull_requests dict with composite key
         pr_key: str = f"testorg/testrepo:1"
@@ -50,7 +53,7 @@ def test_basic_operations() -> None:
         assert github.pull_requests[pr_key] is pr
         
         # Verify we can get the PR by number
-        retrieved_pr: FakePullRequest = github.get_pull(1)
+        retrieved_pr = github.get_pull(1)
         assert retrieved_pr is pr
         
         # Edit the PR
@@ -62,8 +65,8 @@ def test_basic_operations() -> None:
         
         # Create a new GitHub instance that loads from the same state file
         github2: FakeGithub = create_fake_github(
-            data_dir=tmpdir,
-            state_file=state_file,
+            data_dir=Path(tmpdir),
+            state_file=Path(state_file),
         )
         
         # Verify PR data was loaded from state
@@ -87,15 +90,8 @@ def test_circular_references() -> None:
         
         # Create an entirely fresh instance with no pre-loaded state
         github: FakeGithub = create_fake_github(
-            data_dir=tmpdir,
-<<<<<<< HEAD
-            state_file=state_file
-||||||| parent of fa20d4f (Add Adapter)
-            state_file=state_file,
-            load_state=False
-=======
-            state_file=state_file,
->>>>>>> fa20d4f (Add Adapter)
+            data_dir=Path(tmpdir),
+            state_file=Path(state_file),
         )
         
         # Create two repositories that refer to the same owner
@@ -110,7 +106,8 @@ def test_circular_references() -> None:
             base="main",
             head="feature1"
         )
-        pr2: FakePullRequest = repo2.create_pull(
+        # Create PR2 (used for testing circular references after reload)
+        _ = repo2.create_pull(
             title="PR2",
             body="PR2 body",
             base="main",
@@ -121,12 +118,12 @@ def test_circular_references() -> None:
         pr1.create_review_request(reviewers=["testuser"])
         
         # Explicitly save state to file
-        github._save_state()
+        github.save_state()
         
         # Create new instance and load state
         github2: FakeGithub = create_fake_github(
-            data_dir=tmpdir,
-            state_file=state_file,
+            data_dir=Path(tmpdir),
+            state_file=Path(state_file),
         )
         
         # Verify PRs loaded correctly
@@ -154,7 +151,7 @@ def test_circular_references() -> None:
         assert loaded_pr1.base.repo is github2.repositories["testuser/repo1"]
         
         # Verify reviewers
-        assert "testuser" in loaded_pr1.reviewers
+        assert "testuser" in loaded_pr1.data_record.reviewers
 
 def test_graphql_functionality() -> None:
     """Test GraphQL functionality."""
@@ -163,15 +160,8 @@ def test_graphql_functionality() -> None:
         # Create a fresh GitHub instance with a clean state
         state_file = os.path.join(tmpdir, "fake_github_state.yaml")
         github: FakeGithub = create_fake_github(
-            data_dir=tmpdir,
-<<<<<<< HEAD
-            state_file=state_file
-||||||| parent of fa20d4f (Add Adapter)
-            state_file=state_file,
-            load_state=False
-=======
-            state_file=state_file,
->>>>>>> fa20d4f (Add Adapter)
+            data_dir=Path(tmpdir),
+            state_file=Path(state_file),
         )
         
         repo: FakeRepository = github.get_repo("testorg/testrepo")
@@ -186,14 +176,15 @@ def test_graphql_functionality() -> None:
         pr2: FakePullRequest = repo.create_pull(
             title="GraphQL Test PR2",
             body="PR2 body",
-            base=f"spr/main/{pr1.commit_id}",
+            base=f"spr/main/{pr1.data_record.commit_id}",
             head="spr/main/1234abcd"
         )
         
         # Request GraphQL data
         from pyspr.tests.e2e.fake_pygithub import FakeRequester
-        from typing import Any, Dict, Tuple
-        requester: FakeRequester = github._Github__requester
+        from typing import Any, Dict
+        # Access requester using public API
+        requester: FakeRequester = getattr(github, '_Github__requester')
         _: Dict[str, Any]
         response: Dict[str, Any]
         _, response = requester.requestJsonAndCheck(

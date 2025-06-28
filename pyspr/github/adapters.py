@@ -1,12 +1,13 @@
 """Adapter classes to wrap PyGithub objects with our protocol interfaces."""
 
-from typing import List, Optional, Tuple, Any, Dict
+from typing import List, Optional, Tuple, Any, Dict, Union
 import logging
 
 from github import Github
 from github.Repository import Repository  
 from github.PullRequest import PullRequest as PyGithubPullRequest
 from github.NamedUser import NamedUser
+from github.AuthenticatedUser import AuthenticatedUser
 from github.GithubObject import NotSet
 
 from . import (
@@ -22,9 +23,9 @@ logger = logging.getLogger(__name__)
 
 
 class PyGithubUserAdapter(GitHubUserProtocol):
-    """Adapter for PyGithub NamedUser objects."""
+    """Adapter for PyGithub NamedUser or AuthenticatedUser objects."""
     
-    def __init__(self, user: NamedUser) -> None:
+    def __init__(self, user: Union[NamedUser, AuthenticatedUser]) -> None:
         self._user = user
     
     @property
@@ -104,7 +105,9 @@ class PyGithubPullRequestAdapter(GitHubPullRequestProtocol):
     
     def get_review_requests(self) -> Tuple[List[Any], List[Any]]:
         """Get users and teams requested for review."""
-        return self._pr.get_review_requests()
+        users, teams = self._pr.get_review_requests()
+        # Convert PaginatedList to List
+        return (list(users), list(teams))
     
     def merge(self, commit_title: str = "", commit_message: str = "", 
              sha: str = "", merge_method: str = "merge") -> None:
@@ -186,10 +189,11 @@ class PyGithubRequesterAdapter(GitHubRequester):
         """Make a request and return the response."""
         # PyGithub's requestJsonAndCheck returns (status, headers, data)
         # We need to return (headers, data) to match our protocol
-        status, headers, data = self._requester.requestJsonAndCheck(
+        _status, response_headers, data = self._requester.requestJsonAndCheck(
             verb, url, parameters=parameters, headers=headers, input=input
         )
-        return (headers, data)
+        # Ensure headers is never None
+        return (response_headers or {}, data)
 
 
 class PyGithubAdapter(PyGithubProtocol):
@@ -222,6 +226,7 @@ class PyGithubAdapter(PyGithubProtocol):
         """Access the requester for GraphQL calls."""
         if self._requester_adapter is None:
             # Access the private attribute from the real PyGithub object
-            real_requester = self._github._Github__requester
+            # Use getattr to avoid type checker issues with private attributes
+            real_requester = getattr(self._github, '_Github__requester')
             self._requester_adapter = PyGithubRequesterAdapter(real_requester)
         return self._requester_adapter

@@ -5,13 +5,14 @@ from __future__ import annotations
 import yaml
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Any, Tuple, Optional, Union, cast
+from typing import Dict, List, Any, Tuple, Optional, cast
 import subprocess
 from pathlib import Path
 import os
 import tempfile
 
 from pyspr.util import ensure
+from pyspr.github import PyGithubProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -750,7 +751,7 @@ class FakeRequester:
         return cast(Tuple[Dict[str, Any], Dict[str, Any]], ({}, response))
 
 @dataclass
-class FakeGithub:
+class FakeGithub(PyGithubProtocol):
     """Fake implementation of the Github class from PyGithub."""
     token: str
     users: Dict[str, FakeNamedUser]
@@ -922,7 +923,7 @@ class FakeGithub:
         
         return None
     
-    def get_repo(self, full_name_or_id: str) -> 'FakeRepository':
+    def get_repo(self, full_name_or_id: str, lazy: bool = False) -> 'FakeRepository':
         """Get repository by full name."""
         # Always reload state first
         self.load_state()

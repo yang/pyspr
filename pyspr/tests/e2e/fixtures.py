@@ -2,9 +2,13 @@
 
 import os
 import logging
-from typing import Generator, Tuple, Any
+from typing import Generator, Tuple, Protocol
 import pytest
 from _pytest.fixtures import FixtureRequest
+
+class PytestNode(Protocol):
+    """Protocol for pytest node object."""
+    name: str
 
 from pyspr.tests.e2e.test_helpers import RepoContext, create_repo_context
 from pyspr.tests.e2e.mock_repo import create_mock_repo_context
@@ -48,7 +52,7 @@ def github_environment() -> Generator[None, None, None]:
 def test_repo_ctx(request: FixtureRequest) -> Generator[RepoContext, None, None]:
     """Test repo fixture using real or mock GitHub based on environment variable."""
     assert request.node is not None, "pytest request.node should not be None"
-    node = request.node
+    node: PytestNode = request.node
     
     if should_use_real_github():
         # Use real GitHub
@@ -63,7 +67,7 @@ def test_repo_ctx(request: FixtureRequest) -> Generator[RepoContext, None, None]
 def test_mq_repo_ctx(request: FixtureRequest) -> Generator[RepoContext, None, None]:
     """Merge queue test repo fixture using real or mock GitHub."""
     assert request.node is not None, "pytest request.node should not be None"
-    node = request.node
+    node: PytestNode = request.node
     
     if should_use_real_github():
         # Use real GitHub
