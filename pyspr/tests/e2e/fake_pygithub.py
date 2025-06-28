@@ -715,10 +715,16 @@ class FakeGithub:
         # Set up file paths
         if not self.data_dir:
             self.data_dir = Path(os.getcwd()) / ".git" / "fake_github"
+        else:
+            # Ensure data_dir is a Path object
+            self.data_dir = Path(self.data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         
         if not self.state_file:
             self.state_file = self.data_dir / "fake_github_state.yaml"
+        else:
+            # Ensure state_file is a Path object
+            self.state_file = Path(self.state_file)
         
         # Load state if requested and file exists
         if load_state:

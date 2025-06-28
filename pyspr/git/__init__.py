@@ -15,11 +15,19 @@ logger = logging.getLogger(__name__)
 def get_local_commit_stack(config: ConfigProtocol, git_cmd: GitInterface) -> List[Commit]:
     """Get local commit stack. Returns commits ordered with bottom commit first."""
     try:
-        remote = config.repo.get('github_remote', 'origin')
-        branch = config.repo.get('github_branch', 'main')
+        # Try to get the upstream branch
+        try:
+            upstream = git_cmd.must_git("rev-parse --abbrev-ref @{upstream}").strip()
+            logger.debug(f"Using upstream branch: {upstream}")
+        except:
+            # Fall back to configured remote/branch
+            remote = config.repo.get('github_remote', 'origin')
+            branch = config.repo.get('github_branch', 'main')
+            upstream = f"{remote}/{branch}"
+            logger.debug(f"No upstream set, using config: {upstream}")
 
         # Get commit log
-        log_cmd = f"log --format=medium --no-color {remote}/{branch}..HEAD"
+        log_cmd = f"log --format=medium --no-color {upstream}..HEAD"
         commit_log = git_cmd.must_git(log_cmd)
     except Exception:
         # For tests, fall back to getting all commits
@@ -37,14 +45,20 @@ def get_local_commit_stack(config: ConfigProtocol, git_cmd: GitInterface) -> Lis
     
     # If not valid, it means commits are missing IDs - add them
     if not valid:
-        logger.info("Parsing marked as invalid - will add commit-ids")
+        logger.info("Parsing marked as invalid - some commits are missing commit-ids")
         # Get all commits for test
         commit_hashes: List[str] = []
         target = "HEAD"  # Default target
         try:
-            remote = config.repo.get('github_remote', 'origin')
-            branch = config.repo.get('github_branch', 'main')
-            target = f"{remote}/{branch}"
+            # Try to get the upstream branch
+            try:
+                target = git_cmd.must_git("rev-parse --abbrev-ref @{upstream}").strip()
+            except:
+                # Fall back to configured remote/branch
+                remote = config.repo.get('github_remote', 'origin')
+                branch = config.repo.get('github_branch', 'main')
+                target = f"{remote}/{branch}"
+            
             cmd = f"rev-list --reverse {target}..HEAD"
             commit_hashes = git_cmd.must_git(cmd).strip().split("\n")
         except Exception:
@@ -182,7 +196,9 @@ def parse_local_commit_stack(commit_log: str) -> Tuple[List[Commit], bool]:
                 # Missing commit ID in previous commit
                 logger.debug(f"parse_local_commit_stack: Missing commit-id in commit {scanned_commit.commit_hash[:8] if scanned_commit else 'None'} with subject: '{scanned_commit.subject if scanned_commit else 'None'}' at line {index}")
                 logger.debug(f"  New commit hash found: {hash_match.group(1)[:8]}")
-                return [], False
+                # Don't return empty list - return what we've parsed so far
+                # This allows reusing commits that already have IDs
+                return commits, False
             commit_scan_on = True
             scanned_commit = Commit.from_strings(
                 commit_id="",  # Will be filled by commit-id or hash
@@ -215,7 +231,9 @@ def parse_local_commit_stack(commit_log: str) -> Tuple[List[Commit], bool]:
                     
     # If still scanning, missing commit ID
     if commit_scan_on:
-        return [], False
+        logger.debug(f"parse_local_commit_stack: Still scanning at end. Last commit subject: '{scanned_commit.subject if scanned_commit else 'None'}'")
+        # Return what we've parsed so far
+        return commits, False
         
     return commits, True
 
