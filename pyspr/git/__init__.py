@@ -29,8 +29,15 @@ def get_local_commit_stack(config: ConfigProtocol, git_cmd: GitInterface) -> Lis
     valid = True
     commits, valid = parse_local_commit_stack(commit_log)
     
+    logger.info(f"get_local_commit_stack: parsed {len(commits)} commits, valid={valid}")
+    if commits:
+        logger.info("Parsed commits:")
+        for c in commits:
+            logger.info(f"  {c.commit_hash[:8]}: id={c.commit_id}, subject='{c.subject}'")
+    
     # If not valid, it means commits are missing IDs - add them
     if not valid:
+        logger.info("Parsing marked as invalid - will add commit-ids")
         # Get all commits for test
         commit_hashes: List[str] = []
         target = "HEAD"  # Default target
@@ -70,8 +77,10 @@ def get_local_commit_stack(config: ConfigProtocol, git_cmd: GitInterface) -> Lis
                     subject = git_cmd.must_git(f"show -s --format=%s {cid}").strip()
                     wip = subject.upper().startswith("WIP")
                     commits_new.insert(0, Commit.from_strings(commit_id, commit_hash, subject, body, wip))
+                    logger.debug(f"Commit {cid[:8]} already has commit-id: {commit_id}")
                 else:
                     # Need to add ID
+                    logger.info(f"Commit {cid[:8]} missing commit-id, will add one")
                     new_id = str(uuid.uuid4())[:8]
                     
                     # Get current message
