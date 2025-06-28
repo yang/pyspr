@@ -4,7 +4,7 @@ import os
 import sys
 import click
 import logging
-from typing import Any, List, Optional, Tuple, Dict
+from typing import List, Optional, Tuple, Dict, Any
 from click import Context
 
 # Get module logger
@@ -12,10 +12,11 @@ logger = logging.getLogger(__name__)
 
 from ...config import Config, default_config
 from ...config.config_parser import parse_config
+from ...config.models import PysprConfig
 from ...git import RealGit
 from ...github import GitHubClient 
 from ...spr import StackedPR
-from ...typing import GitInterface
+from ...typing import GitInterface, StackedPRContextProtocol
 
 # Import from tests - only used when running in test mode
 # Define mock availability flag
@@ -29,7 +30,7 @@ except ImportError:
     def should_use_mock_github() -> bool:
         return False
         
-    def create_github_client(ctx: Optional[Any], config: Any, force_mock: bool = False) -> GitHubClient:
+    def create_github_client(ctx: Optional[StackedPRContextProtocol], config: PysprConfig, force_mock: bool = False) -> GitHubClient:
         # This function should never be called when is_mock_available is False
         # but we need to define it to avoid unbound variable errors
         return GitHubClient(ctx, config)
@@ -45,9 +46,9 @@ def check(err: Exception) -> None:
 class AliasedGroup(click.Group):
     """Command group with support for aliases."""
     
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __init__(self, name: Optional[str] = None, commands: Optional[Dict[str, click.Command]] = None, **attrs: Any) -> None:
         """Initialize with aliases map."""
-        super().__init__(*args, **kwargs)
+        super().__init__(name, commands, **attrs)
         self.aliases: Dict[str, str] = {}
 
     def add_alias(self, alias: str, command: str) -> None:

@@ -1,6 +1,6 @@
 """Config module."""
 
-from typing import Dict, Any
+from typing import Dict
 from .models import RepoConfig, UserConfig, PysprConfig, ToolConfig
 
 class Config(PysprConfig):
@@ -9,7 +9,7 @@ class Config(PysprConfig):
     This is a subclass of PysprConfig for backward compatibility.
     It directly exposes the Pydantic models with dictionary-like access.
     """
-    def __init__(self, config: Dict[str, Dict[str, Any]]):
+    def __init__(self, config: Dict[str, Dict[str, object]]):
         """Initialize with parsed config dict."""
         # Extract configuration sections with proper defaults
         repo_config = config.get('repo', {})

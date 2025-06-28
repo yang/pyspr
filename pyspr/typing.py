@@ -1,6 +1,6 @@
 """Common types used across the codebase."""
 
-from typing import Any, Dict, Optional, Protocol, Type, TypeVar, Union, NewType, Literal
+from typing import Dict, Optional, Protocol, Type, TypeVar, Union, NewType, Literal
 from dataclasses import dataclass
 
 # Shared TypeVars

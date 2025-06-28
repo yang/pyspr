@@ -3,7 +3,7 @@
 import json
 import shutil
 import sys
-from typing import Any, IO, Optional
+from typing import IO, Optional
 
 def get_term_width() -> int:
     """Get terminal width, default to 80 if can't detect."""
@@ -33,7 +33,7 @@ def header(text: str, use_emoji: bool = True) -> str:
     return "\n".join(result)
 
 
-def pretty_json(data: Any, prefix: str = "") -> str:
+def pretty_json(data: object, prefix: str = "") -> str:
     """Format JSON data with optional prefix."""
     raw = json.dumps(data, indent=2)
     if prefix:
@@ -42,7 +42,7 @@ def pretty_json(data: Any, prefix: str = "") -> str:
     return raw
 
 
-def print_json(data: Any, prefix: str = "", file: Optional[IO[str]] = None) -> None:
+def print_json(data: object, prefix: str = "", file: Optional[IO[str]] = None) -> None:
     """Print JSON data to file (default stdout)."""
     if file is None:
         file = sys.stdout

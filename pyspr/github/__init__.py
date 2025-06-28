@@ -3,7 +3,7 @@
 import os
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Literal, Protocol, runtime_checkable, TypeVar
+from typing import Dict, List, Optional, Literal, Protocol, runtime_checkable, TypeVar
 import re
 
 from ..util import ensure
@@ -68,6 +68,40 @@ class GitHubUserProtocol(Protocol):
         ...
 
 @runtime_checkable
+class GitHubCommitDetailProtocol(Protocol):
+    """Protocol for commit detail object with message."""
+    @property
+    def message(self) -> str:
+        """Get the commit message."""
+        ...
+
+@runtime_checkable
+class GitHubCommitProtocol(Protocol):
+    """Protocol for GitHub commit objects."""
+    @property
+    def sha(self) -> str:
+        """Get the commit SHA."""
+        ...
+    
+    @property
+    def commit(self) -> GitHubCommitDetailProtocol:
+        """Get the commit details."""
+        ...
+
+@runtime_checkable
+class GitHubRefProtocol(Protocol):
+    """Protocol for GitHub ref objects (base/head references)."""
+    @property
+    def ref(self) -> str:
+        """Get the ref name (e.g., 'main', 'feature-branch')."""
+        ...
+    
+    @property
+    def sha(self) -> str:
+        """Get the commit SHA."""
+        ...
+
+@runtime_checkable
 class GitHubPullRequestProtocol(Protocol):
     """Protocol for GitHub pull request objects (real or fake)."""
     @property
@@ -91,12 +125,12 @@ class GitHubPullRequestProtocol(Protocol):
         ...
     
     @property
-    def base(self) -> Any:
+    def base(self) -> GitHubRefProtocol:
         """Get the base reference."""
         ...
     
     @property
-    def head(self) -> Any:
+    def head(self) -> GitHubRefProtocol:
         """Get the head reference."""
         ...
     
@@ -121,7 +155,7 @@ class GitHubPullRequestProtocol(Protocol):
         ...
     
     def edit(self, title: Optional[str] = None, body: Optional[str] = None, state: Optional[str] = None, 
-             base: Optional[str] = None, **kwargs: Any) -> None:
+             base: Optional[str] = None, **kwargs: object) -> None:
         """Edit the pull request."""
         ...
     
@@ -133,11 +167,11 @@ class GitHubPullRequestProtocol(Protocol):
         """Add labels to the pull request."""
         ...
     
-    def get_commits(self) -> List[Any]:
+    def get_commits(self) -> List[GitHubCommitProtocol]:
         """Get commits in the pull request."""
         ...
     
-    def get_review_requests(self) -> tuple[List[Any], List[Any]]:
+    def get_review_requests(self) -> tuple[List[object], List[object]]:
         """Get users and teams requested for review."""
         ...
     
@@ -191,7 +225,7 @@ class PyGithubProtocol(Protocol):
         """Get a repository by full name or ID."""
         ...
     
-    def get_user(self, login: Optional[str] = None, **kwargs: Dict[str, Any]) -> Optional[GitHubUserProtocol]:
+    def get_user(self, login: Optional[str] = None, **kwargs: Dict[str, object]) -> Optional[GitHubUserProtocol]:
         """Get a user by login or the authenticated user if login is None.
         
         Note: The signature is intentionally flexible to accommodate both:
@@ -217,9 +251,11 @@ def find_github_token() -> Optional[str]:
             with open(gh_config_path, "r") as f:
                 gh_config = yaml.safe_load(f)
                 if gh_config and "github.com" in gh_config:
-                    github_config: Dict[str, Any] = gh_config["github.com"]
+                    github_config: Dict[str, object] = gh_config["github.com"]
                     if "oauth_token" in github_config:
-                        return github_config["oauth_token"]
+                        token = github_config["oauth_token"]
+                        if isinstance(token, str):
+                            return token
     except Exception as e:
         logger.error(f"Error reading gh CLI config: {e}")
 
@@ -358,8 +394,8 @@ class GitHubClient:
             # Single query (no pagination for now)
             from typing import cast
             # Safely access private requester with typings
-            any_client = cast(Any, self.client)  # First cast to Any to bypass attribute check
-            req = cast(GitHubRequester, any_client._Github__requester)  # Then cast to our protocol
+            # Use getattr to access private attribute without needing Any
+            req = cast(GitHubRequester, getattr(self.client, '_Github__requester'))
             
             # Use protocol-defined response type
             result: GraphQLResponseType = req.requestJsonAndCheck(

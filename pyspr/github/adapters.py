@@ -1,6 +1,6 @@
 """Adapter classes to wrap PyGithub objects with our protocol interfaces."""
 
-from typing import List, Optional, Tuple, Any, Dict, Union
+from typing import List, Optional, Tuple, Dict, Union
 import logging
 
 from github import Github
@@ -16,8 +16,11 @@ from . import (
     GitHubPullRequestProtocol,
     GitHubUserProtocol,
     GitHubRequester,
-    GraphQLResponseType
+    GraphQLResponseType,
+    GitHubRefProtocol,
+    GitHubCommitProtocol
 )
+from .types import PyGithubRequesterInternal
 
 logger = logging.getLogger(__name__)
 
@@ -57,11 +60,11 @@ class PyGithubPullRequestAdapter(GitHubPullRequestProtocol):
         return self._pr.state
     
     @property
-    def base(self) -> Any:
+    def base(self) -> GitHubRefProtocol:
         return self._pr.base
     
     @property
-    def head(self) -> Any:
+    def head(self) -> GitHubRefProtocol:
         return self._pr.head
     
     @property
@@ -81,7 +84,7 @@ class PyGithubPullRequestAdapter(GitHubPullRequestProtocol):
         return self._pr.merged
     
     def edit(self, title: Optional[str] = None, body: Optional[str] = None, 
-             state: Optional[str] = None, base: Optional[str] = None, **kwargs: Any) -> None:
+             state: Optional[str] = None, base: Optional[str] = None, **kwargs: object) -> None:
         """Edit the pull request."""
         # Convert None to NotSet for PyGithub
         self._pr.edit(
@@ -99,11 +102,11 @@ class PyGithubPullRequestAdapter(GitHubPullRequestProtocol):
         """Add labels to the pull request."""
         self._pr.add_to_labels(*labels)
     
-    def get_commits(self) -> List[Any]:
+    def get_commits(self) -> List[GitHubCommitProtocol]:
         """Get commits in the pull request."""
         return list(self._pr.get_commits())
     
-    def get_review_requests(self) -> Tuple[List[Any], List[Any]]:
+    def get_review_requests(self) -> Tuple[List[object], List[object]]:
         """Get users and teams requested for review."""
         users, teams = self._pr.get_review_requests()
         # Convert PaginatedList to List
@@ -179,12 +182,12 @@ class PyGithubRepoAdapter(GitHubRepoProtocol):
 class PyGithubRequesterAdapter(GitHubRequester):
     """Adapter for PyGithub's requester to handle GraphQL."""
     
-    def __init__(self, requester: Any) -> None:
+    def __init__(self, requester: PyGithubRequesterInternal) -> None:
         self._requester = requester
     
     def requestJsonAndCheck(
-        self, verb: str, url: str, parameters: Optional[Dict[str, Any]] = None,
-        headers: Optional[Dict[str, str]] = None, input: Optional[Dict[str, Any]] = None
+        self, verb: str, url: str, parameters: Optional[Dict[str, object]] = None,
+        headers: Optional[Dict[str, str]] = None, input: Optional[Dict[str, object]] = None
     ) -> GraphQLResponseType:
         """Make a request and return the response."""
         # PyGithub's requestJsonAndCheck returns (status, headers, data)
@@ -209,7 +212,7 @@ class PyGithubAdapter(PyGithubProtocol):
         # We only use string names, not IDs
         return PyGithubRepoAdapter(self._github.get_repo(full_name_or_id))
     
-    def get_user(self, login: Optional[str] = None, **kwargs: Dict[str, Any]) -> Optional[GitHubUserProtocol]:
+    def get_user(self, login: Optional[str] = None, **kwargs: Dict[str, object]) -> Optional[GitHubUserProtocol]:
         """Get a user by login or the authenticated user if login is None."""
         # PyGithub uses NotSet instead of None
         if login is None:

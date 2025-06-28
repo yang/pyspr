@@ -1,6 +1,6 @@
 """Type definitions for GitHub API responses."""
 
-from typing import Dict, List, Any, TypeVar, Protocol, Optional, Tuple, Union
+from typing import Dict, List, TypeVar, Protocol, Optional, Tuple, Union
 from pydantic import BaseModel
 
 # GraphQL response types with Pydantic models
@@ -48,14 +48,15 @@ class GraphQLError(BaseModel):
     message: str
     locations: Optional[List[GraphQLErrorLocation]] = None
     path: Optional[List[Union[str, int]]] = None
-    extensions: Optional[Dict[str, Any]] = None
+    extensions: Optional[Dict[str, object]] = None
 
 class GraphQLResponse(BaseModel):
     data: GraphQLData
     errors: Optional[List[GraphQLError]] = None
 
 # Type for PyGithub GraphQL response
-GraphQLResponseType = Tuple[Dict[str, Any], Any]
+# First element is headers dict, second is the response data
+GraphQLResponseType = Tuple[Dict[str, object], Dict[str, object]]
 
 class PRCommitInfo(BaseModel):
     """Type for commit info in a PR."""
@@ -77,26 +78,26 @@ class PRMapDict(BaseModel):
 
 T = TypeVar('T')
 
-def parse_graphql_response(response: Any) -> GraphQLResponse:
+def parse_graphql_response(response: Dict[str, object]) -> GraphQLResponse:
     """Parse GraphQL response into Pydantic model."""
     try:
         return GraphQLResponse.model_validate(response)
     except Exception as e:
         raise TypeError(f"Invalid GraphQL response: {e}")
 
-def parse_pr_node(node: Any) -> Optional[PRNode]:
+def parse_pr_node(node: Dict[str, object]) -> Optional[PRNode]:
     """Parse a PR node into Pydantic model."""
     try:
         return PRNode.model_validate(node)
     except Exception:
         return None
 
-def parse_pr_nodes(nodes: Any) -> List[PRNode]:
+def parse_pr_nodes(nodes: object) -> List[PRNode]:
     """Parse nodes to List[PRNode] with validation."""
     valid_nodes: List[PRNode] = []
     if not isinstance(nodes, list):
         return valid_nodes
-    nodes_list: List[Any] = nodes
+    nodes_list: List[Dict[str, object]] = nodes
     for node in nodes_list:
         try:
             parsed = parse_pr_node(node)
@@ -105,6 +106,19 @@ def parse_pr_nodes(nodes: Any) -> List[PRNode]:
         except Exception:
             continue
     return valid_nodes
+
+class PyGithubRequesterInternal(Protocol):
+    """Protocol for PyGithub's internal requester object."""
+    def requestJsonAndCheck(
+        self,
+        verb: str,
+        url: str, 
+        parameters: Optional[Dict[str, object]] = None,
+        headers: Optional[Dict[str, str]] = None,
+        input: Optional[Dict[str, object]] = None
+    ) -> Tuple[int, Dict[str, object], Dict[str, object]]:
+        """PyGithub's internal method returns (status, headers, data)."""
+        ...
 
 class GitHubRequester(Protocol):
     """Type for PyGithub requester to handle GraphQL calls.
@@ -116,8 +130,8 @@ class GitHubRequester(Protocol):
         self,
         verb: str,
         url: str, 
-        parameters: Optional[Dict[str, Any]] = None,
+        parameters: Optional[Dict[str, object]] = None,
         headers: Optional[Dict[str, str]] = None,
-        input: Optional[Any] = None
+        input: Optional[Dict[str, object]] = None
     ) -> GraphQLResponseType:
         ...

@@ -1,6 +1,6 @@
 """Pydantic models for config types."""
 
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, List
 from pydantic import BaseModel, Field
 
 # No dictionary-like access mixins - using pure Pydantic models with attribute access
@@ -48,12 +48,20 @@ class ToolConfig(BaseModel):
         """Pydantic config."""
         extra = "allow"  # Allow extra fields
 
+class StateConfig(BaseModel):
+    """State configuration for merge checks."""
+    merge_check_commit: Dict[str, str] = Field(default_factory=dict)
+    
+    class Config:
+        """Pydantic config."""
+        extra = "allow"  # Allow extra fields
+
 class PysprConfig(BaseModel):
     """Full pyspr configuration."""
     repo: RepoConfig = Field(default_factory=RepoConfig)
     user: UserConfig = Field(default_factory=UserConfig) 
     tool: ToolConfig = Field(default_factory=ToolConfig)
-    state: Optional[Dict[str, Any]] = None
+    state: Optional[StateConfig] = None
     
     # No get method - use direct attribute access instead
 
