@@ -264,10 +264,14 @@ def test_reviewer_functionality(test_repo_ctx: RepoContext) -> None:
     """Test reviewer functionality, verifying:
     1. Self-review attempts are handled properly (can't review your own PR)
     2. Other user review requests work properly
+    3. The -r flag adds reviewers to both new and existing PRs
     
-    This combines two tests:
-    - First part tests yang token case (can't self-review)
-    - Second part tests testluser case (verify request handling)
+    This test has two parts:
+    - Part 1: Tests yang token case (can't self-review) - creates 2 commits,
+      runs update with -r yang, verifies yang is NOT added as reviewer
+    - Part 2: Tests testluser case - creates first PR without reviewer,
+      then adds second commit and runs update with -r testluser, verifying
+      that BOTH PRs get testluser as reviewer (not just the new one)
     """
     ctx = test_repo_ctx
     git_cmd = ctx.git_cmd
@@ -404,8 +408,7 @@ def test_reviewer_functionality(test_repo_ctx: RepoContext) -> None:
         assert "testluser" not in requested_logins, "First PR correctly has no testluser reviewer"
         log.info(f"Verified PR #{pr1.number} has no reviewer")
 
-        # Switch to SPR branch and add second commit with testluser reviewer
-        run_cmd(f"git checkout {pr1.from_branch}")
+        # Create second commit on the same local branch (not on spr branch)
         log.info("\nCreating second commit with testluser reviewer...")
         make_commit_2("test_r2.txt", "Second testluser commit")
 
@@ -435,17 +438,22 @@ def test_reviewer_functionality(test_repo_ctx: RepoContext) -> None:
         else:
             log.info("State file does not exist")
             
+        # Check that BOTH PRs now have testluser as reviewer
+        # First PR (existing) should now have reviewer added
+        gh_pr1_updated = github.repo.get_pull(pr1.number)
+        requested_users1, _ = gh_pr1_updated.get_review_requests()
+        requested_logins1 = [u.login.lower() for u in requested_users1]
+        log.info(f"First PR requested logins after update: {requested_logins1}")
+        assert "testluser" in requested_logins1, "First PR should now have testluser reviewer (added to existing PR)"
+        
+        # Second PR (new) should also have reviewer
         gh_pr2 = github.repo.get_pull(pr2.number)
+        requested_users2, _ = gh_pr2.get_review_requests()
+        requested_logins2 = [u.login.lower() for u in requested_users2]
+        log.info(f"Second PR requested logins: {requested_logins2}")
+        assert "testluser" in requested_logins2, "Second PR should have testluser reviewer"
         
-        # Since we're using yang's token and testluser is different user, verify request was added
-        log.info("Getting review requests")
-        requested_users, _ = gh_pr2.get_review_requests()
-        log.info(f"Requested users: {[u.login for u in requested_users]}")
-        requested_logins = [u.login.lower() for u in requested_users]
-        log.info(f"Requested logins: {requested_logins}")
-        assert "testluser" in requested_logins, "Second PR should have testluser reviewer since they're a different user"
-        
-        log.info("Successfully verified testluser review handling")
+        log.info("Successfully verified testluser review handling for both PRs")
 
     finally:
         # Change back to original directory
