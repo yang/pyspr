@@ -17,11 +17,8 @@ logger = logging.getLogger(__name__)
 
 def pytest_configure(config):
     """Configure pytest."""
-    # Set SPR_MOCK_GITHUB=true by default
-    if "SPR_USE_REAL_GITHUB" not in os.environ:
-        os.environ["SPR_USE_REAL_GITHUB"] = "false"
-        logger.info("Set SPR_USE_REAL_GITHUB=false (default)")
-    
-    # Log if we're using real GitHub
-    if os.environ.get("SPR_USE_REAL_GITHUB", "").lower() == "true":
+    # Log whether we're using mock or real GitHub based on the actual controlling variable
+    if os.environ.get("SPR_USING_MOCK_GITHUB", "").lower() == "false":
         logger.warning("Using REAL GitHub API - tests may be slow or fail with API rate limits")
+    else:
+        logger.info("Using MOCK GitHub (default)")
