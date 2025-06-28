@@ -8,6 +8,7 @@ from github.Repository import Repository
 from github.PullRequest import PullRequest as PyGithubPullRequest
 from github.NamedUser import NamedUser
 from github.AuthenticatedUser import AuthenticatedUser
+from github.Team import Team
 from github.GithubObject import NotSet
 
 from . import (
@@ -15,6 +16,7 @@ from . import (
     GitHubRepoProtocol, 
     GitHubPullRequestProtocol,
     GitHubUserProtocol,
+    GitHubTeamProtocol,
     GitHubRequester,
     GraphQLResponseType,
     GitHubRefProtocol,
@@ -35,6 +37,24 @@ class PyGithubUserAdapter(GitHubUserProtocol):
     def login(self) -> str:
         """Get the user's login name."""
         return self._user.login
+
+
+class PyGithubTeamAdapter(GitHubTeamProtocol):
+    """Adapter for PyGithub Team objects."""
+    
+    def __init__(self, team: Team) -> None:
+        """Initialize with a PyGithub Team object."""
+        self._team = team
+    
+    @property
+    def name(self) -> str:
+        """Get the team's name."""
+        return self._team.name
+    
+    @property
+    def slug(self) -> str:
+        """Get the team's slug."""
+        return self._team.slug
 
 
 class PyGithubPullRequestAdapter(GitHubPullRequestProtocol):
@@ -106,11 +126,13 @@ class PyGithubPullRequestAdapter(GitHubPullRequestProtocol):
         """Get commits in the pull request."""
         return list(self._pr.get_commits())
     
-    def get_review_requests(self) -> Tuple[List[object], List[object]]:
+    def get_review_requests(self) -> Tuple[List[GitHubUserProtocol], List[GitHubTeamProtocol]]:
         """Get users and teams requested for review."""
         users, teams = self._pr.get_review_requests()
-        # Convert PaginatedList to List
-        return (list(users), list(teams))
+        # Convert PaginatedList to List and wrap in adapters
+        user_list: List[GitHubUserProtocol] = [PyGithubUserAdapter(u) for u in users]
+        team_list: List[GitHubTeamProtocol] = [PyGithubTeamAdapter(t) for t in teams]
+        return (user_list, team_list)
     
     def merge(self, commit_title: str = "", commit_message: str = "", 
              sha: str = "", merge_method: str = "merge") -> None:

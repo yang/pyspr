@@ -12,7 +12,7 @@ import os
 import tempfile
 
 from pyspr.util import ensure
-from pyspr.github import PyGithubProtocol, GitHubRepoProtocol, GitHubPullRequestProtocol, GitHubUserProtocol, GitHubCommitProtocol, GitHubRefProtocol
+from pyspr.github import PyGithubProtocol, GitHubRepoProtocol, GitHubPullRequestProtocol, GitHubUserProtocol, GitHubCommitProtocol, GitHubRefProtocol, GitHubTeamProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -288,7 +288,7 @@ class FakePullRequest:
         """Get commits in the pull request."""
         return []  # Not needed for testing
     
-    def get_review_requests(self) -> Tuple[List[object], List[object]]:
+    def get_review_requests(self) -> Tuple[List[GitHubUserProtocol], List[GitHubTeamProtocol]]:
         """Get users and teams requested for review."""
         # Always reload state first to ensure we have the latest data
         if self.data_record.github_ref:
@@ -303,7 +303,7 @@ class FakePullRequest:
                 self.data_record.reviewers = loaded_pr.data_record.reviewers.copy()
             
         # Convert reviewer login strings to user objects
-        requested_users: List[object] = []
+        requested_users: List[GitHubUserProtocol] = []
         logger.info(f"PR #{self.number} has reviewers: {self.data_record.reviewers}")
         if self.data_record.github_ref and self.data_record.reviewers:
             for reviewer_login in self.data_record.reviewers:
@@ -314,7 +314,8 @@ class FakePullRequest:
                     logger.warning(f"Failed to create user for reviewer: {reviewer_login}")
         
         logger.info(f"Returning requested users for PR #{self.number}: {len(requested_users)} users")
-        return requested_users, []  # No teams for testing
+        teams: List[GitHubTeamProtocol] = []  # No teams for testing
+        return requested_users, teams
     
     def create_review_request(self, reviewers: List[str]) -> None:
         """Request reviews from users or teams."""

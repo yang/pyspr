@@ -68,6 +68,19 @@ class GitHubUserProtocol(Protocol):
         ...
 
 @runtime_checkable
+class GitHubTeamProtocol(Protocol):
+    """Protocol for GitHub team objects (real or fake)."""
+    @property
+    def name(self) -> str:
+        """Get the team's name."""
+        ...
+    
+    @property
+    def slug(self) -> str:
+        """Get the team's slug."""
+        ...
+
+@runtime_checkable
 class GitHubCommitDetailProtocol(Protocol):
     """Protocol for commit detail object with message."""
     @property
@@ -171,7 +184,7 @@ class GitHubPullRequestProtocol(Protocol):
         """Get commits in the pull request."""
         ...
     
-    def get_review_requests(self) -> tuple[List[object], List[object]]:
+    def get_review_requests(self) -> tuple[List[GitHubUserProtocol], List[GitHubTeamProtocol]]:
         """Get users and teams requested for review."""
         ...
     

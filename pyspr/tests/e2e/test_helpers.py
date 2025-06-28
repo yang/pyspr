@@ -8,11 +8,14 @@ import logging
 from dataclasses import dataclass
 import pytest
 from _pytest.fixtures import FixtureRequest
-from typing import Generator, List, Tuple, Optional, Union, Any, Callable
+from typing import Generator, List, Tuple, Optional, Union, Any, Callable, TYPE_CHECKING
 
 from pyspr.config import Config
 from pyspr.git import RealGit
 from pyspr.github import GitHubClient, PullRequest
+
+if TYPE_CHECKING:
+    from pyspr.github import GitHubPullRequestProtocol
 
 log = logging.getLogger(__name__)
 
@@ -129,7 +132,7 @@ class RepoContext:
         except Exception as e:
             log.error(f"Failed to dump PR state: {e}")
 
-    def dump_review_requests(self, pr: Any) -> None:
+    def dump_review_requests(self, pr: 'GitHubPullRequestProtocol') -> None:
         """Dump review requests for a PR."""
         try:
             requested_users, requested_teams = pr.get_review_requests()

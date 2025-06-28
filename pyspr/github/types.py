@@ -92,21 +92,6 @@ def parse_pr_node(node: Dict[str, object]) -> Optional[PRNode]:
     except Exception:
         return None
 
-def parse_pr_nodes(nodes: object) -> List[PRNode]:
-    """Parse nodes to List[PRNode] with validation."""
-    valid_nodes: List[PRNode] = []
-    if not isinstance(nodes, list):
-        return valid_nodes
-    nodes_list: List[Dict[str, object]] = nodes
-    for node in nodes_list:
-        try:
-            parsed = parse_pr_node(node)
-            if parsed:
-                valid_nodes.append(parsed)
-        except Exception:
-            continue
-    return valid_nodes
-
 class PyGithubRequesterInternal(Protocol):
     """Protocol for PyGithub's internal requester object."""
     def requestJsonAndCheck(
