@@ -15,6 +15,7 @@ from typing import Dict, Generator, List, Optional, Set, Tuple, Union
 import pytest
 
 from pyspr.tests.e2e.test_helpers import RepoContext, run_cmd
+from pyspr.tests.e2e.decorators import run_twice_in_mock_mode
 from pyspr.config import Config
 from pyspr.git import RealGit
 from pyspr.github import GitHubClient, PullRequest, GitHubInfo
@@ -35,6 +36,7 @@ log.addHandler(handler)
 log.setLevel(logging.INFO)
 log.propagate = True  # Allow logs to propagate to pytest
 
+@run_twice_in_mock_mode
 def test_delete_insert(test_repo_ctx: RepoContext) -> None:
     """Test that creates four commits, runs update, then recreates commits but skips the second one,
     and verifies PR state after each update, including verifying PR hashes match local commit hashes."""
@@ -147,6 +149,7 @@ def test_delete_insert(test_repo_ctx: RepoContext) -> None:
     log.info(f"\nVerified PRs after removing commit2 and adding c3.5: #{pr1_num} -> #{pr3_num} -> #{pr35.number} -> #{pr4_num}")
     log.info(f"PR2 #{pr2_num} correctly closed")
 
+@run_twice_in_mock_mode
 def test_wip_behavior(test_repo_ctx: RepoContext, caplog: pytest.LogCaptureFixture) -> None:
     """Test that WIP commits behave as expected:
     - Regular commits before WIP are converted to PRs
@@ -260,6 +263,7 @@ def test_wip_behavior(test_repo_ctx: RepoContext, caplog: pytest.LogCaptureFixtu
     assert pr2.base_ref is not None and pr2.base_ref.startswith("spr/main/"), "Second PR should target first PR's branch"
 
 
+@run_twice_in_mock_mode
 def test_reviewer_functionality(test_repo_ctx: RepoContext) -> None:
     """Test reviewer functionality, verifying:
     1. Self-review attempts are handled properly (can't review your own PR)
@@ -459,6 +463,7 @@ def test_reviewer_functionality(test_repo_ctx: RepoContext) -> None:
         # Change back to original directory
         os.chdir(original_dir)
 
+@run_twice_in_mock_mode
 def test_reorder(test_repo_ctx: RepoContext) -> None:
     """Test that creates four commits, runs update, then recreates commits but reorders c3 and c4,
     and verifies PR state after reordering."""
@@ -563,6 +568,7 @@ def test_reorder(test_repo_ctx: RepoContext) -> None:
 
 # We import test_repo_ctx and other fixtures from fixtures.py now
 @pytest.fixture
+@run_twice_in_mock_mode
 def test_repo() -> Generator[Tuple[str, str, str, str], None, None]:
     """Regular test repo fixture using yang/teststack with mock or real GitHub."""
     yield from create_test_repo("yang", "teststack")
@@ -731,11 +737,19 @@ def _run_merge_test(
             assert pr.number in prs_by_num, f"PR #{pr.number} should remain open"
 
 def test_merge_workflow(test_repo_ctx: RepoContext) -> None:
-    """Test full merge workflow with real PRs."""
+    """Test full merge workflow with real PRs.
+    
+    Note: This test is not compatible with run_twice_in_mock_mode decorator because:
+    - The test requires local commits to match PRs for merging
+    - The decorator resets local commits on the second run
+    - Without local commits, github.get_info() returns no PRs
+    - The merge functionality cannot be tested without the PR data
+    """
     _run_merge_test(test_repo_ctx, False, 3)
 
 # We import test_mq_repo_ctx from fixtures.py now
 
+@run_twice_in_mock_mode
 def test_merge_queue_workflow(test_mq_repo_ctx: RepoContext) -> None:
     """Test merge queue workflow with real PRs."""
     _run_merge_test(test_mq_repo_ctx, True, 2)
@@ -744,10 +758,12 @@ def test_partial_merge_workflow(test_repo_ctx: RepoContext) -> None:
     """Test partial merge workflow, merging only 2 of 3 PRs."""
     _run_merge_test(test_repo_ctx, False, 3, count=2)
 
+@run_twice_in_mock_mode
 def test_partial_merge_queue_workflow(test_mq_repo_ctx: RepoContext) -> None:
     """Test partial merge queue workflow, merging only 2 of 3 PRs to queue."""
     _run_merge_test(test_mq_repo_ctx, True, 3, count=2)
 
+@run_twice_in_mock_mode
 def test_replace_commit(test_repo_ctx: RepoContext) -> None:
     """Test replacing a commit in the middle of stack with new commit.
     
@@ -1081,6 +1097,7 @@ def test_update_after_merge(test_repo_ctx: RepoContext) -> None:
     
     log.info(f"Verified remaining PR #{remaining_pr.number} targeting main")
 
+@run_twice_in_mock_mode
 def test_no_rebase_pr_stacking(test_repo_ctx: RepoContext) -> None:
     """Test stacking new PRs on top without changing earlier PRs using --no-rebase.
 
@@ -1371,6 +1388,7 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
     assert remaining_prs[pr2a.number] == "main", f"PR2A should target main, got {remaining_prs[pr2a.number]}"
     assert remaining_prs[pr2b.number] == f"spr/main/{c2a_id}", f"PR2B should target PR2A, got {remaining_prs[pr2b.number]}"
 
+@run_twice_in_mock_mode
 def test_breakup_command(test_repo_ctx: RepoContext) -> None:
     """Test the breakup command creates independent branches/PRs."""
     ctx = test_repo_ctx
@@ -1552,6 +1570,7 @@ def test_breakup_with_existing_prs(test_repo_ctx: RepoContext) -> None:
     
     log.info(f"Success: Both commits reused their PRs - PR #{pr2.number} and PR #{pr3.number}")
 
+@run_twice_in_mock_mode
 def test_breakup_pretend_mode(test_repo_ctx: RepoContext, capsys: pytest.CaptureFixture[str]) -> None:
     """Test breakup command in pretend mode."""
     ctx = test_repo_ctx
@@ -1688,6 +1707,7 @@ def test_breakup_preserves_unchanged_commit_hashes(test_repo_ctx: RepoContext) -
         f"Output should indicate branch has same changes despite base change"
 
 
+@run_twice_in_mock_mode
 def test_breakup_pr_already_exists_error(test_repo_ctx: RepoContext) -> None:
     """Test that breakup handles 'PR already exists' GitHub API error correctly."""
     ctx = test_repo_ctx
@@ -1733,6 +1753,7 @@ def test_breakup_pr_already_exists_error(test_repo_ctx: RepoContext) -> None:
     log.info("Successfully verified breakup handles existing PRs without creating duplicates")
 
 
+@run_twice_in_mock_mode
 def test_analyze(test_repo_ctx: RepoContext) -> None:
     """Test the analyze command that identifies independent commits."""
     log.info("=== TEST ANALYZE STARTED ===")
@@ -1796,6 +1817,7 @@ def test_analyze(test_repo_ctx: RepoContext) -> None:
     log.info("=== TEST ANALYZE COMPLETED SUCCESSFULLY ===")
 
 
+@run_twice_in_mock_mode
 def test_analyze_no_commits(test_repo_ctx: RepoContext) -> None:
     """Test analyze command with no commits."""
     log.info("=== TEST ANALYZE NO COMMITS STARTED ===")
@@ -1809,6 +1831,7 @@ def test_analyze_no_commits(test_repo_ctx: RepoContext) -> None:
     log.info("=== TEST ANALYZE NO COMMITS COMPLETED SUCCESSFULLY ===")
 
 
+@run_twice_in_mock_mode
 def test_analyze_only_wip(test_repo_ctx: RepoContext) -> None:
     """Test analyze command with only WIP commits."""
     log.info("=== TEST ANALYZE ONLY WIP STARTED ===")
