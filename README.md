@@ -86,6 +86,27 @@ See the spr docs for better docs, but a tldr:
 
 Use `-r` to tag reviewers.
 
+## Running tests in parallel
+
+To run e2e tests with parallelization using pytest-xdist:
+
+```bash
+# Auto-detect number of CPU cores
+rye run pytest -p xdist -n auto -v test_e2e.py
+
+# Fixed number of workers
+rye run pytest -p xdist -n 4 -v test_e2e.py
+
+# Run specific test pattern with parallelization
+rye run pytest -p xdist -n 2 -v test_e2e.py -k "delete"
+```
+
+Additional useful options:
+- `--dist loadscope`: Groups tests by module/class for better test isolation
+- `--dist worksteal`: Dynamic scheduling (better for uneven test durations)
+- `-x/--maxfail=1`: Stop after first failure
+- `--tb=short`: Shorter tracebacks
+
 ## Gotchas
 
 (The fix for this is not implemented so for now please avoid reordering....)
