@@ -38,71 +38,112 @@ def create_mock_repo_context(owner: str, name: str, test_name: str) -> Generator
     tmpdir = None
     
     try:
-        # Use manual temporary directory to prevent cleanup so we can debug the state file
-        tmpdir = tempfile.mkdtemp(prefix="pyspr_test_")
-        logger.info(f"Using temporary directory: {tmpdir}")
+        # Check if we should preserve state between runs
+        preserve_state = os.environ.get("SPR_PRESERVE_FAKE_GITHUB_STATE", "").lower() == "true"
+        
+        if preserve_state:
+            # Use a persistent directory based on test name
+            tmpdir = os.path.join(tempfile.gettempdir(), f"pyspr_test_persistent_{test_name}")
+            if not os.path.exists(tmpdir):
+                os.makedirs(tmpdir)
+            logger.info(f"Using PERSISTENT directory for state preservation: {tmpdir}")
+        else:
+            # Use manual temporary directory to prevent cleanup so we can debug the state file
+            tmpdir = tempfile.mkdtemp(prefix="pyspr_test_")
+            logger.info(f"Using temporary directory: {tmpdir}")
         
         # Create a bare repository that will serve as our remote
         remote_dir = os.path.join(tmpdir, "remote.git")
-        os.makedirs(remote_dir)
-        run_cmd(f"git init --bare {remote_dir}")
-        
-        # Create a separate directory for our working repository
         repo_dir = os.path.join(tmpdir, name)
-        os.mkdir(repo_dir)
-        os.chdir(repo_dir)
-        logger.info(f"Changed to repository directory: {repo_dir}")
         
-        # Initialize git and set the remote
-        run_cmd("git init")
+        # Check if this is a second run with existing state
+        is_second_run = preserve_state and os.path.exists(repo_dir) and os.path.exists(remote_dir)
+        
+        if is_second_run:
+            logger.info(f"Reusing existing repository at {repo_dir}")
+            os.chdir(repo_dir)
+            # Reset to main branch for a clean start
+            run_cmd("git checkout main")
+            run_cmd("git pull origin main")
+        else:
+            # First run or non-persistent mode - create fresh repos
+            if not os.path.exists(remote_dir):
+                os.makedirs(remote_dir)
+                run_cmd(f"git init --bare {remote_dir}")
+            
+            if not os.path.exists(repo_dir):
+                os.mkdir(repo_dir)
+            os.chdir(repo_dir)
+            logger.info(f"Changed to repository directory: {repo_dir}")
+            
+            # Initialize git and set the remote
+            run_cmd("git init")
+            file_remote_url = f"file://{remote_dir}"
+            run_cmd(f"git remote add origin {file_remote_url}")
+        
+        if not is_second_run:
+            # Add an initial commit and push to establish main branch
+            run_cmd("git config user.name 'Test User'")
+            run_cmd("git config user.email 'test@example.com'")
+            
+            # Create initial file
+            with open("README.md", "w") as f:
+                f.write(f"# {name} test repository\n\nUsed for automated testing.")
+            
+            # Commit and push
+            run_cmd("git add README.md")
+            run_cmd("git commit -m 'Initial commit'")
+            
+            # Create and checkout main branch
+            run_cmd("git branch -M main")
+            run_cmd("git push -u origin main")
+        
+        # Always need file_remote_url
         file_remote_url = f"file://{remote_dir}"
-        run_cmd(f"git remote add origin {file_remote_url}")
         
-        # Add an initial commit and push to establish main branch
-        run_cmd("git config user.name 'Test User'")
-        run_cmd("git config user.email 'test@example.com'")
+        if not is_second_run:
+            # Create a .spr.yaml file in the repo to ensure config is read by subprocesses
+            config_dict = {
+                'repo': {
+                    'github_remote': 'origin',
+                    'github_branch': 'main',
+                    'github_branch_target': 'main',
+                    'github_repo_owner': owner,
+                    'github_repo_name': name,
+                    'use_mock_github': True,
+                    'mock_remote_url': file_remote_url
+                },
+                'user': {}
+            }
+            
+            # Write .spr.yaml file
+            import yaml
+            with open('.spr.yaml', 'w') as f:
+                yaml.dump(config_dict, f)
+            
+            # Add .spr.yaml to git and push to main
+            run_cmd("git add .spr.yaml")
+            run_cmd("git commit -m 'Add .spr.yaml for testing'")
+            run_cmd("git push origin main")
+        else:
+            # Load existing config
+            import yaml
+            with open('.spr.yaml', 'r') as f:
+                config_dict = yaml.safe_load(f)
         
-        # Create initial file
-        with open("README.md", "w") as f:
-            f.write(f"# {name} test repository\n\nUsed for automated testing.")
-        
-        # Commit and push
-        run_cmd("git add README.md")
-        run_cmd("git commit -m 'Initial commit'")
-        
-        # Create and checkout main branch
-        run_cmd("git branch -M main")
-        run_cmd("git push -u origin main")
-        
-        # Create a .spr.yaml file in the repo to ensure config is read by subprocesses
-        config_dict = {
-            'repo': {
-                'github_remote': 'origin',
-                'github_branch': 'main',
-                'github_branch_target': 'main',
-                'github_repo_owner': owner,
-                'github_repo_name': name,
-                'use_mock_github': True,
-                'mock_remote_url': file_remote_url
-            },
-            'user': {}
-        }
-        
-        # Write .spr.yaml file
-        import yaml
-        with open('.spr.yaml', 'w') as f:
-            yaml.dump(config_dict, f)
-        
-        # Add .spr.yaml to git and push to main
-        run_cmd("git add .spr.yaml")
-        run_cmd("git commit -m 'Add .spr.yaml for testing'")
-        run_cmd("git push origin main")
+        if is_second_run:
+            # For second run, create a new test branch with different name
+            test_branch = f"test-spr-run2-{uuid.uuid4().hex[:7]}"
+            logger.info(f"Second run: using new test branch {test_branch}")
         
         # Create test branch from updated main
         run_cmd(f"git checkout -b {test_branch}")
         run_cmd(f"git push -u origin {test_branch}")
         
-        # Create local branch for tests
+        # Create or reset local branch for tests
+        if is_second_run:
+            # Delete old test_local if it exists
+            run_cmd("git branch -D test_local || true")
         run_cmd("git checkout -b test_local")
         
         repo_dir = os.path.abspath(os.getcwd())
