@@ -522,7 +522,7 @@ class FakeRepository:
                (not state or pr.state == state) and \
                (not head or pr.head.ref == head) and \
                (not base or pr.base.ref == base):
-                result.append(cast(GitHubPullRequestProtocol, pr))
+                result.append(pr)
         
         return result
         
@@ -616,7 +616,7 @@ class FakeRepository:
         else:
             logger.warning("Cannot save state after creating PR - github_ref is None")
         
-        return cast(GitHubPullRequestProtocol, pr)
+        return pr
 
 def get_commit_info(ref: str, remote_path: Path) -> Tuple[str, str, str]:
     """Get commit info (id, hash, subject) for a given ref from the remote repository."""
@@ -670,15 +670,22 @@ class FakeRequester:
     def github_ref(self) -> 'FakeGithub':
         return ensure(self.maybe_github_ref)
     
-    def requestJsonAndCheck(self, method: str, url: str, input: Optional[Dict[str, Any]] = None) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    def requestJsonAndCheck(
+        self, 
+        verb: str, 
+        url: str, 
+        parameters: Optional[Dict[str, object]] = None,
+        headers: Optional[Dict[str, str]] = None, 
+        input: Optional[Dict[str, object]] = None
+    ) -> Tuple[Dict[str, object], Dict[str, object]]:
         """Handle GraphQL requests."""
-        if method == "POST" and url == "https://api.github.com/graphql" and input:
+        if verb == "POST" and url == "https://api.github.com/graphql" and input:
             return self._handle_graphql(input)
         
         # Default empty response
         return ({}, {})
     
-    def _handle_graphql(self, input: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    def _handle_graphql(self, input: Dict[str, object]) -> Tuple[Dict[str, object], Dict[str, object]]:
         """Handle GraphQL query."""
         # Always reload state first
         self.github_ref.load_state()
@@ -687,7 +694,7 @@ class FakeRequester:
         _variables = input.get("variables", {})
         
         # Default empty response structure
-        response: Dict[str, Dict[str, Dict[str, Dict[str, bool | None] | List[Dict[str, Any]]]]] = {
+        response: Dict[str, object] = {
             "data": {
                 "search": {
                     "pageInfo": {
@@ -700,7 +707,7 @@ class FakeRequester:
         }
         
         # For our tests, we just need to build a response with open PRs
-        pr_nodes: List[Dict[str, Any]] = []
+        pr_nodes: List[Dict[str, object]] = []
         
         # Get all open PRs - debug dictionary contents
         logger.debug(f"GraphQL request - PR dictionary has {len(self.github_ref.pull_requests)} entries")
@@ -714,7 +721,7 @@ class FakeRequester:
             logger.debug(f"Checking PR with key {key}: state={pr.state}, title={pr.title}")
             if pr.state == "open":
                 # Build PR node for response
-                pr_node: Dict[str, Any] = {
+                pr_node: Dict[str, object] = {
                     "id": f"pr_{pr.number}",
                     "number": pr.number,
                     "title": pr.title,
@@ -744,7 +751,9 @@ class FakeRequester:
                 pr_nodes.append(pr_node)
         
         # Add PR nodes to response
-        response["data"]["search"]["nodes"] = pr_nodes
+        # Need to cast to manipulate the dict
+        response_data = cast(Dict[str, Dict[str, Dict[str, object]]], response)
+        response_data["data"]["search"]["nodes"] = pr_nodes
         
         # Log for debugging
         logger.info(f"GraphQL returned {len(pr_nodes)} open PRs (newest first)")
@@ -962,12 +971,12 @@ class FakeGithub(PyGithubProtocol):
         # If repo_name provided, use composite key
         composite_key = f"{repo_name}:{number}" if repo_name else None
         if composite_key and composite_key in self.pull_requests:
-            return cast(GitHubPullRequestProtocol, self.pull_requests[composite_key])
+            return self.pull_requests[composite_key]
         
         # If specific repository not provided, look through all PRs to find one with matching number
         for _, pr in self.pull_requests.items():
             if pr.number == number:
-                return cast(GitHubPullRequestProtocol, pr)
+                return pr
                 
         raise ValueError(f"Pull request #{number} not found")
     

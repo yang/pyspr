@@ -406,8 +406,7 @@ class GitHubClient:
 
             # Single query (no pagination for now)
             from typing import cast
-            # Safely access private requester with typings
-            # Use getattr to access private attribute without needing Any
+            # Access private requester - need cast since it's not part of the protocol
             req = cast(GitHubRequester, getattr(self.client, '_Github__requester'))
             
             # Use protocol-defined response type
@@ -840,7 +839,7 @@ class GitHubClient:
 
     def format_body(self, commit: Commit, stack: List[PullRequest], is_breakup: bool = False) -> str:
         """Format PR body with stack info."""
-        body = commit.body if hasattr(commit, 'body') and commit.body else ""
+        body = commit.body if commit.body else ""
         body = body.strip()
 
         # For breakup PRs, just return the body without stack info
