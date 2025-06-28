@@ -1120,11 +1120,23 @@ def test_no_rebase_pr_stacking(test_repo_ctx: RepoContext) -> None:
     pr1_number = pr1.number
     log.info(f"Created PR #{pr1_number} with commit {pr1.commit.commit_hash[:8]}")
 
-    # Create second commit
+    # Create second commit with commit-id already included
     log.info("\nCreating second commit...")
-    ctx.make_commit("nr_test2.txt", "Second commit", "Second commit")
+    # Generate a commit-id
+    import uuid
+    commit_id = str(uuid.uuid4())[:8]
+    
+    # Create the commit with commit-id in the message
+    file_path = os.path.join(repo_dir, "nr_test2.txt")
+    with open(file_path, "w") as f:
+        f.write("nr_test2.txt\nSecond commit\n")
+    run_cmd("git add nr_test2.txt")
+    # Include commit-id in the commit message so it doesn't need to be added later
+    full_msg = f"Second commit [test-tag:{ctx.tag}]\n\ncommit-id:{commit_id}"
+    run_cmd(f'git commit -m "{full_msg}"')
+    
     c2_hash = git_cmd.must_git("rev-parse HEAD").strip()
-    log.info(f"Second commit: {c2_hash[:8]}")
+    log.info(f"Second commit: {c2_hash[:8]} (with commit-id: {commit_id})")
 
     # Create .spr.yaml with noRebase: true
     import yaml  # Import needed only in this test
