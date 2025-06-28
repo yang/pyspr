@@ -736,6 +736,7 @@ def _run_merge_test(
         for pr in to_remain:
             assert pr.number in prs_by_num, f"PR #{pr.number} should remain open"
 
+@run_twice_in_mock_mode
 def test_merge_workflow(test_repo_ctx: RepoContext) -> None:
     """Test full merge workflow with real PRs.
     

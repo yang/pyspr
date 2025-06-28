@@ -71,6 +71,9 @@ def run_twice_in_mock_mode(func: F) -> F:
             # Go back to main branch
             run_cmd("git checkout main")
             
+            # Update main to match origin/main (including merged PRs from first run)
+            run_cmd("git reset --hard origin/main")
+            
             # Delete the test branch
             run_cmd(f"git branch -D {current_branch} || true")
             
