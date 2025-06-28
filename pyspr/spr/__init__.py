@@ -797,22 +797,42 @@ class StackedPR:
                         branch_exists = False
                         existing_hash = None
                     
-                    # Compare trees instead of commit hashes to detect actual content changes
+                    # Compare trees - but also check if rebasing the old commit would produce the same result
                     if branch_exists:
-                        # Get tree SHAs to compare actual content
-                        existing_tree = self.git_cmd.must_git(f"rev-parse {existing_hash}^{{tree}}").strip()
+                        # Get tree of the newly cherry-picked commit
                         new_tree = self.git_cmd.must_git(f"rev-parse {new_commit_hash}^{{tree}}").strip()
                         
-                        if existing_tree != new_tree:
-                            # Content has changed, update the branch
-                            if self.pretend:
-                                logger.info(f"[PRETEND] Would update branch {branch_name} from {existing_hash[:8]} to {new_commit_hash[:8]}")
-                            else:
-                                self.git_cmd.must_git(f"branch -f {branch_name} {new_commit_hash}")
-                                logger.info(f"  Updated branch {branch_name}")
-                        else:
+                        # First check if trees are identical (fast path)
+                        existing_tree = self.git_cmd.must_git(f"rev-parse {existing_hash}^{{tree}}").strip()
+                        if existing_tree == new_tree:
                             # Content is identical, keep existing commit
                             logger.info(f"  Branch {branch_name} already up to date (same content)")
+                        else:
+                            # Trees differ, but the changes might still be the same
+                            # Use merge-tree to see what tree we'd get if we cherry-picked the old commit onto the new base
+                            try:
+                                # merge-tree simulates merging the commit onto the base
+                                result = self.git_cmd.must_git(f"merge-tree --write-tree {remote}/{base_branch} {existing_hash}")
+                                rebased_tree = result.strip().split('\n')[0]  # First line is the tree hash
+                                
+                                if rebased_tree == new_tree:
+                                    # Would produce the same result - no need to update
+                                    logger.info(f"  Branch {branch_name} already up to date (same changes)")
+                                else:
+                                    # Actually different changes
+                                    if self.pretend:
+                                        logger.info(f"[PRETEND] Would update branch {branch_name} from {existing_hash[:8]} to {new_commit_hash[:8]}")
+                                    else:
+                                        self.git_cmd.must_git(f"branch -f {branch_name} {new_commit_hash}")
+                                        logger.info(f"  Updated branch {branch_name}")
+                            except Exception as e:
+                                # If merge-tree fails, fall back to updating the branch
+                                logger.debug(f"merge-tree failed: {e}, updating branch")
+                                if self.pretend:
+                                    logger.info(f"[PRETEND] Would update branch {branch_name} from {existing_hash[:8]} to {new_commit_hash[:8]}")
+                                else:
+                                    self.git_cmd.must_git(f"branch -f {branch_name} {new_commit_hash}")
+                                    logger.info(f"  Updated branch {branch_name}")
                     else:
                         if self.pretend:
                             logger.info(f"[PRETEND] Would create branch {branch_name} at {new_commit_hash[:8]}")

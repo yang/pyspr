@@ -1602,7 +1602,7 @@ def test_breakup_preserves_unchanged_commit_hashes(test_repo_ctx: RepoContext) -
     initial_second_branch_sha = ctx.git_cmd.must_git(f"rev-parse {second_branch_name}").strip()
     log.info(f"Initial SHA for second commit branch {second_branch_name}: {initial_second_branch_sha}")
     
-    # Amend only the first commit
+    # Test 1: Amend only the first commit (tree comparison test)
     run_cmd("git checkout HEAD~1")
     existing_msg = ctx.git_cmd.must_git("log -1 --format=%B").strip()
     run_cmd("echo 'updated' >> file1.txt")
@@ -1631,6 +1631,61 @@ def test_breakup_preserves_unchanged_commit_hashes(test_repo_ctx: RepoContext) -
         f"Output should indicate branch has same content"
     
     log.info("Successfully verified that unchanged commit preserved its hash")
+    
+    # Test 2: Test when base changes but diff remains the same
+    # First, go back to the original main branch
+    run_cmd("git checkout main")
+    run_cmd("git pull origin main")
+    
+    # Add a line at the beginning of README.md (a file that exists on main)
+    run_cmd("echo 'line at beginning' | cat - README.md > temp && mv temp README.md")
+    run_cmd("git add README.md")
+    run_cmd("git commit -m 'Add line at beginning of README'")
+    run_cmd("git push origin main")
+    
+    # Create a simple commit that adds a new file
+    ctx.make_commit("file3.txt", "content3", "Third commit")
+    
+    # Run breakup to create branch for third commit
+    run_cmd("pyspr breakup")
+    
+    # Get info about the third commit's branch
+    info = ctx.github.get_info(None, ctx.git_cmd)
+    third_pr = next((pr for pr in info.pull_requests if "Third commit" in pr.title), None)
+    assert third_pr is not None, "Should find PR for third commit"
+    third_branch_name = third_pr.from_branch
+    third_branch_sha = ctx.git_cmd.must_git(f"rev-parse {third_branch_name}").strip()
+    log.info(f"Initial SHA for third commit branch {third_branch_name}: {third_branch_sha}")
+    
+    # Now update main again (this simulates base moving forward)
+    run_cmd("git checkout main")
+    run_cmd("git pull origin main")
+    run_cmd("echo 'another line at beginning' | cat - README.md > temp && mv temp README.md")
+    run_cmd("git add README.md")
+    run_cmd("git commit -m 'Add another line at beginning of README'")
+    run_cmd("git push origin main")
+    
+    # Go back to test_local and rebase to get the new main
+    run_cmd("git checkout test_local")
+    run_cmd("git fetch")
+    run_cmd("git rebase origin/main")
+    
+    # Run breakup again - the diff for third commit is the same (adding file3.txt)
+    output = run_cmd("pyspr breakup -v 2>&1", cwd=ctx.repo_dir)
+    log.info(f"Breakup output after base change:\n{output}")
+    
+    # Get the SHA after breakup
+    final_third_branch_sha = ctx.git_cmd.must_git(f"rev-parse {third_branch_name}").strip()
+    log.info(f"Final SHA for third commit branch {third_branch_name}: {final_third_branch_sha}")
+    
+    # With the new behavior, the branch should NOT be updated since the diff is the same
+    assert final_third_branch_sha == third_branch_sha, \
+        f"Third commit branch should not be updated when only base changed. " \
+        f"Initial: {third_branch_sha}, Final: {final_third_branch_sha}"
+    
+    # The output should indicate the branch wasn't updated
+    assert "already up to date (same changes)" in output or "already up to date (same content)" in output, \
+        f"Output should indicate branch has same changes despite base change"
 
 
 def test_breakup_pr_already_exists_error(test_repo_ctx: RepoContext) -> None:
