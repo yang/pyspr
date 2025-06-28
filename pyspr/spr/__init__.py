@@ -998,3 +998,125 @@ class StackedPR:
             print(f"\nSkipped {len(skipped_commits)} commits that depend on earlier commits:")
             for commit in skipped_commits:
                 print(f"  {commit.commit_hash[:8]} {commit.subject}")
+
+    def analyze(self, ctx: StackedPRContextProtocol) -> None:
+        """Analyze which commits can be independently submitted without stacking."""
+        from ..pretty import print_header
+        
+        # Get local commits
+        local_commits = get_local_commit_stack(self.config, self.git_cmd)
+        
+        if not local_commits:
+            print("No commits to analyze")
+            return
+            
+        # Filter out WIP commits
+        non_wip_commits = [c for c in local_commits if not c.wip]
+        
+        if not non_wip_commits:
+            print("No non-WIP commits to analyze")
+            return
+            
+        print_header("Commit Stack Analysis", use_emoji=True)
+        print(f"\nAnalyzing {len(non_wip_commits)} commits for independent submission...")
+        
+        # Get the base branch from config
+        base_branch = self.config.repo.get('github_branch', 'main')
+        remote = self.config.repo.get('github_remote', 'origin')
+        
+        # Results tracking
+        independent_commits: List[Commit] = []
+        dependent_commits: List[Tuple[Commit, str]] = []  # (commit, reason)
+        
+        # Create a temporary directory for patch testing
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Process each commit
+            for i, commit in enumerate(non_wip_commits):
+                logger.debug(f"Analyzing commit {i+1}/{len(non_wip_commits)}: {commit.commit_hash[:8]} {commit.subject}")
+                
+                # Generate patch for this commit
+                patch_file = f"{tmpdir}/{commit.commit_id}.patch"
+                try:
+                    # Create patch from the commit
+                    self.git_cmd.must_git(f"format-patch -1 {commit.commit_hash} -o {tmpdir}")
+                    
+                    # Find the generated patch file (git format-patch creates numbered files)
+                    import os
+                    patch_files = [f for f in os.listdir(tmpdir) if f.endswith('.patch')]
+                    if not patch_files:
+                        dependent_commits.append((commit, "Failed to generate patch"))
+                        continue
+                    
+                    # Test if patch applies cleanly to base branch
+                    try:
+                        # Save current state
+                        current_branch = self.git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
+                        current_head = self.git_cmd.must_git("rev-parse HEAD").strip()
+                        
+                        # Create a temporary test branch
+                        test_branch = f"pyspr-analyze-test-{commit.commit_id}"
+                        try:
+                            self.git_cmd.must_git(f"branch -D {test_branch}")
+                        except:
+                            pass  # Branch doesn't exist
+                        
+                        # Checkout base branch in detached HEAD to avoid modifying it
+                        self.git_cmd.must_git(f"checkout -q {remote}/{base_branch}")
+                        
+                        # Try to apply the patch
+                        patch_path = os.path.join(tmpdir, patch_files[0])
+                        try:
+                            # Use --check to test without actually applying
+                            self.git_cmd.must_git(f"apply --check {patch_path}")
+                            independent_commits.append(commit)
+                        except Exception as e:
+                            # Patch doesn't apply cleanly
+                            error_msg = str(e)
+                            if "patch does not apply" in error_msg:
+                                dependent_commits.append((commit, "Conflicts with base branch"))
+                            else:
+                                dependent_commits.append((commit, f"Cannot apply: {error_msg}"))
+                        
+                        # Return to original branch
+                        self.git_cmd.must_git(f"checkout -q {current_branch}")
+                        
+                    except Exception as e:
+                        logger.debug(f"Error testing patch: {e}")
+                        dependent_commits.append((commit, f"Test failed: {str(e)}"))
+                        # Make sure we're back on the original branch
+                        try:
+                            self.git_cmd.must_git(f"checkout -q {current_branch}")
+                        except:
+                            pass
+                        
+                except Exception as e:
+                    logger.debug(f"Error generating patch: {e}")
+                    dependent_commits.append((commit, f"Failed to generate patch: {str(e)}"))
+        
+        # Print results
+        print(f"\n✅ Independent commits ({len(independent_commits)}):")
+        if independent_commits:
+            print("   These can be submitted directly to the base branch without conflicts:")
+            for commit in independent_commits:
+                print(f"   - {commit.commit_hash[:8]} {commit.subject}")
+        else:
+            print("   None")
+        
+        print(f"\n❌ Dependent commits ({len(dependent_commits)}):")
+        if dependent_commits:
+            print("   These require earlier commits or have conflicts:")
+            for commit, reason in dependent_commits:
+                print(f"   - {commit.commit_hash[:8]} {commit.subject}")
+                print(f"     Reason: {reason}")
+        else:
+            print("   None")
+        
+        # Summary
+        print(f"\nSummary:")
+        print(f"  Total commits: {len(non_wip_commits)}")
+        print(f"  Independent: {len(independent_commits)} ({len(independent_commits)*100//len(non_wip_commits) if non_wip_commits else 0}%)")
+        print(f"  Dependent: {len(dependent_commits)} ({len(dependent_commits)*100//len(non_wip_commits) if non_wip_commits else 0}%)")
+        
+        if independent_commits:
+            print(f"\nTip: You can use 'pyspr breakup' to create independent PRs for the {len(independent_commits)} independent commits.")

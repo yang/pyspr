@@ -237,6 +237,20 @@ def breakup(ctx: Context, directory: Optional[str], verbose: int, pretend: bool,
         restore_git_state(git_cmd, current_branch, current_head)
         sys.exit(1)
 
+@cli.command(name="analyze", help="Analyze which commits can be independently submitted without stacking")
+@click.option('-C', '--directory', type=click.Path(exists=True, file_okay=False, dir_okay=True),
+              help='Run as if spr was started in DIRECTORY instead of the current working directory')
+@click.option('-v', '--verbose', count=True, help="Increase verbosity (can be used multiple times for more verbosity)")
+@click.pass_context
+def analyze(ctx: Context, directory: Optional[str], verbose: int) -> None:
+    """Analyze command."""
+    from ... import setup_logging
+    setup_logging(verbose)
+    
+    config, git_cmd, github = setup_git(directory)
+    stackedpr = StackedPR(config, github, git_cmd)
+    stackedpr.analyze(ctx)
+
 
 def main() -> None:
     """Main entry point."""
