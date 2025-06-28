@@ -755,6 +755,7 @@ def test_merge_queue_workflow(test_mq_repo_ctx: RepoContext) -> None:
     """Test merge queue workflow with real PRs."""
     _run_merge_test(test_mq_repo_ctx, True, 2)
 
+@run_twice_in_mock_mode
 def test_partial_merge_workflow(test_repo_ctx: RepoContext) -> None:
     """Test partial merge workflow, merging only 2 of 3 PRs."""
     _run_merge_test(test_repo_ctx, False, 3, count=2)
@@ -906,6 +907,7 @@ def test_replace_commit(test_repo_ctx: RepoContext) -> None:
     assert pr_d.base_ref == f"spr/main/{pr1.commit.commit_id}", "New PR should target PR1" 
     assert pr3.base_ref == f"spr/main/{pr_d.commit.commit_id}", "PR3 should target new PR"
 
+@run_twice_in_mock_mode
 def test_no_rebase_functionality(test_repo_ctx: RepoContext, caplog: pytest.LogCaptureFixture, capsys: pytest.CaptureFixture[str]) -> None:
     """Test --no-rebase functionality.
     
@@ -941,8 +943,9 @@ def test_no_rebase_functionality(test_repo_ctx: RepoContext, caplog: pytest.LogC
         # Get initial commit hash
         initial_sha = git_cmd.must_git("rev-parse HEAD").strip()  # noqa
 
-        # Create test branch from initial commit 
-        run_cmd("git checkout -b test-branch")
+        # Create test branch from initial commit with unique name
+        test_branch_name = f"test-branch-{uuid.uuid4().hex[:7]}"
+        run_cmd(f"git checkout -b {test_branch_name}")
 
         # Create test commit on our branch
         branch_file = f"branch_change_{uuid.uuid4().hex[:7]}.txt"
@@ -965,7 +968,7 @@ def test_no_rebase_functionality(test_repo_ctx: RepoContext, caplog: pytest.LogC
         run_cmd('git push')
 
         # Go back to test branch
-        run_cmd("git checkout test-branch")
+        run_cmd(f"git checkout {test_branch_name}")
         
         # Get commit count before first update
         commit_count_before = len(git_cmd.must_git("log --oneline").splitlines())  # noqa
@@ -1048,6 +1051,7 @@ def test_no_rebase_functionality(test_repo_ctx: RepoContext, caplog: pytest.LogC
     finally:
         pass
 
+@run_twice_in_mock_mode
 def test_update_after_merge(test_repo_ctx: RepoContext) -> None:
     """Test update behavior after bottom PR in stack is merged.
     
@@ -1061,10 +1065,11 @@ def test_update_after_merge(test_repo_ctx: RepoContext) -> None:
     git_cmd = ctx.git_cmd
     github = ctx.github
 
-    # Create two commits
+    # Create two commits with unique filenames to avoid conflicts
     log.info("\nCreating two commits...")
-    ctx.make_commit("test1.txt", "test content 1", "First commit")
-    ctx.make_commit("test2.txt", "test content 2", "Second commit")
+    unique_suffix = str(uuid.uuid4())[:8]
+    ctx.make_commit(f"test1_{unique_suffix}.txt", "test content 1", "First commit")
+    ctx.make_commit(f"test2_{unique_suffix}.txt", "test content 2", "Second commit")
     
     # Initial update to create PRs
     log.info("Creating initial PRs...")
@@ -1451,15 +1456,17 @@ def test_breakup_command(test_repo_ctx: RepoContext) -> None:
     assert len(spr_prs) > 0, "Should have spr PRs after update"
     assert len(pyspr_prs) > 0, "Should still have pyspr PRs after update"
 
+@run_twice_in_mock_mode
 def test_breakup_with_existing_prs(test_repo_ctx: RepoContext) -> None:
     """Test breakup command creates and updates breakup PRs correctly."""
     ctx = test_repo_ctx
     
-    # Create commits
-    ctx.make_commit("file1.txt", "content1", "First commit")
+    # Create commits with unique filenames to avoid conflicts
+    unique_suffix = str(uuid.uuid4())[:8]
+    ctx.make_commit(f"file1_{unique_suffix}.txt", "content1", "First commit")
     commit1_hash = ctx.git_cmd.must_git("rev-parse HEAD").strip()
     
-    ctx.make_commit("file2.txt", "content2", "Second commit")
+    ctx.make_commit(f"file2_{unique_suffix}.txt", "content2", "Second commit")
     commit2_hash = ctx.git_cmd.must_git("rev-parse HEAD").strip()
     
     # Run breakup once - this will add commit-ids to the commits
@@ -1483,8 +1490,8 @@ def test_breakup_with_existing_prs(test_repo_ctx: RepoContext) -> None:
     run_cmd("git checkout HEAD~1")
     # Get existing commit message to preserve commit-id
     existing_msg = ctx.git_cmd.must_git("log -1 --format=%B").strip()
-    run_cmd("echo 'updated' >> file1.txt")
-    run_cmd("git add file1.txt")
+    run_cmd(f"echo 'updated' >> file1_{unique_suffix}.txt")
+    run_cmd(f"git add file1_{unique_suffix}.txt")
     # Amend but preserve the commit-id tag
     updated_msg = existing_msg.replace("First commit", "First commit - updated")
     run_cmd(f"git commit --amend -m '{updated_msg}'")
@@ -1512,64 +1519,73 @@ def test_breakup_with_existing_prs(test_repo_ctx: RepoContext) -> None:
     for pr in all_open_prs:
         log.info(f"  PR #{pr.number}: branch={pr.head.ref}, state={pr.state}")
     
-    # Filter to pyspr PRs - include all pyspr branches
+    # Filter to pyspr PRs for this test - check for test tag
     all_pyspr_prs = []
     for pr in all_open_prs:
         if pr.head.ref.startswith("pyspr/cp/main/"):
-            # Extract commit ID from branch name
-            branch_parts = pr.head.ref.split('/')
-            commit_id = branch_parts[-1] if len(branch_parts) > 3 else 'unknown'
-            
-            # Create a simple commit object
-            commit = Commit.from_strings(commit_id, pr.head.sha, pr.title)
-            
-            # Create PullRequest object that matches our test expectations
-            pr_obj = PullRequest(
-                number=pr.number,
-                commit=commit,
-                commits=[commit],
-                base_ref=pr.base.ref,
-                from_branch=pr.head.ref,
-                in_queue=False,
-                title=pr.title,
-                body=pr.body
-            )
-            all_pyspr_prs.append(pr_obj)
+            # Check if this PR belongs to our test by looking for test tag in title
+            # (body might not always have the tag, but title always does)
+            tag_to_find = f"test-tag:{ctx.tag}"
+            if tag_to_find in pr.title:
+                log.info(f"Found PR #{pr.number} with our tag")
+                # Extract commit ID from branch name
+                branch_parts = pr.head.ref.split('/')
+                commit_id = branch_parts[-1] if len(branch_parts) > 3 else 'unknown'
+                
+                # Create a simple commit object
+                commit = Commit.from_strings(commit_id, pr.head.sha, pr.title)
+                
+                # Create PullRequest object that matches our test expectations
+                pr_obj = PullRequest(
+                    number=pr.number,
+                    commit=commit,
+                    commits=[commit],
+                    base_ref=pr.base.ref,
+                    from_branch=pr.head.ref,
+                    in_queue=False,
+                    title=pr.title,
+                    body=pr.body
+                )
+                all_pyspr_prs.append(pr_obj)
     
     log.info(f"Found {len(all_pyspr_prs)} pyspr PRs total")
     for pr in all_pyspr_prs:
         log.info(f"  PR #{pr.number}: branch={pr.from_branch}, title={pr.title}")
     
-    # We expect 2 PRs total:
-    # 1. PR #2 for the first commit (reused since commit-id was preserved)
-    # 2. PR #3 for the second commit (reused since commit-id was preserved)
-    
-    assert len(all_pyspr_prs) == 2, f"Should have exactly 2 pyspr PRs total, found {len(all_pyspr_prs)}"
-    
     # Get the expected branch names from initial PRs
     initial_branches = {pr.from_branch for pr in initial_prs}
     log.info(f"Initial PR branches: {initial_branches}")
+    
+    # We expect at least 2 PRs (could be more from previous runs with run_twice)
+    # Filter to just the PRs we care about - ones that match our current commits
+    current_run_prs = []
+    for pr in all_pyspr_prs:
+        # Check if this PR's branch matches one of our initial PRs or 
+        # if its commit matches our current commits
+        if pr.from_branch in initial_branches or pr.number in initial_pr_numbers:
+            current_run_prs.append(pr)
+    
+    assert len(current_run_prs) == 2, f"Should have exactly 2 pyspr PRs for current run, found {len(current_run_prs)}"
+    all_pyspr_prs = current_run_prs  # Use filtered list for rest of test
     
     # Sort PRs by number to make it easier to identify them
     all_pyspr_prs.sort(key=lambda pr: pr.number)
     
     # Verify we have the expected PRs
-    # PR #2 should be the reused PR for the first commit (it preserved its commit-id)
-    pr2 = next((pr for pr in all_pyspr_prs if pr.number == 2), None)
-    assert pr2 is not None, "Should find PR #2"
-    assert pr2.number in initial_pr_numbers, "PR #2 should be from initial PRs"
-    assert "First commit" in pr2.title, f"PR #2 should be for first commit, got title: {pr2.title}"
-    log.info(f"First commit PR #{pr2.number} was correctly reused with branch {pr2.from_branch}")
+    # Find PR for first commit
+    pr_first = next((pr for pr in all_pyspr_prs if "First commit" in pr.title), None)
+    assert pr_first is not None, "Should find PR for first commit"
+    assert pr_first.number in initial_pr_numbers, "First commit PR should be from initial PRs"
+    log.info(f"First commit PR #{pr_first.number} was correctly reused with branch {pr_first.from_branch}")
     
-    # PR #3 should be the reused PR for the second commit (it preserved its commit-id)
-    pr3 = next((pr for pr in all_pyspr_prs if pr.number == 3), None)
-    assert pr3 is not None, "Should find PR #3"
-    assert pr3.number in initial_pr_numbers, "PR #3 should be from initial PRs"
-    assert pr3.from_branch in initial_branches, f"PR #3 should have original branch, got {pr3.from_branch}"
-    assert "Second commit" in pr3.title, f"PR #3 should be for second commit, got title: {pr3.title}"
-    log.info(f"Second commit PR #{pr3.number} was correctly reused with branch {pr3.from_branch}")
+    # Find PR for second commit
+    pr_second = next((pr for pr in all_pyspr_prs if "Second commit" in pr.title), None)
+    assert pr_second is not None, "Should find PR for second commit"
+    assert pr_second.number in initial_pr_numbers, "Second commit PR should be from initial PRs"
+    assert pr_second.from_branch in initial_branches, f"Second commit PR should have original branch, got {pr_second.from_branch}"
+    log.info(f"Second commit PR #{pr_second.number} was correctly reused with branch {pr_second.from_branch}")
     
-    log.info(f"Success: Both commits reused their PRs - PR #{pr2.number} and PR #{pr3.number}")
+    log.info(f"Success: Both commits reused their PRs - PR #{pr_first.number} and PR #{pr_second.number}")
 
 @run_twice_in_mock_mode
 def test_breakup_pretend_mode(test_repo_ctx: RepoContext, capsys: pytest.CaptureFixture[str]) -> None:
@@ -1596,13 +1612,15 @@ def test_breakup_pretend_mode(test_repo_ctx: RepoContext, capsys: pytest.Capture
     branches = run_cmd("git branch -a")
     assert "pyspr/cp/" not in branches, "Should not create branches in pretend mode"
 
+@run_twice_in_mock_mode
 def test_breakup_preserves_unchanged_commit_hashes(test_repo_ctx: RepoContext) -> None:
     """Test that breakup preserves hashes of commits that haven't changed."""
     ctx = test_repo_ctx
     
-    # Create two commits
-    ctx.make_commit("file1.txt", "content1", "First commit")
-    ctx.make_commit("file2.txt", "content2", "Second commit")
+    # Create two commits with unique filenames to avoid conflicts
+    unique_suffix = str(uuid.uuid4())[:8]
+    ctx.make_commit(f"file1_{unique_suffix}.txt", "content1", "First commit")
+    ctx.make_commit(f"file2_{unique_suffix}.txt", "content2", "Second commit")
     
     # Initial breakup
     run_cmd("pyspr breakup")
@@ -1625,8 +1643,8 @@ def test_breakup_preserves_unchanged_commit_hashes(test_repo_ctx: RepoContext) -
     # Test 1: Amend only the first commit (tree comparison test)
     run_cmd("git checkout HEAD~1")
     existing_msg = ctx.git_cmd.must_git("log -1 --format=%B").strip()
-    run_cmd("echo 'updated' >> file1.txt")
-    run_cmd("git add file1.txt")
+    run_cmd(f"echo 'updated' >> file1_{unique_suffix}.txt")
+    run_cmd(f"git add file1_{unique_suffix}.txt")
     run_cmd(f"git commit --amend -m '{existing_msg.replace('First commit', 'First commit - updated')}'")
     
     # Cherry-pick the second commit to preserve the stack
@@ -1663,8 +1681,8 @@ def test_breakup_preserves_unchanged_commit_hashes(test_repo_ctx: RepoContext) -
     run_cmd("git commit -m 'Add line at beginning of README'")
     run_cmd("git push origin main")
     
-    # Create a simple commit that adds a new file
-    ctx.make_commit("file3.txt", "content3", "Third commit")
+    # Create a simple commit that adds a new file (use same unique suffix)
+    ctx.make_commit(f"file3_{unique_suffix}.txt", "content3", "Third commit")
     
     # Run breakup to create branch for third commit
     run_cmd("pyspr breakup")
