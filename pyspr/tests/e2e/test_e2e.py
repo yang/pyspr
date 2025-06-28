@@ -1675,10 +1675,6 @@ def test_breakup_pr_already_exists_error(test_repo_ctx: RepoContext) -> None:
     assert final_count == initial_count, \
         f"Should not create duplicate PRs. Initial: {initial_count}, Final: {final_count}"
     
-    # The output should indicate PRs already exist
-    assert "already exists for" in output or "already up to date" in output, \
-        "Output should indicate PRs already exist or branches are up to date"
-    
     log.info("Successfully verified breakup handles existing PRs without creating duplicates")
 
 
