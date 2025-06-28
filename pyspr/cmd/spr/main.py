@@ -158,8 +158,10 @@ def merge(ctx: Context, directory: Optional[str], count: Optional[int], no_rebas
               help="Add the specified reviewer to newly created pull requests")
 @click.option('--count', '-c', type=int,
               help="Break up a specified number of commits from the bottom of the stack")
+@click.option('--update-only-these-ids', type=str,
+              help="Only update PRs for specific commit IDs (comma-separated)")
 @click.pass_context
-def breakup(ctx: Context, directory: Optional[str], verbose: int, pretend: bool, no_rebase: bool, reviewer: List[str], count: Optional[int]) -> None:
+def breakup(ctx: Context, directory: Optional[str], verbose: int, pretend: bool, no_rebase: bool, reviewer: List[str], count: Optional[int], update_only_these_ids: Optional[str]) -> None:
     """Breakup command."""
     from ... import setup_logging
     setup_logging(verbose)
@@ -171,7 +173,13 @@ def breakup(ctx: Context, directory: Optional[str], verbose: int, pretend: bool,
         config.user['no_rebase'] = True
     stackedpr = StackedPR(config, github, git_cmd)
     stackedpr.pretend = pretend  # Set pretend mode
-    stackedpr.breakup_pull_requests(ctx, reviewer if reviewer else None, count)
+    
+    # Parse commit IDs if provided
+    commit_ids = None
+    if update_only_these_ids:
+        commit_ids = [id.strip() for id in update_only_these_ids.split(',') if id.strip()]
+    
+    stackedpr.breakup_pull_requests(ctx, reviewer if reviewer else None, count, commit_ids)
 
 
 def main() -> None:

@@ -677,7 +677,7 @@ class StackedPR:
             pr.merged = True
             print(str(pr))
 
-    def breakup_pull_requests(self, ctx: StackedPRContextProtocol, reviewers: Optional[List[str]] = None, count: Optional[int] = None) -> None:
+    def breakup_pull_requests(self, ctx: StackedPRContextProtocol, reviewers: Optional[List[str]] = None, count: Optional[int] = None, commit_ids: Optional[List[str]] = None) -> None:
         """Break up current commit stack into independent branches/PRs."""
         from ..pretty import print_header
         
@@ -702,7 +702,25 @@ class StackedPR:
         if count is not None and count > 0:
             non_wip_commits = non_wip_commits[:count]
             
-        logger.info(f"Breaking up {len(non_wip_commits)} commits into independent branches/PRs")
+        # Filter by specific commit IDs if provided
+        if commit_ids:
+            filtered_commits = []
+            for commit in non_wip_commits:
+                # Check if commit ID starts with any of the provided IDs
+                for commit_id in commit_ids:
+                    if commit.commit_id.startswith(commit_id) or commit.commit_hash.startswith(commit_id):
+                        filtered_commits.append(commit)
+                        break
+            non_wip_commits = filtered_commits
+            
+            if not non_wip_commits:
+                logger.info(f"No commits found matching IDs: {', '.join(commit_ids)}")
+                return
+            
+        if commit_ids:
+            logger.info(f"Breaking up {len(non_wip_commits)} commits (filtered from {len(local_commits)} total) into independent branches/PRs")
+        else:
+            logger.info(f"Breaking up {len(non_wip_commits)} commits into independent branches/PRs")
         
         # Get current branch to restore at the end
         current_branch = self.git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
