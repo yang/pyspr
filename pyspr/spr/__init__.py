@@ -4,7 +4,7 @@ import concurrent.futures
 import sys
 import re
 import logging
-from typing import Dict, List, Optional, TypedDict, Sequence
+from typing import Dict, List, Optional, TypedDict, Sequence, Tuple
 import time
 from concurrent.futures import Future
 
@@ -720,7 +720,7 @@ class StackedPR:
             
         # Filter by specific commit IDs if provided
         if commit_ids:
-            filtered_commits = []
+            filtered_commits: List[Commit] = []
             for commit in non_wip_commits:
                 # Check if commit ID starts with any of the provided IDs
                 for commit_id in commit_ids:
@@ -772,10 +772,11 @@ class StackedPR:
             logger.debug(f"  Commit hash: {commit.commit_hash}")
             logger.debug(f"  Branch name: {branch_name}")
             
+            # Create a temporary branch from the base
+            temp_branch = f"pyspr-temp-{commit.commit_id}"
+            
             # Try to cherry-pick the commit onto the base branch
             try:
-                # Create a temporary branch from the base
-                temp_branch = f"pyspr-temp-{commit.commit_id}"
                 
                 # Delete the temp branch if it already exists from a previous failed run
                 try:
@@ -837,7 +838,7 @@ class StackedPR:
                                 else:
                                     # Actually different changes
                                     if self.pretend:
-                                        logger.info(f"[PRETEND] Would update branch {branch_name} from {existing_hash[:8]} to {new_commit_hash[:8]}")
+                                        logger.info(f"[PRETEND] Would update branch {branch_name} from {existing_hash[:8] if existing_hash else 'unknown'} to {new_commit_hash[:8]}")
                                     else:
                                         self.git_cmd.must_git(f"branch -f {branch_name} {new_commit_hash}")
                                         logger.info(f"  Updated branch {branch_name}")
@@ -845,7 +846,7 @@ class StackedPR:
                                 # If merge-tree fails, fall back to updating the branch
                                 logger.debug(f"merge-tree failed: {e}, updating branch")
                                 if self.pretend:
-                                    logger.info(f"[PRETEND] Would update branch {branch_name} from {existing_hash[:8]} to {new_commit_hash[:8]}")
+                                    logger.info(f"[PRETEND] Would update branch {branch_name} from {existing_hash[:8] if existing_hash else 'unknown'} to {new_commit_hash[:8]}")
                                 else:
                                     self.git_cmd.must_git(f"branch -f {branch_name} {new_commit_hash}")
                                     logger.info(f"  Updated branch {branch_name}")
@@ -889,12 +890,12 @@ class StackedPR:
                     pass
         
         # Push all created branches
-        successfully_pushed = []
-        failed_pushes = []
+        successfully_pushed: List[str] = []
+        failed_pushes: List[Tuple[str, str]] = []
         
         if created_branches and not self.pretend:
             logger.info(f"\nPushing {len(created_branches)} branches to remote...")
-            ref_names = []
+            ref_names: List[Tuple[str, str]] = []
             for branch in created_branches:
                 ref_names.append((branch, f"{branch}:refs/heads/{branch}"))
             
@@ -949,7 +950,8 @@ class StackedPR:
             pr_map: Dict[str, PullRequest] = {}
             if github_info and github_info.pull_requests:
                 for pr in github_info.pull_requests:
-                    pr_map[pr.from_branch] = pr
+                    if pr.from_branch:
+                        pr_map[pr.from_branch] = pr
             
             for branch in created_branches:
                 # Find the commit for this branch
@@ -992,18 +994,21 @@ class StackedPR:
                         logger.info(f"  Base: {base_branch}")
                     else:
                         # Create PR with base_branch as base (no stacking)
-                        pr = self.github.create_pull_request(ctx, self.git_cmd, github_info, 
-                                                           commit, None, use_breakup_branch=True)  # None for prev_commit means use base_branch
-                        logger.info(f"  Created PR #{pr.number} for {branch}")
-                        created_prs.append(pr)
-                        
-                        # Add reviewers to newly created PR
-                        if filtered_reviewers:
-                            try:
-                                self.github.add_reviewers(ctx, pr, filtered_reviewers)
-                                logger.info(f"  Added reviewers: {', '.join(filtered_reviewers)}")
-                            except Exception as e:
-                                logger.error(f"  Failed to add reviewers: {e}")
+                        if github_info:
+                            pr = self.github.create_pull_request(ctx, self.git_cmd, github_info, 
+                                                               commit, None, use_breakup_branch=True)  # None for prev_commit means use base_branch
+                            logger.info(f"  Created PR #{pr.number} for {branch}")
+                            created_prs.append(pr)
+                            
+                            # Add reviewers to newly created PR
+                            if filtered_reviewers:
+                                try:
+                                    self.github.add_reviewers(ctx, pr, filtered_reviewers)
+                                    logger.info(f"  Added reviewers: {', '.join(filtered_reviewers)}")
+                                except Exception as e:
+                                    logger.error(f"  Failed to add reviewers: {e}")
+                        else:
+                            logger.error(f"Cannot create PR for {branch}: GitHub info not available")
         
         # Summary
         print_header("Breakup Summary", use_emoji=True)
@@ -1013,8 +1018,8 @@ class StackedPR:
         
         # Show push failures if any
         if not self.pretend and 'failed_pushes' in locals() and failed_pushes:
-            merge_queue_failures = [b for b, e in failed_pushes if "has been added to a merge queue" in e]
-            other_failures = [b for b, e in failed_pushes if "has been added to a merge queue" not in e]
+            merge_queue_failures: List[str] = [b for b, e in failed_pushes if "has been added to a merge queue" in e]
+            other_failures: List[str] = [b for b, e in failed_pushes if "has been added to a merge queue" not in e]
             
             if merge_queue_failures:
                 print(f"  ⚠️  In merge queue (not updated): {len(merge_queue_failures)}")
@@ -1076,8 +1081,10 @@ class StackedPR:
                 commit_patch_dir = os.path.join(tmpdir, commit.commit_id)
                 os.makedirs(commit_patch_dir, exist_ok=True)
                 
+                # Save current branch before testing patches
+                current_branch = self.git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
+                
                 # Generate patch for this commit
-                patch_file = f"{commit_patch_dir}/{commit.commit_id}.patch"
                 try:
                     # Create patch from the commit
                     self.git_cmd.must_git(f"format-patch -1 {commit.commit_hash} -o {commit_patch_dir}")
@@ -1090,9 +1097,6 @@ class StackedPR:
                     
                     # Test if patch applies cleanly to base branch
                     try:
-                        # Save current state
-                        current_branch = self.git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
-                        current_head = self.git_cmd.must_git("rev-parse HEAD").strip()
                         
                         # Create a temporary test branch
                         test_branch = f"pyspr-analyze-test-{commit.commit_id}"

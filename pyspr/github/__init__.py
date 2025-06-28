@@ -571,7 +571,7 @@ class GitHubClient:
         
         # Use breakup branch name if requested
         if use_breakup_branch:
-            remote_branch = self.config.repo.get('github_branch', 'main')
+            remote_branch = self.config.repo.github_branch
             branch_name = f"pyspr/cp/{remote_branch}/{commit.commit_id}"
         else:
             branch_name = self.branch_name_from_commit(commit)
@@ -615,7 +615,8 @@ class GitHubClient:
                     # Remove the temp PR we added to current_prs
                     current_prs.pop()
                     # Update the existing PR instead
-                    return self.update_pull_request(ctx, git_cmd, current_prs, existing_pr, commit, None)
+                    self.update_pull_request(ctx, git_cmd, current_prs, existing_pr, commit, None)
+                    return existing_pr
                 else:
                     logger.error(f"Could not find existing PR for branch {branch_name} even though GitHub says it exists")
                     raise
@@ -673,7 +674,7 @@ class GitHubClient:
         # Always update body with current stack info 
         if commit:
             # Check if this is a breakup PR by looking at the branch name
-            is_breakup = pr.from_branch and pr.from_branch.startswith('pyspr/cp/')
+            is_breakup = bool(pr.from_branch and pr.from_branch.startswith('pyspr/cp/'))
             body = self.format_body(commit, prs, is_breakup=is_breakup)
             logger.debug(f"Updating body for PR #{pr.number}:\n{body}")
             gh_pr.edit(body=body)
@@ -866,7 +867,7 @@ class GitHubClient:
             
         try:
             # Use the head filter to find PRs for this specific branch
-            owner = self.config.repo.get('github_repo_owner')
+            owner = self.config.repo.github_repo_owner
             logger.debug(f"Searching for PR with branch {branch_name}, owner={owner}")
             
             # Search for open PRs with this branch as head
@@ -883,9 +884,9 @@ class GitHubClient:
                 if pr.head.ref == branch_name:
                     logger.debug(f"Found matching PR #{pr.number} for branch {branch_name}")
                     # Convert to our PullRequest type
-                    commit = Commit(
-                        commit_hash=pr.head.sha,
+                    commit = Commit.from_strings(
                         commit_id=pr.head.sha[:8],  # Use first 8 chars as ID
+                        commit_hash=pr.head.sha,
                         subject=pr.title,
                         body=pr.body or "",
                         wip=False

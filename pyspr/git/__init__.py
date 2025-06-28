@@ -113,7 +113,6 @@ def get_local_commit_stack(config: PysprConfig, git_cmd: GitInterface) -> List[C
                                 logging.info(f"  {proc}")
                         
                         # Check for index.lock
-                        import os
                         lock_path = os.path.join(os.getcwd(), '.git', 'index.lock')
                         if os.path.exists(lock_path):
                             logging.warning(f"index.lock already exists before checkout {cid}!")
@@ -159,7 +158,6 @@ def get_local_commit_stack(config: PysprConfig, git_cmd: GitInterface) -> List[C
                         logging.info(f"  {proc}")
                 
                 # Check for index.lock
-                import os
                 lock_path = os.path.join(os.getcwd(), '.git', 'index.lock')
                 if os.path.exists(lock_path):
                     logging.warning(f"index.lock already exists before cleanup checkout {curr_branch}!")

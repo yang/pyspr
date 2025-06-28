@@ -3,8 +3,8 @@
 import os
 import functools
 import logging
-from typing import Callable, TypeVar, Any
-import pytest
+from typing import Callable, TypeVar, Any, cast
+# pytest import removed as unused
 from pyspr.tests.e2e.test_helpers import RepoContext, run_cmd
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ def run_twice_in_mock_mode(func: F) -> F:
             # test code here
     """
     @functools.wraps(func)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
         # Check if we're in mock mode
         is_mock = os.environ.get("SPR_USING_MOCK_GITHUB", "").lower() == "true"
         
@@ -91,7 +91,7 @@ def run_twice_in_mock_mode(func: F) -> F:
             # Restore original directory
             os.chdir(orig_dir)
     
-    return wrapper
+    return cast(F, wrapper)
 
 
 def preserve_fake_github_state(test_func: F) -> F:
@@ -101,7 +101,7 @@ def preserve_fake_github_state(test_func: F) -> F:
     state instead of creating a new temporary directory each time.
     """
     @functools.wraps(test_func)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
         # Set environment variable to indicate we want to preserve state
         original_preserve = os.environ.get("SPR_PRESERVE_FAKE_GITHUB_STATE")
         os.environ["SPR_PRESERVE_FAKE_GITHUB_STATE"] = "true"
@@ -115,4 +115,4 @@ def preserve_fake_github_state(test_func: F) -> F:
             else:
                 os.environ["SPR_PRESERVE_FAKE_GITHUB_STATE"] = original_preserve
     
-    return wrapper
+    return cast(F, wrapper)

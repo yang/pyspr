@@ -5,10 +5,10 @@ import uuid
 import tempfile
 import yaml
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import pytest
 from _pytest.fixtures import FixtureRequest
-from typing import Generator, List, Tuple, Optional, Union, Any, Callable, TYPE_CHECKING
+from typing import Generator, List, Tuple, Optional, Union, Any, Callable, TYPE_CHECKING, Dict
 
 from pyspr.config import Config
 from pyspr.git import RealGit
@@ -32,6 +32,7 @@ class RepoContext:
     tag: str
     git_cmd: RealGit
     github: GitHubClient
+    obj: Dict[str, object] = field(default_factory=dict)  # For protocol compatibility
 
     def make_commit(self, file: str, content: str, msg: str) -> str:
         """Create a commit with the test tag embedded."""

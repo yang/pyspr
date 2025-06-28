@@ -10,7 +10,6 @@ import subprocess
 import time
 import datetime
 import logging
-import re
 from typing import Dict, Generator, List, Optional, Set, Tuple, Union, Protocol, runtime_checkable
 import pytest
 
@@ -20,7 +19,7 @@ from pyspr.config import Config
 from pyspr.git import RealGit
 from pyspr.github import GitHubClient, PullRequest, GitHubInfo
 from pyspr.typing import Commit
-from pyspr.tests.e2e.fixtures import test_repo_ctx, test_mq_repo_ctx, create_test_repo, github_environment
+from pyspr.tests.e2e.fixtures import create_test_repo
 
 
 @runtime_checkable
@@ -481,36 +480,7 @@ def test_reviewer_functionality(test_repo_ctx: RepoContext) -> None:
         log.info(f"Second PR requested logins: {requested_logins2}")
         assert "testluser" in requested_logins2, "Second PR should have testluser reviewer"
         
-<<<<<<< HEAD
         log.info("Successfully verified testluser review handling for both PRs")
-||||||| parent of 6b2b370 (more typing)
-        # Since we're using yang's token and testluser is different user, verify request was added
-        log.info("Getting review requests")
-        requested_users, _ = gh_pr2.get_review_requests()
-        log.info(f"Requested users: {[u.login for u in requested_users]}")
-        requested_logins = [u.login.lower() for u in requested_users]
-        log.info(f"Requested logins: {requested_logins}")
-        assert "testluser" in requested_logins, "Second PR should have testluser reviewer since they're a different user"
-        
-        log.info("Successfully verified testluser review handling")
-=======
-        # Since we're using yang's token and testluser is different user, verify request was added
-        log.info("Getting review requests")
-        requested_users, _ = gh_pr2.get_review_requests()
-        user_names: List[str] = []
-        for u in requested_users:
-            if isinstance(u, UserWithLogin):
-                user_names.append(u.login)
-        log.info(f"Requested users: {user_names}")
-        requested_logins: List[str] = []
-        for u in requested_users:
-            if isinstance(u, UserWithLogin):
-                requested_logins.append(u.login.lower())
-        log.info(f"Requested logins: {requested_logins}")
-        assert "testluser" in requested_logins, "Second PR should have testluser reviewer since they're a different user"
-        
-        log.info("Successfully verified testluser review handling")
->>>>>>> 6b2b370 (more typing)
 
     finally:
         # Change back to original directory
@@ -1490,7 +1460,7 @@ def test_breakup_command(test_repo_ctx: RepoContext) -> None:
         log.info(f"  PR #{pr.number}: branch={pr.from_branch}")
     
     # Filter PRs created by breakup command (pyspr branches)
-    prs = [pr for pr in info.pull_requests if pr.from_branch.startswith("pyspr/cp/main/")]
+    prs = [pr for pr in info.pull_requests if pr.from_branch and pr.from_branch.startswith("pyspr/cp/main/")]
     log.info(f"Found {len(prs)} pyspr PRs")
     
     # We should have PRs for the independent commits at minimum
@@ -1499,7 +1469,7 @@ def test_breakup_command(test_repo_ctx: RepoContext) -> None:
     
     # Verify PRs use pyspr branches
     for pr in prs:
-        assert pr.from_branch.startswith("pyspr/cp/main/"), f"PR branch should start with pyspr/cp/main/, got {pr.from_branch}"
+        assert pr.from_branch and pr.from_branch.startswith("pyspr/cp/main/"), f"PR branch should start with pyspr/cp/main/, got {pr.from_branch}"
         assert pr.base_ref == "main", f"All breakup PRs should target main, got {pr.base_ref}"
     
     # Verify we can still run normal update without conflicts
@@ -1509,8 +1479,8 @@ def test_breakup_command(test_repo_ctx: RepoContext) -> None:
     info = ctx.github.get_info(None, ctx.git_cmd)
     assert info is not None, "Should get GitHub info"
     all_prs = info.pull_requests
-    spr_prs = [pr for pr in all_prs if pr.from_branch.startswith("spr/main/")]
-    pyspr_prs = [pr for pr in all_prs if pr.from_branch.startswith("pyspr/cp/main/")]
+    spr_prs = [pr for pr in all_prs if pr.from_branch and pr.from_branch.startswith("spr/main/")]
+    pyspr_prs = [pr for pr in all_prs if pr.from_branch and pr.from_branch.startswith("pyspr/cp/main/")]
     
     assert len(spr_prs) > 0, "Should have spr PRs after update"
     assert len(pyspr_prs) > 0, "Should still have pyspr PRs after update"
@@ -1534,7 +1504,7 @@ def test_breakup_with_existing_prs(test_repo_ctx: RepoContext) -> None:
     # Get initial PRs
     info = ctx.github.get_info(None, ctx.git_cmd)
     assert info is not None, "Should get GitHub info"
-    initial_prs = [pr for pr in info.pull_requests if pr.from_branch.startswith("pyspr/cp/main/")]
+    initial_prs = [pr for pr in info.pull_requests if pr.from_branch and pr.from_branch.startswith("pyspr/cp/main/")]
     initial_pr_count = len(initial_prs)
     assert initial_pr_count >= 2, f"Should create at least 2 PRs, found {initial_pr_count}"
     
@@ -1579,7 +1549,7 @@ def test_breakup_with_existing_prs(test_repo_ctx: RepoContext) -> None:
         log.info(f"  PR #{pr.number}: branch={pr.head.ref}, state={pr.state}")
     
     # Filter to pyspr PRs for this test - check for test tag
-    all_pyspr_prs = []
+    all_pyspr_prs: List[PullRequest] = []
     for pr in all_open_prs:
         if pr.head.ref.startswith("pyspr/cp/main/"):
             # Check if this PR belongs to our test by looking for test tag in title
@@ -1617,7 +1587,7 @@ def test_breakup_with_existing_prs(test_repo_ctx: RepoContext) -> None:
     
     # We expect at least 2 PRs (could be more from previous runs with run_twice)
     # Filter to just the PRs we care about - ones that match our current commits
-    current_run_prs = []
+    current_run_prs: List[PullRequest] = []
     for pr in all_pyspr_prs:
         # Check if this PR's branch matches one of our initial PRs or 
         # if its commit matches our current commits
@@ -1664,7 +1634,7 @@ def test_breakup_pretend_mode(test_repo_ctx: RepoContext, capsys: pytest.Capture
     # Verify no actual PRs were created
     info = ctx.github.get_info(None, ctx.git_cmd)
     if info is not None:
-        prs = [pr for pr in info.pull_requests if pr.from_branch.startswith("pyspr/cp/main/")]
+        prs = [pr for pr in info.pull_requests if pr.from_branch and pr.from_branch.startswith("pyspr/cp/main/")]
         assert len(prs) == 0, "Should not create actual PRs in pretend mode"
     
     # Verify no branches were created
@@ -1687,7 +1657,7 @@ def test_breakup_preserves_unchanged_commit_hashes(test_repo_ctx: RepoContext) -
     # Get the branch name and hash for the second commit
     info = ctx.github.get_info(None, ctx.git_cmd)
     assert info is not None, "Should get GitHub info"
-    prs = [pr for pr in info.pull_requests if pr.from_branch.startswith("pyspr/cp/main/")]
+    prs = [pr for pr in info.pull_requests if pr.from_branch and pr.from_branch.startswith("pyspr/cp/main/")]
     assert len(prs) == 2, f"Should have 2 PRs, found {len(prs)}"
     
     # Find the PR for the second commit
@@ -1748,6 +1718,7 @@ def test_breakup_preserves_unchanged_commit_hashes(test_repo_ctx: RepoContext) -
     
     # Get info about the third commit's branch
     info = ctx.github.get_info(None, ctx.git_cmd)
+    assert info is not None, "Should get GitHub info"
     third_pr = next((pr for pr in info.pull_requests if "Third commit" in pr.title), None)
     assert third_pr is not None, "Should find PR for third commit"
     third_branch_name = third_pr.from_branch
@@ -1799,7 +1770,7 @@ def test_breakup_pr_already_exists_error(test_repo_ctx: RepoContext) -> None:
     # Get the PR info
     info = ctx.github.get_info(None, ctx.git_cmd)
     assert info is not None
-    breakup_prs = [pr for pr in info.pull_requests if pr.from_branch.startswith("pyspr/cp/")]
+    breakup_prs = [pr for pr in info.pull_requests if pr.from_branch and pr.from_branch.startswith("pyspr/cp/")]
     
     # We should have 0 breakup PRs in the regular PR list (they're not part of the stack)
     # But let's check via the repo directly
