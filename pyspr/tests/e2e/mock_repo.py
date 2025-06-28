@@ -85,6 +85,8 @@ def create_mock_repo_context(owner: str, name: str, test_name: str) -> Generator
             # Add an initial commit and push to establish main branch
             run_cmd("git config user.name 'Test User'")
             run_cmd("git config user.email 'test@example.com'")
+            # Disable GPG signing for tests
+            run_cmd("git config commit.gpgsign false")
             
             # Create initial file
             with open("README.md", "w") as f:
