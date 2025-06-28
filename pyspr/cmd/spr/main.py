@@ -15,6 +15,7 @@ from ...config.config_parser import parse_config
 from ...git import RealGit
 from ...github import GitHubClient 
 from ...spr import StackedPR
+from ...typing import GitInterface
 
 # Import from tests - only used when running in test mode
 try:
@@ -54,6 +55,35 @@ class AliasedGroup(click.Group):
 def cli(ctx: Context) -> None:
     """SPR - Stacked Pull Requests on GitHub."""
     ctx.obj = {}
+
+def restore_git_state(git_cmd: GitInterface, branch: str, head: str) -> None:
+    """Attempt to restore git to a known good state."""
+    logger.info("Attempting to restore repository state...")
+    
+    # First abort any in-progress operations
+    for abort_cmd in ["cherry-pick --abort", "rebase --abort", "merge --abort"]:
+        try:
+            git_cmd.run_cmd(abort_cmd)
+        except:
+            pass
+    
+    # Try to checkout original branch
+    try:
+        git_cmd.must_git(f"checkout {branch}")
+    except:
+        try:
+            git_cmd.must_git(f"checkout -f {branch}")
+        except:
+            logger.error(f"Failed to checkout {branch}")
+    
+    # Reset to original HEAD
+    try:
+        git_cmd.must_git(f"reset --hard {head}")
+        logger.info("Repository restored to original state")
+    except Exception as e:
+        logger.error(f"Failed to reset to {head}: {e}")
+        logger.error("Repository may be in an inconsistent state")
+        logger.error(f"To manually restore: git checkout {branch} && git reset --hard {head}")
 
 def setup_git(directory: Optional[str] = None) -> Tuple[Config, RealGit, GitHubClient]:
     """Setup Git command and config."""
@@ -107,11 +137,24 @@ def update(ctx: Context, directory: Optional[str], reviewer: List[str],
     config, git_cmd, github = setup_git(directory)
     config.tool['pretend'] = pretend  # Set pretend mode
     
-    if no_rebase:
-        config.user['no_rebase'] = True
-    stackedpr = StackedPR(config, github, git_cmd)
-    stackedpr.pretend = pretend  # Set pretend mode
-    stackedpr.update_pull_requests(ctx, reviewer if reviewer else None, count, labels=list(label) if label else None)
+    # Save current git state for recovery
+    try:
+        current_branch = git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
+        current_head = git_cmd.must_git("rev-parse HEAD").strip()
+    except Exception as e:
+        logger.error(f"Failed to get current git state: {e}")
+        sys.exit(1)
+    
+    try:
+        if no_rebase:
+            config.user['no_rebase'] = True
+        stackedpr = StackedPR(config, github, git_cmd)
+        stackedpr.pretend = pretend  # Set pretend mode
+        stackedpr.update_pull_requests(ctx, reviewer if reviewer else None, count, labels=list(label) if label else None)
+    except Exception as e:
+        logger.error(f"Error during update: {e}")
+        restore_git_state(git_cmd, current_branch, current_head)
+        sys.exit(1)
 
 @cli.command(name="status", help="Show status of open pull requests")
 @click.option('-C', '--directory', type=click.Path(exists=True, file_okay=False, dir_okay=True),
@@ -169,17 +212,30 @@ def breakup(ctx: Context, directory: Optional[str], verbose: int, pretend: bool,
     config, git_cmd, github = setup_git(directory)
     config.tool['pretend'] = pretend  # Set pretend mode
     
-    if no_rebase:
-        config.user['no_rebase'] = True
-    stackedpr = StackedPR(config, github, git_cmd)
-    stackedpr.pretend = pretend  # Set pretend mode
+    # Save current git state for recovery
+    try:
+        current_branch = git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
+        current_head = git_cmd.must_git("rev-parse HEAD").strip()
+    except Exception as e:
+        logger.error(f"Failed to get current git state: {e}")
+        sys.exit(1)
     
-    # Parse commit IDs if provided
-    commit_ids = None
-    if update_only_these_ids:
-        commit_ids = [id.strip() for id in update_only_these_ids.split(',') if id.strip()]
-    
-    stackedpr.breakup_pull_requests(ctx, reviewer if reviewer else None, count, commit_ids)
+    try:
+        if no_rebase:
+            config.user['no_rebase'] = True
+        stackedpr = StackedPR(config, github, git_cmd)
+        stackedpr.pretend = pretend  # Set pretend mode
+        
+        # Parse commit IDs if provided
+        commit_ids = None
+        if update_only_these_ids:
+            commit_ids = [id.strip() for id in update_only_these_ids.split(',') if id.strip()]
+        
+        stackedpr.breakup_pull_requests(ctx, reviewer if reviewer else None, count, commit_ids)
+    except Exception as e:
+        logger.error(f"Error during breakup: {e}")
+        restore_git_state(git_cmd, current_branch, current_head)
+        sys.exit(1)
 
 
 def main() -> None:

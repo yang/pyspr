@@ -171,6 +171,8 @@ def parse_local_commit_stack(commit_log: str) -> Tuple[List[Commit], bool]:
         if hash_match:
             if commit_scan_on:
                 # Missing commit ID in previous commit
+                logger.debug(f"parse_local_commit_stack: Missing commit-id in commit {scanned_commit.commit_hash[:8] if scanned_commit else 'None'} with subject: '{scanned_commit.subject if scanned_commit else 'None'}' at line {index}")
+                logger.debug(f"  New commit hash found: {hash_match.group(1)[:8]}")
                 return [], False
             commit_scan_on = True
             scanned_commit = Commit.from_strings(
