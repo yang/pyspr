@@ -103,6 +103,7 @@ def create_github_client(ctx: Optional[StackedPRContextProtocol], config: PysprC
         
         # Import here to avoid circular imports
         from pyspr.github import find_github_token
+        from pyspr.github.adapters import PyGithubAdapter
         from github import Github
         
         # Get GitHub token
@@ -112,8 +113,9 @@ def create_github_client(ctx: Optional[StackedPRContextProtocol], config: PysprC
             logger.error(error_msg)
             raise ValueError(error_msg)
         
-        # Create a real PyGithub client - it should satisfy our protocol directly
-        github_client = Github(token)
+        # Create a real PyGithub client wrapped in our adapter
+        real_github = Github(token)
+        github_client = PyGithubAdapter(real_github)
             
         # Create and return the GitHub client
         return GitHubClient(ctx, config, github_client=github_client)

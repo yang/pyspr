@@ -36,3 +36,5 @@ After implementing upstream branch detection (`git rev-parse --abbrev-ref @{upst
 ### 5. fake_pygithub tests
 - **Issue**: Git clone failures in test infrastructure
 - **Unrelated to upstream changes**
+
+When working on types, don't just add type ignores or Any or cast things away. The whole point is to get very strict typing.

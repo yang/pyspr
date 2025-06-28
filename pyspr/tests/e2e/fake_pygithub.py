@@ -5,7 +5,7 @@ from __future__ import annotations
 import yaml
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Any, Tuple, Optional, cast
+from typing import Dict, List, Any, Tuple, Optional, Union, cast
 import subprocess
 from pathlib import Path
 import os

@@ -8,9 +8,7 @@ import logging
 from dataclasses import dataclass
 import pytest
 from _pytest.fixtures import FixtureRequest
-from typing import Generator, List, Tuple, Optional, Union, Any
-# Pytest types
-from pytest import FixtureRequest  # type: ignore
+from typing import Generator, List, Tuple, Optional, Union, Any, Callable
 
 from pyspr.config import Config
 from pyspr.git import RealGit
@@ -131,7 +129,7 @@ class RepoContext:
         except Exception as e:
             log.error(f"Failed to dump PR state: {e}")
 
-    def dump_review_requests(self, pr) -> None:
+    def dump_review_requests(self, pr: Any) -> None:
         """Dump review requests for a PR."""
         try:
             requested_users, requested_teams = pr.get_review_requests()
@@ -145,7 +143,7 @@ class RepoContext:
         except Exception as e:
             log.error(f"Failed to get review requests: {e}")
 
-    def timed_operation(self, operation_name: str, func):
+    def timed_operation(self, operation_name: str, func: Callable[[], Any]) -> Any:
         """Run a function with timing information."""
         log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Starting {operation_name}...")
         start_time = time.time()

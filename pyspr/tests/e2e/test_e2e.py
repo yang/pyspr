@@ -1216,6 +1216,7 @@ def test_no_rebase_pr_stacking(test_repo_ctx: RepoContext) -> None:
     log.info(f"Verified PR #{pr2.number} hash unchanged")
 
     # Verify stack structure
+    assert pr1_after is not None, f"PR #{pr1_number} should exist after update"
     assert pr1_after.base_ref == "main", f"PR1 should target main, got {pr1_after.base_ref}"
     assert pr2.base_ref is not None and pr2.base_ref.startswith('spr/main/'), f"PR2 should target PR1's branch, got {pr2.base_ref}"
     assert pr2.base_ref and pr1_after.commit.commit_id in pr2.base_ref, "PR2 should target PR1's branch"

@@ -4,10 +4,13 @@ import os
 import tempfile
 
 from pyspr.tests.e2e.fake_pygithub import (
-    create_fake_github
+    create_fake_github,
+    FakeGithub,
+    FakeRepository,
+    FakePullRequest
 )
 
-def test_basic_operations():
+def test_basic_operations() -> None:
     """Test basic operations with the fake GitHub."""
     # Set up a temp directory for state storage
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -15,20 +18,20 @@ def test_basic_operations():
         state_file = os.path.join(tmpdir, "fake_github_state.yaml")
         
         # Create a fresh instance with no previous state
-        github = create_fake_github(
+        github: FakeGithub = create_fake_github(
             data_dir=tmpdir,
             state_file=state_file
         )
         
         # Create repository and verify it exists
-        repo = github.get_repo("testorg/testrepo")
+        repo: FakeRepository = github.get_repo("testorg/testrepo")
         assert repo.full_name == "testorg/testrepo"
         assert repo.owner_login == "testorg"
         assert repo.name == "testrepo"
         assert repo.github_ref is github
         
         # Create a PR
-        pr = repo.create_pull(
+        pr: FakePullRequest = repo.create_pull(
             title="Test PR",
             body="Test body",
             base="main",
@@ -42,12 +45,12 @@ def test_basic_operations():
         assert pr.github_ref is github
         
         # PR should be in pull_requests dict with composite key
-        pr_key = f"testorg/testrepo:1"
+        pr_key: str = f"testorg/testrepo:1"
         assert pr_key in github.pull_requests
         assert github.pull_requests[pr_key] is pr
         
         # Verify we can get the PR by number
-        retrieved_pr = github.get_pull(1)
+        retrieved_pr: FakePullRequest = github.get_pull(1)
         assert retrieved_pr is pr
         
         # Edit the PR
@@ -58,25 +61,24 @@ def test_basic_operations():
         assert os.path.exists(state_file)
         
         # Create a new GitHub instance that loads from the same state file
-        github2 = create_fake_github(
+        github2: FakeGithub = create_fake_github(
             data_dir=tmpdir,
             state_file=state_file,
-            load_state=True
         )
         
         # Verify PR data was loaded from state
-        pr_key = f"testorg/testrepo:1"
+        pr_key: str = f"testorg/testrepo:1"
         assert pr_key in github2.pull_requests
-        loaded_pr = github2.pull_requests[pr_key]
+        loaded_pr: FakePullRequest = github2.pull_requests[pr_key]
         assert loaded_pr.title == "Updated Title"
         assert loaded_pr.body == "Test body"
         
         # Verify repository was loaded
         assert "testorg/testrepo" in github2.repositories
-        loaded_repo = github2.repositories["testorg/testrepo"]
+        loaded_repo: FakeRepository = github2.repositories["testorg/testrepo"]
         assert loaded_repo.name == "testrepo"
 
-def test_circular_references():
+def test_circular_references() -> None:
     """Test that circular references are handled correctly."""
     # Set up a temp directory for state storage
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -84,24 +86,31 @@ def test_circular_references():
         state_file = os.path.join(tmpdir, "fake_github_state.yaml")
         
         # Create an entirely fresh instance with no pre-loaded state
-        github = create_fake_github(
+        github: FakeGithub = create_fake_github(
             data_dir=tmpdir,
+<<<<<<< HEAD
             state_file=state_file
+||||||| parent of fa20d4f (Add Adapter)
+            state_file=state_file,
+            load_state=False
+=======
+            state_file=state_file,
+>>>>>>> fa20d4f (Add Adapter)
         )
         
         # Create two repositories that refer to the same owner
-        repo1 = github.get_repo("testuser/repo1")
-        repo2 = github.get_repo("testuser/repo2")
+        repo1: FakeRepository = github.get_repo("testuser/repo1")
+        repo2: FakeRepository = github.get_repo("testuser/repo2")
         assert repo1.owner is repo2.owner
         
         # Create PRs with cross-references
-        pr1 = repo1.create_pull(
+        pr1: FakePullRequest = repo1.create_pull(
             title="PR1",
             body="PR1 body",
             base="main",
             head="feature1"
         )
-        pr2 = repo2.create_pull(
+        pr2: FakePullRequest = repo2.create_pull(
             title="PR2",
             body="PR2 body",
             base="main",
@@ -115,19 +124,18 @@ def test_circular_references():
         github._save_state()
         
         # Create new instance and load state
-        github2 = create_fake_github(
+        github2: FakeGithub = create_fake_github(
             data_dir=tmpdir,
             state_file=state_file,
-            load_state=True
         )
         
         # Verify PRs loaded correctly
         assert len(github2.pull_requests) == 2
         
         # Find the PRs by their titles since the numbering may vary
-        loaded_prs = list(github2.pull_requests.values())
-        loaded_pr1 = next((pr for pr in loaded_prs if pr.title == "PR1"), None)
-        loaded_pr2 = next((pr for pr in loaded_prs if pr.title == "PR2"), None)
+        loaded_prs: list[FakePullRequest] = list(github2.pull_requests.values())
+        loaded_pr1: FakePullRequest | None = next((pr for pr in loaded_prs if pr.title == "PR1"), None)
+        loaded_pr2: FakePullRequest | None = next((pr for pr in loaded_prs if pr.title == "PR2"), None)
         
         assert loaded_pr1 is not None, "PR1 not found in loaded state"
         assert loaded_pr2 is not None, "PR2 not found in loaded state"
@@ -148,27 +156,34 @@ def test_circular_references():
         # Verify reviewers
         assert "testuser" in loaded_pr1.reviewers
 
-def test_graphql_functionality():
+def test_graphql_functionality() -> None:
     """Test GraphQL functionality."""
     # Set up a temp directory for state storage
     with tempfile.TemporaryDirectory() as tmpdir:
         # Create a fresh GitHub instance with a clean state
         state_file = os.path.join(tmpdir, "fake_github_state.yaml")
-        github = create_fake_github(
+        github: FakeGithub = create_fake_github(
             data_dir=tmpdir,
+<<<<<<< HEAD
             state_file=state_file
+||||||| parent of fa20d4f (Add Adapter)
+            state_file=state_file,
+            load_state=False
+=======
+            state_file=state_file,
+>>>>>>> fa20d4f (Add Adapter)
         )
         
-        repo = github.get_repo("testorg/testrepo")
+        repo: FakeRepository = github.get_repo("testorg/testrepo")
         
         # Create PRs
-        pr1 = repo.create_pull(
+        pr1: FakePullRequest = repo.create_pull(
             title="GraphQL Test PR1",
             body="PR1 body",
             base="main",
             head="spr/main/abcd1234"
         )
-        pr2 = repo.create_pull(
+        pr2: FakePullRequest = repo.create_pull(
             title="GraphQL Test PR2",
             body="PR2 body",
             base=f"spr/main/{pr1.commit_id}",
@@ -176,7 +191,11 @@ def test_graphql_functionality():
         )
         
         # Request GraphQL data
-        requester = github._Github__requester
+        from pyspr.tests.e2e.fake_pygithub import FakeRequester
+        from typing import Any, Dict, Tuple
+        requester: FakeRequester = github._Github__requester
+        _: Dict[str, Any]
+        response: Dict[str, Any]
         _, response = requester.requestJsonAndCheck(
             "POST", 
             "https://api.github.com/graphql", 
@@ -188,8 +207,8 @@ def test_graphql_functionality():
         assert "viewer" in response["data"]
         assert "pullRequests" in response["data"]["viewer"]
         assert "nodes" in response["data"]["viewer"]["pullRequests"]
-        pr_nodes = response["data"]["viewer"]["pullRequests"]["nodes"]
+        pr_nodes: list[Dict[str, Any]] = response["data"]["viewer"]["pullRequests"]["nodes"]
         assert len(pr_nodes) == 2
-        pr_numbers = [node["number"] for node in pr_nodes]
+        pr_numbers: list[int] = [node["number"] for node in pr_nodes]
         assert pr1.number in pr_numbers
         assert pr2.number in pr_numbers

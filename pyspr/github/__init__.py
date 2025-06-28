@@ -149,6 +149,10 @@ class GitHubPullRequestProtocol(Protocol):
     def enable_automerge(self, merge_method: str = "merge") -> None:
         """Enable auto-merge for the pull request."""
         ...
+    
+    def create_review_request(self, reviewers: List[str]) -> None:
+        """Request reviews from users."""
+        ...
 
 @runtime_checkable
 class GitHubRepoProtocol(Protocol):
@@ -681,8 +685,7 @@ class GitHubClient:
             return
         
         try:
-            # PyGithub typing is wrong; it actually accepts a list of strings
-            gh_pr.create_review_request(reviewers=filtered_reviewers)  # type: ignore
+            gh_pr.create_review_request(reviewers=filtered_reviewers)
         except Exception as e:
             logger.error(f"Failed to add reviewers to PR #{pr.number}: {e}")
             raise
