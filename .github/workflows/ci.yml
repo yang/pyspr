@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rye
+      uses: eifinger/setup-rye@v4
+      with:
+        version: 'latest'
+    
+    - name: Sync dependencies
+      run: rye sync --no-lock
+    
+    - name: Run ruff
+      run: rye run ruff check .
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rye
+      uses: eifinger/setup-rye@v4
+      with:
+        version: 'latest'
+    
+    - name: Sync dependencies
+      run: rye sync --no-lock
+    
+    - name: Run pyright
+      run: rye run pyright
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rye
+      uses: eifinger/setup-rye@v4
+      with:
+        version: 'latest'
+    
+    - name: Sync dependencies
+      run: rye sync --no-lock
+    
+    - name: Run tests
+      run: rye run pytest -vsx

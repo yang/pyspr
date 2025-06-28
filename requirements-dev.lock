@@ -64,6 +64,7 @@ pyyaml==6.0.2
     # via pyspr
 requests==2.32.3
     # via pygithub
+ruff==0.12.1
 smmap==5.0.2
     # via gitdb
 tomli==2.2.1
