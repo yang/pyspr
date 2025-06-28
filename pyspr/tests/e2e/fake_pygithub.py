@@ -473,9 +473,8 @@ class FakeRepository:
     @property
     def owner(self):
         """Get the owner of this repository."""
-        if not self.github_ref:
-            return None
-        return self.github_ref.get_user(self.owner_login)
+        # Always return a user, create one if needed
+        return ensure(self.github_ref.get_user(self.owner_login, create=True))
     
     def get_assignees(self) -> List['FakeNamedUser']:
         """Get assignable users for repository."""

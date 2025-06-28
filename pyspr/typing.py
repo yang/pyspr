@@ -37,7 +37,7 @@ class Commit:
 
 class StackedPRContextProtocol(Protocol):
     """Protocol for what StackedPR expects from a context."""
-    obj: Optional[Dict[str, Any]]
+    obj: Dict[str, object]  # Click context object storage
 
 # Allow Optional[StackedPRContextProtocol] to be used where StackedPRContextProtocol is expected
 StackedPRContextType = Optional[Union[StackedPRContextProtocol, Type[None]]]

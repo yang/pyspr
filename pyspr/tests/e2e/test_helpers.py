@@ -8,11 +8,7 @@ import logging
 from dataclasses import dataclass
 import pytest
 from _pytest.fixtures import FixtureRequest
-from typing import Generator, List, Tuple, Optional, Union, Any, Callable, Protocol
-
-class PytestNode(Protocol):
-    """Protocol for pytest node object."""
-    name: str
+from typing import Generator, List, Tuple, Optional, Union, Any, Callable
 
 from pyspr.config import Config
 from pyspr.git import RealGit
@@ -365,14 +361,16 @@ def create_repo_context(owner: str, name: str, test_name: str) -> Generator[Repo
 def test_repo_ctx(request: FixtureRequest) -> Generator[RepoContext, None, None]:
     """Regular test repo fixture using yang/teststack."""
     assert request.node is not None, "pytest request.node should not be None"
-    node: PytestNode = request.node
+    node = request.node
+    assert hasattr(node, 'name'), "pytest node should have name attribute"
     yield from create_repo_context("yang", "teststack", node.name)
 
 @pytest.fixture
 def test_mq_repo_ctx(request: FixtureRequest) -> Generator[RepoContext, None, None]:
     """Merge queue test repo fixture using yangenttest1/teststack."""
     assert request.node is not None, "pytest request.node should not be None"
-    node: PytestNode = request.node
+    node = request.node
+    assert hasattr(node, 'name'), "pytest node should have name attribute"
     yield from create_repo_context("yangenttest1", "teststack", node.name)
 
 def create_test_repo(owner: str, name: str) -> Generator[Tuple[str, str, str, str], None, None]:

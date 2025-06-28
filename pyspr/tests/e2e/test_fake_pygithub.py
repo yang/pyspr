@@ -176,7 +176,7 @@ def test_graphql_functionality() -> None:
         pr2: FakePullRequest = repo.create_pull(
             title="GraphQL Test PR2",
             body="PR2 body",
-            base=f"spr/main/{pr1.data_record.commit_id}",
+            base=f"spr/main/{pr1.commit.commit_id}",
             head="spr/main/1234abcd"
         )
         
