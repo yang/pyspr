@@ -736,6 +736,8 @@ def _run_merge_test(
         expected_open = len(to_remain)
         assert len(current_prs) == expected_open, f"{expected_open} test PRs should remain open, found {len(current_prs)}"
         if to_merge:
+            # Add a small delay to ensure the merge commit is available in CI
+            time.sleep(2)
             # Get the merge commit
             run_cmd("git fetch origin main")
             merge_sha = git_cmd.must_git("rev-parse origin/main").strip()

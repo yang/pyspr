@@ -202,7 +202,7 @@ class FakePullRequest:
     def base(self) -> GitHubRefProtocol:
         """Get the base ref for this PR."""
         # Get the commit info on demand
-        repo_dir = Path(self.data_record.github_ref.data_dir).parent.parent.parent
+        repo_dir = Path(self.data_record.github_ref.data_dir).parent.parent.parent  # Go up to tmpdir subdirectory
         remote_dir = repo_dir / "remote.git"
         _, base_sha, _ = get_commit_info(self.data_record.base_ref, remote_dir)
         
@@ -217,7 +217,7 @@ class FakePullRequest:
     def head(self) -> GitHubRefProtocol:
         """Get the head ref for this PR."""
         # Get the commit info on demand
-        repo_dir = Path(self.data_record.github_ref.data_dir).parent.parent.parent
+        repo_dir = Path(self.data_record.github_ref.data_dir).parent.parent.parent  # Go up to tmpdir subdirectory
         remote_dir = repo_dir / "remote.git"
         _, head_sha, _ = get_commit_info(self.data_record.head_ref, remote_dir)
         
@@ -232,7 +232,7 @@ class FakePullRequest:
     def commit(self):
         """Get the commit info for this PR."""
         # Get the commit info on demand
-        repo_dir = Path(self.data_record.github_ref.data_dir).parent.parent.parent
+        repo_dir = Path(self.data_record.github_ref.data_dir).parent.parent.parent  # Go up to tmpdir subdirectory
         remote_dir = repo_dir / "remote.git"
         commit_id, commit_hash, commit_subject = get_commit_info(self.data_record.head_ref, remote_dir)
         
@@ -380,8 +380,8 @@ class FakePullRequest:
         # Create an actual merge commit in the Git repository by merging the PR branch into main
         try:
             # Get the repository directory
-            repo_dir = Path(self.data_record.github_ref.data_dir).parent.parent.parent  # Go up to teststack
-            remote_dir = repo_dir / "remote.git"  # Go up to tmpdir and find remote.git
+            repo_dir = Path(self.data_record.github_ref.data_dir).parent.parent.parent  # Go up to tmpdir subdirectory
+            remote_dir = repo_dir / "remote.git"  # remote.git is at same level as teststack
             
             # Generate merge commit message
             if not commit_title:
@@ -571,8 +571,8 @@ class FakeRepository:
         #   └── teststack/     # The working repository
         #       └── .git/
         #           └── fake_github/  # Where our state is stored (self.github_ref.data_dir)
-        repo_dir = Path(self.github_ref.data_dir).parent.parent.parent  # Go up to teststack
-        remote_dir = repo_dir / "remote.git"  # Go up to tmpdir and find remote.git
+        repo_dir = Path(self.github_ref.data_dir).parent.parent.parent  # Go up to tmpdir subdirectory
+        remote_dir = repo_dir / "remote.git"  # remote.git is at same level as teststack
         
         # Get the actual commit information from the remote git repository
         # We get the commit information but don't need it for PR creation in this mock
