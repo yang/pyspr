@@ -736,14 +736,39 @@ def _run_merge_test(
         assert len(current_prs) == expected_open, f"{expected_open} test PRs should remain open, found {len(current_prs)}"
         if to_merge:
             # Add a small delay to ensure the merge commit is available in CI
-            time.sleep(2)
-            # Get the merge commit
-            run_cmd("git fetch origin main")
-            merge_sha = git_cmd.must_git("rev-parse origin/main").strip()
-            merge_msg = git_cmd.must_git(f"show -s --format=%B {merge_sha}").strip()
-            # Debug log the merge commit message
-            log.info(f"Merge commit message: '{merge_msg}'")
-            log.info(f"Looking for PR #{top_pr_num} in merge commit message")
+            time.sleep(10)
+            # Get the merge commit - try multiple times to ensure it's available
+            merge_sha = ""
+            merge_msg = ""
+            for attempt in range(5):
+                run_cmd("git fetch origin main")
+                
+                # Get all commits on origin/main to debug
+                all_commits = git_cmd.must_git("log --oneline origin/main -10").strip()
+                log.info(f"All commits on origin/main (attempt {attempt + 1}):\n{all_commits}")
+                
+                # Get the latest merge commit (the HEAD of origin/main after the merge)
+                merge_sha = git_cmd.must_git("rev-parse origin/main").strip()
+                
+                # Also get the previous commit to ensure we're not looking at the wrong one
+                prev_sha = git_cmd.must_git("rev-parse origin/main~1").strip()
+                prev_msg = git_cmd.must_git(f"show -s --format=%B {prev_sha}").strip()
+                
+                merge_msg = git_cmd.must_git(f"show -s --format=%B {merge_sha}").strip()
+                # Debug log the merge commit message
+                log.info(f"Previous commit ({prev_sha}): '{prev_msg}'")
+                log.info(f"Current HEAD of origin/main ({merge_sha}): '{merge_msg}'")
+                log.info(f"Looking for PR #{top_pr_num} in merge commit message")
+                
+                # Check if we found the right commit
+                pr_ref = f"#{top_pr_num}"
+                if pr_ref in merge_msg:
+                    break
+                    
+                # Wait before retrying
+                if attempt < 4:
+                    log.info("PR reference not found, waiting before retry...")
+                    time.sleep(2)
             # Verify merge commit contains the right PR number
             pr_ref = f"#{top_pr_num}"
             log.info(f"PR reference to find: '{pr_ref}', length: {len(pr_ref)}")
