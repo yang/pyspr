@@ -1897,3 +1897,58 @@ def test_analyze_only_wip(test_repo_ctx: RepoContext) -> None:
     assert "No non-WIP commits to analyze" in output, "Should indicate no non-WIP commits"
     
     log.info("=== TEST ANALYZE ONLY WIP COMPLETED SUCCESSFULLY ===")
+
+
+@run_twice_in_mock_mode
+def test_breakup_stacks(test_repo_ctx: RepoContext) -> None:
+    """Test breakup --stacks mode that creates multiple PR stacks."""
+    log.info("=== TEST BREAKUP STACKS STARTED ===")
+    ctx = test_repo_ctx
+    git_cmd = ctx.git_cmd
+    
+    # Create a complex dependency scenario:
+    # Component 1: Two commits that depend on each other
+    ctx.make_commit("base1.txt", "base1 content", "Base file 1")
+    # Get the actual filename with tag suffix
+    files = git_cmd.must_git("ls-tree --name-only -r HEAD").strip().split('\n')
+    base1_file = next((f for f in files if f.startswith("base1.txt")), None)
+    if base1_file:
+        base1_content = git_cmd.must_git(f"show HEAD:{base1_file}").strip().split('\n')[1]  # Skip filename line
+        ctx.make_commit(base1_file, base1_content + "\nmodification", "Modify base1")
+    
+    # Component 2: Three commits in a chain
+    ctx.make_commit("feature1.txt", "feature 1", "Feature 1 start")
+    ctx.make_commit("feature2.txt", "feature 2 depends on 1", "Feature 2 (depends on 1)")  
+    ctx.make_commit("feature3.txt", "feature 3 depends on 2", "Feature 3 (depends on 2)")
+    
+    # Component 3: Single independent commit
+    ctx.make_commit("independent.txt", "independent", "Independent commit")
+    
+    # Component 4: Another pair
+    ctx.make_commit("pair1.txt", "pair 1", "Pair commit 1")
+    ctx.make_commit("pair2.txt", "pair 2", "Pair commit 2 (related)")
+    
+    # Run breakup with --stacks
+    output = run_cmd("pyspr breakup --stacks -v")
+    log.info(f"Breakup stacks output:\n{output}")
+    
+    # Verify output shows multi-stack analysis
+    assert "Multi-Stack Breakup Analysis" in output
+    assert "component(s)" in output
+    assert "Component" in output
+    
+    # Check for stack creation messages
+    assert "single-commit" in output.lower() or "multi-commit" in output.lower()
+    
+    # Verify branches were created
+    branches_output = run_cmd("git branch")
+    log.info(f"Branches after breakup:\n{branches_output}")
+    
+    # Should have created pyspr/cp/ branches for single commits
+    assert "pyspr/cp/" in branches_output
+    
+    # Should have created pyspr/stack/ branches for multi-commit components
+    if "multi-commit component" in output:
+        assert "pyspr/stack/" in branches_output or "component" in branches_output
+    
+    log.info("=== TEST BREAKUP STACKS COMPLETED SUCCESSFULLY ===")

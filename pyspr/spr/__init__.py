@@ -693,8 +693,11 @@ class StackedPR:
             pr.merged = True
             print(str(pr))
 
-    def breakup_pull_requests(self, ctx: StackedPRContextProtocol, reviewers: Optional[List[str]] = None, count: Optional[int] = None, commit_ids: Optional[List[str]] = None) -> None:
-        """Break up current commit stack into independent branches/PRs."""
+    def breakup_pull_requests(self, ctx: StackedPRContextProtocol, reviewers: Optional[List[str]] = None, count: Optional[int] = None, commit_ids: Optional[List[str]] = None, stacks: bool = False) -> None:
+        """Break up current commit stack into independent branches/PRs.
+        
+        If stacks=True, creates multiple PR stacks based on commit dependencies.
+        """
         from ..pretty import print_header
         
         # Get local commits
@@ -737,6 +740,10 @@ class StackedPR:
             logger.info(f"Breaking up {len(non_wip_commits)} commits (filtered from {len(local_commits)} total) into independent branches/PRs")
         else:
             logger.info(f"Breaking up {len(non_wip_commits)} commits into independent branches/PRs")
+        
+        # If stacks mode is enabled, analyze dependencies and create multiple PR stacks
+        if stacks:
+            return self._breakup_into_stacks(ctx, non_wip_commits, reviewers)
         
         # Get current branch to restore at the end
         current_branch = self.git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
@@ -1164,3 +1171,380 @@ class StackedPR:
         
         if independent_commits:
             print(f"\nTip: You can use 'pyspr breakup' to create independent PRs for the {len(independent_commits)} independent commits.")
+    
+    def _analyze_commit_dependencies(self, commits: List[Commit]) -> Dict[str, List[str]]:
+        """Analyze which commits depend on which other commits.
+        
+        Returns a dict mapping commit hash to list of commit hashes it depends on.
+        """
+        import tempfile
+        import os
+        
+        dependencies: Dict[str, List[str]] = {}
+        base_branch = self.config.repo.github_branch
+        remote = self.config.repo.github_remote
+        
+        # Save current branch
+        current_branch = self.git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for i, commit in enumerate(commits):
+                dependencies[commit.commit_hash] = []
+                
+                # Generate patch for this commit
+                patch_dir = os.path.join(tmpdir, commit.commit_id)
+                os.makedirs(patch_dir, exist_ok=True)
+                
+                try:
+                    self.git_cmd.must_git(f"format-patch -1 {commit.commit_hash} -o {patch_dir}")
+                    patch_files = [f for f in os.listdir(patch_dir) if f.endswith('.patch')]
+                    if not patch_files:
+                        continue
+                    
+                    patch_path = os.path.join(patch_dir, patch_files[0])
+                    
+                    # Test if it applies to base
+                    try:
+                        self.git_cmd.must_git(f"checkout -q {remote}/{base_branch}")
+                        self.git_cmd.must_git(f"apply --check {patch_path}")
+                        # If it applies to base, it has no dependencies from our commits
+                    except:
+                        # Doesn't apply to base, check against earlier commits
+                        for j in range(i):
+                            earlier_commit = commits[j]
+                            try:
+                                self.git_cmd.must_git(f"checkout -q {earlier_commit.commit_hash}")
+                                self.git_cmd.must_git(f"apply --check {patch_path}")
+                                # If it applies after this commit, it depends on it
+                                dependencies[commit.commit_hash].append(earlier_commit.commit_hash)
+                            except:
+                                pass
+                            
+                finally:
+                    # Return to original branch
+                    try:
+                        self.git_cmd.must_git(f"checkout -q {current_branch}")
+                    except:
+                        pass
+                        
+        return dependencies
+    
+    def _find_strongly_connected_components(self, commits: List[Commit], dependencies: Dict[str, List[str]]) -> List[List[Commit]]:
+        """Find strongly connected components using Tarjan's algorithm."""
+        # Build reverse dependencies (who depends on me)
+        reverse_deps: Dict[str, List[str]] = {c.commit_hash: [] for c in commits}
+        for commit_hash, deps in dependencies.items():
+            for dep in deps:
+                if dep in reverse_deps:
+                    reverse_deps[dep].append(commit_hash)
+        
+        # Tarjan's algorithm
+        index_counter = [0]
+        stack: List[str] = []
+        lowlinks: Dict[str, int] = {}
+        index: Dict[str, int] = {}
+        on_stack: Dict[str, bool] = {}
+        sccs: List[List[str]] = []
+        
+        def strongconnect(v: str) -> None:
+            index[v] = index_counter[0]
+            lowlinks[v] = index_counter[0]
+            index_counter[0] += 1
+            stack.append(v)
+            on_stack[v] = True
+            
+            # Check both forward and reverse dependencies for strong connectivity
+            neighbors = set(dependencies.get(v, []) + reverse_deps.get(v, []))
+            
+            for w in neighbors:
+                if w not in index:
+                    strongconnect(w)
+                    lowlinks[v] = min(lowlinks[v], lowlinks[w])
+                elif on_stack.get(w, False):
+                    lowlinks[v] = min(lowlinks[v], index[w])
+                    
+            if lowlinks[v] == index[v]:
+                scc: List[str] = []
+                while True:
+                    w = stack.pop()
+                    on_stack[w] = False
+                    scc.append(w)
+                    if w == v:
+                        break
+                sccs.append(scc)
+                
+        # Find all SCCs
+        for commit in commits:
+            if commit.commit_hash not in index:
+                strongconnect(commit.commit_hash)
+                
+        # Convert back to commits and maintain order
+        commit_map = {c.commit_hash: c for c in commits}
+        result: List[List[Commit]] = []
+        
+        for scc in sccs:
+            component: List[Commit] = []
+            for hash in scc:
+                if hash in commit_map:
+                    component.append(commit_map[hash])
+            
+            if component:
+                # Sort by original order
+                component.sort(key=lambda c: next(i for i, x in enumerate(commits) if x.commit_hash == c.commit_hash))
+                result.append(component)
+                
+        # Sort components by first commit position
+        result.sort(key=lambda comp: next(i for i, x in enumerate(commits) if x.commit_hash == comp[0].commit_hash))
+        
+        return result
+    
+    def _breakup_into_stacks(self, ctx: StackedPRContextProtocol, commits: List[Commit], reviewers: Optional[List[str]] = None) -> None:
+        """Break up commits into multiple PR stacks based on dependencies."""
+        from ..pretty import print_header
+        
+        print_header("Multi-Stack Breakup Analysis", use_emoji=True)
+        print(f"\nAnalyzing {len(commits)} commits for dependencies...")
+        
+        # Analyze dependencies
+        dependencies = self._analyze_commit_dependencies(commits)
+        
+        # Find strongly connected components
+        components = self._find_strongly_connected_components(commits, dependencies)
+        
+        print(f"\nFound {len(components)} component(s):")
+        
+        # Display components
+        for i, component in enumerate(components):
+            print(f"\nComponent {i+1} ({len(component)} commits):")
+            for commit in component:
+                deps = dependencies.get(commit.commit_hash, [])
+                # Only show deps within the component
+                internal_deps = [c.commit_id for c in component if c.commit_hash in deps]
+                if internal_deps:
+                    print(f"  - {commit.commit_hash[:8]} {commit.subject} (depends on: {', '.join(internal_deps)})")
+                else:
+                    print(f"  - {commit.commit_hash[:8]} {commit.subject}")
+        
+        # Get current branch
+        current_branch = self.git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
+        
+        # Process each component
+        single_commit_branches: List[str] = []
+        multi_commit_stacks: List[Tuple[str, List[Commit]]] = []  # (stack_branch, commits)
+        
+        for i, component in enumerate(components):
+            if len(component) == 1:
+                # Single commit - use regular breakup
+                commit = component[0]
+                branch_name = breakup_branch_name_from_commit(self.config, commit)
+                print(f"\nProcessing single-commit component {i+1}: {commit.subject}")
+                
+                if self._create_breakup_branch(commit, branch_name):
+                    single_commit_branches.append(branch_name)
+            else:
+                # Multiple commits - create a stack
+                stack_name = f"pyspr/stack/{self.config.repo.github_branch}/component-{i+1}"
+                print(f"\nProcessing multi-commit component {i+1} with {len(component)} commits")
+                print(f"  Stack branch: {stack_name}")
+                
+                if self._create_stack_branch(component, stack_name):
+                    multi_commit_stacks.append((stack_name, component))
+        
+        # Push branches and create PRs
+        print(f"\n{'[PRETEND] Would push' if self.pretend else 'Pushing'} branches...")
+        
+        if not self.pretend:
+            # Push single-commit branches
+            if single_commit_branches:
+                self._push_branches(single_commit_branches)
+            
+            # Push stack branches
+            if multi_commit_stacks:
+                stack_branches = [name for name, _ in multi_commit_stacks]
+                self._push_branches(stack_branches)
+        
+        # Create PRs
+        print(f"\n{'[PRETEND] Would create' if self.pretend else 'Creating'} pull requests...")
+        
+        if not self.pretend:
+            # Create PRs for single commits
+            if single_commit_branches:
+                self._create_breakup_prs(ctx, single_commit_branches, commits, reviewers)
+            
+            # Create stacked PRs for multi-commit components
+            for stack_branch, stack_commits in multi_commit_stacks:
+                print(f"\nCreating PR stack for {stack_branch}...")
+                # Switch to the stack branch and run update logic
+                self.git_cmd.must_git(f"checkout {stack_branch}")
+                try:
+                    # Run the update logic for this stack
+                    self.update_pull_requests(ctx, reviewers)
+                finally:
+                    # Return to original branch
+                    self.git_cmd.must_git(f"checkout {current_branch}")
+        
+        # Summary
+        print_header("Multi-Stack Breakup Complete", use_emoji=True)
+        print(f"\nProcessed {len(components)} components:")
+        print(f"  - Single-commit PRs: {len(single_commit_branches)}")
+        print(f"  - Multi-commit stacks: {len(multi_commit_stacks)}")
+        
+        if multi_commit_stacks:
+            print(f"\nCreated {len(multi_commit_stacks)} PR stack(s):")
+            for i, (stack_branch, stack_commits) in enumerate(multi_commit_stacks):
+                print(f"  Stack {i+1}: {stack_branch} ({len(stack_commits)} PRs)")
+    
+    def _create_breakup_branch(self, commit: Commit, branch_name: str) -> bool:
+        """Create a branch for a single breakup commit. Returns True if successful."""
+        
+        base_branch = self.config.repo.github_branch
+        remote = self.config.repo.github_remote
+        temp_branch = f"pyspr-temp-{commit.commit_id}"
+        
+        try:
+            # Delete temp branch if exists
+            try:
+                self.git_cmd.must_git(f"branch -D {temp_branch}")
+            except:
+                pass
+                
+            # Create temp branch from base
+            self.git_cmd.must_git(f"checkout -b {temp_branch} {remote}/{base_branch}")
+            
+            # Cherry-pick the commit
+            try:
+                self.git_cmd.must_git(f"cherry-pick {commit.commit_hash}")
+                new_hash = self.git_cmd.must_git("rev-parse HEAD").strip()
+                
+                # Create or update the branch
+                if self.pretend:
+                    logger.info(f"[PRETEND] Would create branch {branch_name}")
+                else:
+                    self.git_cmd.must_git(f"branch -f {branch_name} {new_hash}")
+                    logger.info(f"  Created branch {branch_name}")
+                    
+                return True
+                
+            except Exception as e:
+                logger.info(f"  Failed to cherry-pick: {e}")
+                try:
+                    self.git_cmd.run_cmd("cherry-pick --abort")
+                except:
+                    pass
+                return False
+                
+        finally:
+            # Return to original branch
+            current = self.git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
+            if current != temp_branch:
+                return True  # Already on correct branch
+                
+            try:
+                self.git_cmd.must_git("checkout -")
+            except:
+                self.git_cmd.must_git("checkout -f -")
+                
+            try:
+                self.git_cmd.must_git(f"branch -D {temp_branch}")
+            except:
+                pass
+                
+    def _create_stack_branch(self, commits: List[Commit], stack_name: str) -> bool:
+        """Create a branch with multiple commits for a stack. Returns True if successful."""
+        base_branch = self.config.repo.github_branch
+        remote = self.config.repo.github_remote
+        
+        try:
+            # Delete branch if exists
+            try:
+                self.git_cmd.must_git(f"branch -D {stack_name}")
+            except:
+                pass
+                
+            # Create branch from base
+            if self.pretend:
+                logger.info(f"[PRETEND] Would create stack branch {stack_name}")
+                return True
+            else:
+                self.git_cmd.must_git(f"checkout -b {stack_name} {remote}/{base_branch}")
+                
+                # Cherry-pick all commits in order
+                for commit in commits:
+                    try:
+                        self.git_cmd.must_git(f"cherry-pick {commit.commit_hash}")
+                        logger.info(f"  Added {commit.commit_hash[:8]} to stack")
+                    except Exception as e:
+                        logger.error(f"  Failed to cherry-pick {commit.commit_hash[:8]}: {e}")
+                        # Try to continue with remaining commits
+                        try:
+                            self.git_cmd.run_cmd("cherry-pick --abort")
+                        except:
+                            pass
+                            
+                return True
+                
+        finally:
+            # Return to original branch
+            try:
+                self.git_cmd.must_git("checkout -")
+            except:
+                pass
+                
+    def _push_branches(self, branches: List[str]) -> None:
+        """Push a list of branches to remote."""
+        if not branches:
+            return
+            
+        remote = self.config.repo.github_remote
+        batch_size = 5  # Git's limit
+        
+        for i in range(0, len(branches), batch_size):
+            batch = branches[i:i + batch_size]
+            refs = [f"{branch}:refs/heads/{branch}" for branch in batch]
+            cmd = f"push --force {remote} " + " ".join(refs)
+            
+            try:
+                self.git_cmd.must_git(cmd)
+                logger.info(f"  Pushed {len(batch)} branches")
+            except Exception as e:
+                logger.error(f"  Failed to push batch: {e}")
+                
+    def _create_breakup_prs(self, ctx: StackedPRContextProtocol, branches: List[str], all_commits: List[Commit], reviewers: Optional[List[str]] = None) -> None:
+        """Create PRs for breakup branches."""
+        from ..git import breakup_branch_name_from_commit
+        
+        github_info = self.github.get_info(ctx, self.git_cmd)
+        
+        # Map branches to commits
+        commit_map: Dict[str, Commit] = {}
+        for commit in all_commits:
+            branch = breakup_branch_name_from_commit(self.config, commit)
+            if branch in branches:
+                commit_map[branch] = commit
+                
+        for branch in branches:
+            if branch not in commit_map:
+                continue
+                
+            commit = commit_map[branch]
+            
+            # Check if PR already exists
+            existing_pr = self.github.get_pull_request_for_branch(ctx, branch)
+            
+            if existing_pr:
+                logger.info(f"  PR #{existing_pr.number} already exists for {branch}")
+            else:
+                # Create new PR
+                if github_info:
+                    pr = self.github.create_pull_request(ctx, self.git_cmd, github_info, 
+                                                       commit, None, use_breakup_branch=True)
+                    logger.info(f"  Created PR #{pr.number} for {branch}")
+                    
+                    # Add reviewers
+                    if reviewers:
+                        try:
+                            self.github.add_reviewers(ctx, pr, reviewers)
+                        except Exception as e:
+                            logger.error(f"  Failed to add reviewers: {e}")
+                else:
+                    logger.error("  Cannot create PR - GitHub info not available")
