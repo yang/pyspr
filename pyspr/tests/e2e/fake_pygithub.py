@@ -399,6 +399,10 @@ class FakePullRequest:
                 # Clone the bare repository
                 _run_git_command(['clone', str(remote_dir), '.'], clone_dir)
                 
+                # Configure git user for the merge commit
+                _run_git_command(['config', 'user.name', 'Test User'], clone_dir)
+                _run_git_command(['config', 'user.email', 'test@example.com'], clone_dir)
+                
                 # Make sure we're on main branch
                 _run_git_command(['checkout', 'main'], clone_dir)
                 
@@ -681,7 +685,11 @@ def _run_git_command(cmd: List[str], cwd: Path, check: bool = True) -> str:
                               text=True, 
                               check=check)
         return result.stdout.strip()
-    except subprocess.CalledProcessError:
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Git command failed: {' '.join(['git'] + cmd)}")
+        logger.error(f"Exit code: {e.returncode}")
+        logger.error(f"Stdout: {e.stdout}")
+        logger.error(f"Stderr: {e.stderr}")
         if check:
             raise
         return ""
