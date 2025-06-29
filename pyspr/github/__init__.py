@@ -500,32 +500,41 @@ class GitHubClient:
             current_user = ensure(self.client.get_user()).login
             repo = ensure(self.repo)
                 
-            open_prs = list(repo.get_pulls(state='open'))
-            user_prs = [pr for pr in open_prs if pr.user and pr.user.login == current_user]
-            logger.info(f"Found {len(user_prs)} open PRs by {current_user} out of {len(open_prs)} total")
+            # Get PRs more efficiently by checking branch pattern first
+            open_prs = repo.get_pulls(state='open')
+            user_prs: List[GitHubPullRequestProtocol] = []
+            for pr in open_prs:
+                # Check if it's our user and matches spr branch pattern before adding
+                if pr.user and pr.user.login == current_user:
+                    if re.match(spr_branch_pattern, str(pr.head.ref)):
+                        user_prs.append(pr)
+            logger.info(f"Found {len(user_prs)} spr PRs by {current_user}")
             
             for pr in user_prs:
                 branch_match = re.match(spr_branch_pattern, str(pr.head.ref))
                 if branch_match:
                     logger.debug(f"Processing PR #{pr.number} with branch {pr.head.ref}")
-                    commit_id = branch_match.group(2)
+                    commit_id = branch_match.group(1)
                     commit_hash = pr.head.sha
                     all_commits: List[Commit] = []
                     try:
-                        commits_in_pr = list(pr.get_commits())
+                        commits_in_pr = pr.get_commits()
                         if commits_in_pr:
-                            last_commit = commits_in_pr[-1]
-                            msg_commit_id = re.search(r'commit-id:([a-f0-9]{8})', str(last_commit.commit.message))
-                            if msg_commit_id:
-                                commit_id = msg_commit_id.group(1)
-                            
-                            # Get all commit IDs
-                            for c in commits_in_pr:
-                                c_msg = str(c.commit.message)
-                                c_id_match = re.search(r'commit-id:([a-f0-9]{8})', c_msg)
-                                if c_id_match:
-                                    c_id = c_id_match.group(1)
-                                    all_commits.append(Commit.from_strings(c_id, c.sha, c.commit.message.split('\n')[0]))
+                            commits_list = list(commits_in_pr)
+                            if commits_list:
+                                last_commit = commits_list[-1]
+                                msg_commit_id = re.search(r'commit-id:([a-f0-9]{8})', str(last_commit.commit.message))
+                                if msg_commit_id:
+                                    commit_id = msg_commit_id.group(1)
+                                
+                                # Get all commit IDs
+                                for c in commits_list:
+                                    c_msg = str(c.commit.message)
+                                    c_id_match = re.search(r'commit-id:([a-f0-9]{8})', c_msg)
+                                    if c_id_match:
+                                        c_id = c_id_match.group(1)
+                                        c_subject = c_msg.split('\n')[0]
+                                        all_commits.append(Commit.from_strings(c_id, c.sha, c_subject))
                     except Exception as e:
                         logger.error(f"Error getting commits for PR #{pr.number}: {e}")
                         pass

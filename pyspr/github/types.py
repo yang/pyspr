@@ -101,8 +101,8 @@ class PyGithubRequesterInternal(Protocol):
         parameters: Optional[Dict[str, object]] = None,
         headers: Optional[Dict[str, str]] = None,
         input: Optional[Dict[str, object]] = None
-    ) -> Tuple[int, Dict[str, object], Dict[str, object]]:
-        """PyGithub's internal method returns (status, headers, data)."""
+    ) -> Tuple[Dict[str, object], Dict[str, object]]:
+        """PyGithub's internal method returns (headers, data)."""
         ...
 
 class GitHubRequester(Protocol):

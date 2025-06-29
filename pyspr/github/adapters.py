@@ -212,9 +212,8 @@ class PyGithubRequesterAdapter(GitHubRequester):
         headers: Optional[Dict[str, str]] = None, input: Optional[Dict[str, object]] = None
     ) -> GraphQLResponseType:
         """Make a request and return the response."""
-        # PyGithub's requestJsonAndCheck returns (status, headers, data)
-        # We need to return (headers, data) to match our protocol
-        _status, response_headers, data = self._requester.requestJsonAndCheck(
+        # PyGithub's requestJsonAndCheck returns (headers, data)
+        response_headers, data = self._requester.requestJsonAndCheck(
             verb, url, parameters=parameters, headers=headers, input=input
         )
         # Ensure headers is never None

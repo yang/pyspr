@@ -37,11 +37,14 @@ class RepoContext:
     def make_commit(self, file: str, content: str, msg: str) -> str:
         """Create a commit with the test tag embedded."""
         full_msg = f"{msg} [test-tag:{self.tag}]"
-        full_path = os.path.join(self.repo_dir, file)
+        # Make filename unique by including part of the tag
+        tag_suffix = self.tag.split('-')[-1][:8]  # Use last 8 chars of tag
+        unique_file = f"{file}.{tag_suffix}" if not file.endswith(tag_suffix) else file
+        full_path = os.path.join(self.repo_dir, unique_file)
         try:
             with open(full_path, "w") as f:
-                f.write(f"{file}\n{content}\n")
-            run_cmd(f"git add {file}")
+                f.write(f"{unique_file}\n{content}\n")
+            run_cmd(f"git add {unique_file}")
             run_cmd(f'git commit -m "{full_msg}"')
             return self.git_cmd.must_git("rev-parse HEAD").strip()
         except subprocess.CalledProcessError as e:
@@ -224,11 +227,11 @@ def run_cmd(cmd: str, cwd: Optional[str] = None, check: bool = True,
         pass
 
     # Replace standalone pyspr command with rye run pyspr from project root
-    # and ensure it uses mock GitHub by setting the environment variable
     actual_cwd = cwd
     if cmd.startswith("pyspr ") or cmd == "pyspr":
-        # Explicitly set SPR_USING_MOCK_GITHUB=true to ensure pyspr commands use mock GitHub
-        cmd = "SPR_USING_MOCK_GITHUB=true rye run " + cmd
+        # Preserve the current SPR_USING_MOCK_GITHUB setting
+        mock_setting = os.environ.get("SPR_USING_MOCK_GITHUB", "true")
+        cmd = f"SPR_USING_MOCK_GITHUB={mock_setting} rye run " + cmd
         if project_root:
             actual_cwd = project_root
             cmd = f"cd {actual_cwd} && {cmd} -C {cwd}" if cwd else f"cd {actual_cwd} && {cmd} -C {orig_cwd}"
@@ -330,7 +333,10 @@ def create_repo_context(owner: str, name: str, test_name: str) -> Generator[Repo
                 'user': {}
             })
             git_cmd = RealGit(config)
-            github = GitHubClient(None, config)
+            # Import here to avoid circular imports
+            from pyspr.tests.e2e.mock_setup import create_github_client
+            # Create GitHub client - will use real GitHub since SPR_USING_MOCK_GITHUB=false
+            github = create_github_client(None, config)
             
             ctx = RepoContext(
                 owner=owner,

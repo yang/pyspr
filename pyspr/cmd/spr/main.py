@@ -123,7 +123,21 @@ def setup_git(directory: Optional[str] = None) -> Tuple[Config, RealGit, GitHubC
         github = create_github_client(None, config, force_mock=False)
     else:
         logger.info("Using real GitHub client")
-        github = GitHubClient(None, config)
+        # Need to create real PyGithub client with adapter
+        from ...github import find_github_token
+        from ...github.adapters import PyGithubAdapter
+        from github import Github
+        
+        token = find_github_token()
+        if not token:
+            error_msg = "No GitHub token found. Try one of:\n1. Set GITHUB_TOKEN env var\n2. Log in with 'gh auth login'\n3. Put token in /home/ubuntu/code/pyspr/token file"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        
+        # Create a real PyGithub client wrapped in our adapter
+        real_github = Github(token)
+        github_client = PyGithubAdapter(real_github)
+        github = GitHubClient(None, config, github_client=github_client)
 
     return config, git_cmd, github
 
