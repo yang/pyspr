@@ -455,7 +455,7 @@ class FakePullRequest:
                 logger.info(f"Git log after merge:\n{merge_log}")
                 
                 # Push the merge commit to the remote repository
-                logger.info(f"Pushing merge commit to origin/main")
+                logger.info("Pushing merge commit to origin/main")
                 push_output = _run_git_command(['push', 'origin', 'main'], clone_dir)
                 logger.info(f"Push output: {push_output}")
                 
