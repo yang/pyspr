@@ -20,7 +20,7 @@ def get_local_commit_stack(config: PysprConfig, git_cmd: GitInterface) -> List[C
         try:
             upstream = git_cmd.must_git("rev-parse --abbrev-ref @{upstream}").strip()
             logger.debug(f"Using upstream branch: {upstream}")
-        except:
+        except Exception:
             # Fall back to configured remote/branch
             remote = config.repo.github_remote
             branch = config.repo.github_branch
@@ -54,7 +54,7 @@ def get_local_commit_stack(config: PysprConfig, git_cmd: GitInterface) -> List[C
             # Try to get the upstream branch
             try:
                 target = git_cmd.must_git("rev-parse --abbrev-ref @{upstream}").strip()
-            except:
+            except Exception:
                 # Fall back to configured remote/branch
                 remote = config.repo.github_remote
                 branch = config.repo.github_branch

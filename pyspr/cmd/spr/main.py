@@ -7,9 +7,6 @@ import logging
 from typing import List, Optional, Tuple, Dict, Any
 from click import Context
 
-# Get module logger
-logger = logging.getLogger(__name__)
-
 from ...config import Config, default_config
 from ...config.config_parser import parse_config
 from ...config.models import PysprConfig
@@ -17,6 +14,9 @@ from ...git import RealGit
 from ...github import GitHubClient 
 from ...spr import StackedPR
 from ...typing import GitInterface, StackedPRContextProtocol
+
+# Get module logger
+logger = logging.getLogger(__name__)
 
 # Import from tests - only used when running in test mode
 # Define mock availability flag
@@ -76,16 +76,16 @@ def restore_git_state(git_cmd: GitInterface, branch: str, head: str) -> None:
     for abort_cmd in ["cherry-pick --abort", "rebase --abort", "merge --abort"]:
         try:
             git_cmd.run_cmd(abort_cmd)
-        except:
+        except Exception:
             pass
     
     # Try to checkout original branch
     try:
         git_cmd.must_git(f"checkout {branch}")
-    except:
+    except Exception:
         try:
             git_cmd.must_git(f"checkout -f {branch}")
-        except:
+        except Exception:
             logger.error(f"Failed to checkout {branch}")
     
     # Reset to original HEAD

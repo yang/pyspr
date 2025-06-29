@@ -56,7 +56,7 @@ def run_twice_in_mock_mode(func: F) -> F:
             # First run - normal
             result = func(*args, **kwargs)
             
-            logger.info(f"=== Resetting git state for second run ===")
+            logger.info("=== Resetting git state for second run ===")
             
             # Reset git state but preserve fake GitHub state
             os.chdir(test_repo_ctx.repo_dir)

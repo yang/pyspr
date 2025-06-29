@@ -1,8 +1,6 @@
 """End-to-end test for amending commits in stack, PR stack isolation, WIP and reviewer behavior."""
 # pyright: reportUnusedVariable=none
 
-CURRENT_USER = "yang"  # Since we're using yang's token for tests
-
 import os
 import sys
 import uuid
@@ -20,6 +18,8 @@ from pyspr.git import RealGit
 from pyspr.github import GitHubClient, PullRequest, GitHubInfo
 from pyspr.typing import Commit
 from pyspr.tests.e2e.fixtures import create_test_repo
+
+CURRENT_USER = "yang"  # Since we're using yang's token for tests
 
 
 @runtime_checkable
@@ -132,7 +132,7 @@ def test_delete_insert(test_repo_ctx: RepoContext) -> None:
     
     assert pr1_after is not None, f"PR1 #{pr1_num} should exist"
     assert pr3_after is not None, f"PR3 #{pr3_num} should exist"
-    assert pr35 is not None, f"New PR for c3.5 should exist"
+    assert pr35 is not None, "New PR for c3.5 should exist"
     assert pr4_after is not None, f"PR4 #{pr4_num} should exist"
     
     # Verify new PR chain
@@ -180,7 +180,7 @@ def test_wip_behavior(test_repo_ctx: RepoContext, caplog: pytest.LogCaptureFixtu
     
     # Run update to create PRs
     log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} Running pyspr update...")
-    run_cmd(f"pyspr update")
+    run_cmd("pyspr update")
     log.info(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} pyspr update complete")
     
     # Get commit hashes after update
@@ -323,7 +323,7 @@ def test_reviewer_functionality(test_repo_ctx: RepoContext) -> None:
                         commit_msg: str = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
                         if f"test-tag:{tag}" in commit_msg:
                             result.append(pr)
-                    except:  # Skip failures since we're just filtering
+                    except Exception:  # Skip failures since we're just filtering
                         pass
             return result
 
@@ -492,7 +492,6 @@ def test_reorder(test_repo_ctx: RepoContext) -> None:
     and verifies PR state after reordering."""
     ctx = test_repo_ctx
     git_cmd = ctx.git_cmd
-    github = ctx.github
 
     # Create commits c1, c2, c3, c4
     ctx.make_commit("test1.txt", "test content 1", "First commit")
@@ -550,7 +549,7 @@ def test_reorder(test_repo_ctx: RepoContext) -> None:
     run_cmd(f"git cherry-pick {commit3_hash}")  # c3 now after c4
 
     # Run pyspr update again
-    run_cmd(f"pyspr update -v")
+    run_cmd("pyspr update -v")
 
     # Get PRs after reordering
     prs = ctx.get_test_prs()
@@ -1057,7 +1056,7 @@ def test_no_rebase_functionality(test_repo_ctx: RepoContext, caplog: pytest.LogC
             no_rebase = config.user.no_rebase
             log.info(f"DEBUG: no_rebase={no_rebase}")  # Use log.info instead of log
             if not no_rebase:
-                git_cmd.must_git(f"rebase origin/main --autostash")
+                git_cmd.must_git("rebase origin/main --autostash")
 
             # Reset config for cleanup
             config.user.no_rebase = False
@@ -1091,8 +1090,6 @@ def test_update_after_merge(test_repo_ctx: RepoContext) -> None:
     4. Verify only remaining PR is updated
     """
     ctx = test_repo_ctx
-    git_cmd = ctx.git_cmd
-    github = ctx.github
 
     # Create two commits with unique filenames to avoid conflicts
     log.info("\nCreating two commits...")
@@ -1355,7 +1352,7 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
                     commit_msg: str = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
                     if f"test-tag:{unique_tag1}" in commit_msg or f"test-tag:{unique_tag2}" in commit_msg:
                         result.append(pr)
-                except:  # Skip failures since we're just filtering
+                except Exception:  # Skip failures since we're just filtering
                     pass
         return result
 
@@ -1436,22 +1433,22 @@ def test_breakup_command(test_repo_ctx: RepoContext) -> None:
     
     # Create a stack of commits where some depend on others
     ctx.make_commit("base.txt", "base content", "Base commit")
-    base_hash = ctx.git_cmd.must_git("rev-parse HEAD").strip()
+    ctx.git_cmd.must_git("rev-parse HEAD").strip()
     
     # Independent commit
     ctx.make_commit("independent1.txt", "independent content 1", "Independent commit 1") 
-    independent1_hash = ctx.git_cmd.must_git("rev-parse HEAD").strip()
+    ctx.git_cmd.must_git("rev-parse HEAD").strip()
     
     # Commit that modifies base.txt (depends on base commit)
     with open("base.txt", "a") as f:
         f.write("\nAdditional content")
     run_cmd("git add base.txt")
     run_cmd('git commit -m "Dependent commit - modifies base.txt [test-tag:' + ctx.tag + ']"')
-    dependent_hash = ctx.git_cmd.must_git("rev-parse HEAD").strip()
+    ctx.git_cmd.must_git("rev-parse HEAD").strip()
     
     # Another independent commit
     ctx.make_commit("independent2.txt", "independent content 2", "Independent commit 2")
-    independent2_hash = ctx.git_cmd.must_git("rev-parse HEAD").strip()
+    ctx.git_cmd.must_git("rev-parse HEAD").strip()
     
     # Run breakup command
     run_cmd("pyspr breakup")
@@ -1499,10 +1496,10 @@ def test_breakup_with_existing_prs(test_repo_ctx: RepoContext) -> None:
     # Create commits with unique filenames to avoid conflicts
     unique_suffix = str(uuid.uuid4())[:8]
     ctx.make_commit(f"file1_{unique_suffix}.txt", "content1", "First commit")
-    commit1_hash = ctx.git_cmd.must_git("rev-parse HEAD").strip()
+    ctx.git_cmd.must_git("rev-parse HEAD").strip()
     
     ctx.make_commit(f"file2_{unique_suffix}.txt", "content2", "Second commit")
-    commit2_hash = ctx.git_cmd.must_git("rev-parse HEAD").strip()
+    ctx.git_cmd.must_git("rev-parse HEAD").strip()
     
     # Run breakup once - this will add commit-ids to the commits
     run_cmd("pyspr breakup")
@@ -1518,7 +1515,7 @@ def test_breakup_with_existing_prs(test_repo_ctx: RepoContext) -> None:
     initial_pr_numbers = {pr.number for pr in initial_prs}
     
     # Get the updated commit hashes after breakup (which added commit-ids)
-    updated_commit1_hash = ctx.git_cmd.must_git("rev-parse HEAD~1").strip()
+    ctx.git_cmd.must_git("rev-parse HEAD~1").strip()
     updated_commit2_hash = ctx.git_cmd.must_git("rev-parse HEAD").strip()
     
     # Modify the first commit
@@ -1530,7 +1527,7 @@ def test_breakup_with_existing_prs(test_repo_ctx: RepoContext) -> None:
     # Amend but preserve the commit-id tag
     updated_msg = existing_msg.replace("First commit", "First commit - updated")
     run_cmd(f"git commit --amend -m '{updated_msg}'")
-    new_commit1_hash = ctx.git_cmd.must_git("rev-parse HEAD").strip()
+    ctx.git_cmd.must_git("rev-parse HEAD").strip()
     
     # Cherry-pick second commit using the UPDATED hash that has commit-id
     run_cmd(f"git cherry-pick {updated_commit2_hash}")
@@ -1701,7 +1698,7 @@ def test_breakup_preserves_unchanged_commit_hashes(test_repo_ctx: RepoContext) -
     
     # Verify the output shows the branch was not updated
     assert "already up to date (same content)" in output, \
-        f"Output should indicate branch has same content"
+        "Output should indicate branch has same content"
     
     log.info("Successfully verified that unchanged commit preserved its hash")
     
@@ -1759,7 +1756,7 @@ def test_breakup_preserves_unchanged_commit_hashes(test_repo_ctx: RepoContext) -
     
     # The output should indicate the branch wasn't updated
     assert "already up to date (same changes)" in output or "already up to date (same content)" in output, \
-        f"Output should indicate branch has same changes despite base change"
+        "Output should indicate branch has same changes despite base change"
 
 
 @run_twice_in_mock_mode
@@ -1776,7 +1773,7 @@ def test_breakup_pr_already_exists_error(test_repo_ctx: RepoContext) -> None:
     # Get the PR info
     info = ctx.github.get_info(None, ctx.git_cmd)
     assert info is not None
-    breakup_prs = [pr for pr in info.pull_requests if pr.from_branch and pr.from_branch.startswith("pyspr/cp/")]
+    [pr for pr in info.pull_requests if pr.from_branch and pr.from_branch.startswith("pyspr/cp/")]
     
     # We should have 0 breakup PRs in the regular PR list (they're not part of the stack)
     # But let's check via the repo directly
@@ -1792,7 +1789,7 @@ def test_breakup_pr_already_exists_error(test_repo_ctx: RepoContext) -> None:
     
     # Now simulate the scenario where GitHub API would return "PR already exists"
     # by running breakup again without any changes
-    output = run_cmd("pyspr breakup")
+    run_cmd("pyspr breakup")
     
     # Check that we didn't create duplicate PRs
     all_prs_after = list(repo.get_pulls(state='open'))

@@ -7,6 +7,13 @@ from typing import Dict, List, Optional, Literal, Protocol, runtime_checkable, T
 import re
 
 from ..util import ensure
+from .types import (
+    GraphQLResponseType, GitHubRequester,
+    parse_graphql_response
+)
+from ..git import Commit, GitInterface
+from ..config.models import PysprConfig
+from ..typing import StackedPRContextProtocol, StackedPRContextType
 
 T = TypeVar('T')
 
@@ -15,16 +22,6 @@ MergeMethod = Literal['merge', 'squash', 'rebase']
 
 # Get module logger
 logger = logging.getLogger(__name__)
-
-# Import GraphQL response types from dedicated module
-from .types import (
-    GraphQLResponseType, GitHubRequester,
-    parse_graphql_response
-)
-
-from ..git import Commit, GitInterface
-from ..config.models import PysprConfig
-from ..typing import StackedPRContextProtocol, StackedPRContextType
 
 @dataclass
 class PullRequest:
@@ -542,7 +539,7 @@ class GitHubClient:
                     commit = Commit.from_strings(commit_id, commit_hash, pr.title)
                     try:
                         in_queue = False
-                    except:
+                    except Exception:
                         in_queue = False
                         
                     new_pr = PullRequest(pr.number, commit, all_commits,
@@ -703,7 +700,7 @@ class GitHubClient:
         try:
             # auto_merge is a GraphQL-only feature, use getattr
             in_queue = getattr(gh_pr, 'auto_merge', None) is not None
-        except:
+        except Exception:
             in_queue = False
 
         # Check if this is a breakup PR by looking at the branch name
@@ -774,7 +771,7 @@ class GitHubClient:
         if not self.repo:
             return []
             
-        logger.info(f"> github get assignable users")
+        logger.info("> github get assignable users")
             
         users = self.repo.get_assignees()
         return [{"login": u.login, "id": u.login} for u in users]

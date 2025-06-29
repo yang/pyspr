@@ -8,6 +8,11 @@ from typing import Dict, List, Optional, TypedDict, Sequence, Tuple
 import time
 from concurrent.futures import Future
 
+from ..git import Commit, get_local_commit_stack, branch_name_from_commit, breakup_branch_name_from_commit, GitInterface
+from ..config.models import PysprConfig
+from ..github import GitHubInfo, PullRequest, GitHubClient
+from ..typing import StackedPRContextProtocol
+
 # Set up logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -17,11 +22,6 @@ formatter = logging.Formatter('%(message)s')
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 logger.propagate = False  # Don't double log
-
-from ..git import Commit, get_local_commit_stack, branch_name_from_commit, breakup_branch_name_from_commit, GitInterface
-from ..config.models import PysprConfig
-from ..github import GitHubInfo, PullRequest, GitHubClient
-from ..typing import StackedPRContextProtocol
 
 class UpdateItem(TypedDict):
     """Type for update queue items."""
@@ -412,7 +412,7 @@ class StackedPR:
                 
             prev_commit: Optional[Commit] = non_wip_commits[commit_index-1] if commit_index > 0 else None
             logger.debug(f"\n  Processing commit {commit.commit_hash[:8]}: id={commit.commit_id}")
-            logger.debug(f"  Valid PRs to match against:")
+            logger.debug("  Valid PRs to match against:")
             for vpr in valid_pull_requests:
                 logger.debug(f"    PR #{vpr.number}: commit_id={vpr.commit.commit_id}, branch={vpr.from_branch}")
 
@@ -457,7 +457,7 @@ class StackedPR:
                         base_ref=base_branch
                     )
                 else:
-                    logger.debug(f"  No matching PR found, creating new PR")
+                    logger.debug("  No matching PR found, creating new PR")
                     pr = self.github.create_pull_request(ctx, self.git_cmd, github_info, commit, prev_commit, labels=all_labels)
                 github_info.pull_requests.append(pr)
                 update_queue.append({
@@ -788,7 +788,7 @@ class StackedPR:
                 # Delete the temp branch if it already exists from a previous failed run
                 try:
                     self.git_cmd.must_git(f"branch -D {temp_branch}")
-                except:
+                except Exception:
                     pass  # Branch doesn't exist, which is fine
                 
                 no_rebase = self.config.user.no_rebase
@@ -798,7 +798,7 @@ class StackedPR:
                     try:
                         self.git_cmd.must_git(f"rev-parse --verify {base_branch}")
                         self.git_cmd.must_git(f"checkout -b {temp_branch} {base_branch}")
-                    except:
+                    except Exception:
                         # Fallback to master if configured base branch doesn't exist
                         logger.warning(f"Base branch '{base_branch}' not found locally, falling back to 'master'")
                         self.git_cmd.must_git(f"checkout -b {temp_branch} master")
@@ -817,7 +817,7 @@ class StackedPR:
                     try:
                         existing_hash = self.git_cmd.must_git(f"rev-parse {branch_name}").strip()
                         branch_exists = True
-                    except:
+                    except Exception:
                         branch_exists = False
                         existing_hash = None
                     
@@ -873,7 +873,7 @@ class StackedPR:
                     # Abort cherry-pick if in progress
                     try:
                         self.git_cmd.run_cmd("cherry-pick --abort")
-                    except:
+                    except Exception:
                         pass
                         
             finally:
@@ -882,18 +882,18 @@ class StackedPR:
                 try:
                     # First try regular checkout
                     self.git_cmd.must_git(f"checkout {current_branch}")
-                except:
+                except Exception:
                     # If that fails due to uncommitted changes, force it
                     try:
                         self.git_cmd.must_git(f"checkout -f {current_branch}")
-                    except:
+                    except Exception:
                         # As a last resort, reset and then checkout
                         self.git_cmd.must_git("reset --hard HEAD")
                         self.git_cmd.must_git(f"checkout {current_branch}")
                 
                 try:
                     self.git_cmd.must_git(f"branch -D {temp_branch}")
-                except:
+                except Exception:
                     pass
         
         # Push all created branches
@@ -1109,7 +1109,7 @@ class StackedPR:
                         test_branch = f"pyspr-analyze-test-{commit.commit_id}"
                         try:
                             self.git_cmd.must_git(f"branch -D {test_branch}")
-                        except:
+                        except Exception:
                             pass  # Branch doesn't exist
                         
                         # Checkout base branch in detached HEAD to avoid modifying it
@@ -1138,7 +1138,7 @@ class StackedPR:
                         # Make sure we're back on the original branch
                         try:
                             self.git_cmd.must_git(f"checkout -q {current_branch}")
-                        except:
+                        except Exception:
                             pass
                         
                 except Exception as e:
@@ -1164,7 +1164,7 @@ class StackedPR:
             print("   None")
         
         # Summary
-        print(f"\nSummary:")
+        print("\nSummary:")
         print(f"  Total commits: {len(non_wip_commits)}")
         print(f"  Independent: {len(independent_commits)} ({len(independent_commits)*100//len(non_wip_commits) if non_wip_commits else 0}%)")
         print(f"  Dependent: {len(dependent_commits)} ({len(dependent_commits)*100//len(non_wip_commits) if non_wip_commits else 0}%)")
@@ -1208,7 +1208,7 @@ class StackedPR:
                         self.git_cmd.must_git(f"checkout -q {remote}/{base_branch}")
                         self.git_cmd.must_git(f"apply --check {patch_path}")
                         # If it applies to base, it has no dependencies from our commits
-                    except:
+                    except Exception:
                         # Doesn't apply to base, check against earlier commits
                         for j in range(i):
                             earlier_commit = commits[j]
@@ -1217,14 +1217,14 @@ class StackedPR:
                                 self.git_cmd.must_git(f"apply --check {patch_path}")
                                 # If it applies after this commit, it depends on it
                                 dependencies[commit.commit_hash].append(earlier_commit.commit_hash)
-                            except:
+                            except Exception:
                                 pass
                             
                 finally:
                     # Return to original branch
                     try:
                         self.git_cmd.must_git(f"checkout -q {current_branch}")
-                    except:
+                    except Exception:
                         pass
                         
         return dependencies
@@ -1405,7 +1405,7 @@ class StackedPR:
             # Delete temp branch if exists
             try:
                 self.git_cmd.must_git(f"branch -D {temp_branch}")
-            except:
+            except Exception:
                 pass
                 
             # Create temp branch from base
@@ -1429,7 +1429,7 @@ class StackedPR:
                 logger.info(f"  Failed to cherry-pick: {e}")
                 try:
                     self.git_cmd.run_cmd("cherry-pick --abort")
-                except:
+                except Exception:
                     pass
                 return False
                 
@@ -1441,12 +1441,12 @@ class StackedPR:
                 
             try:
                 self.git_cmd.must_git("checkout -")
-            except:
+            except Exception:
                 self.git_cmd.must_git("checkout -f -")
                 
             try:
                 self.git_cmd.must_git(f"branch -D {temp_branch}")
-            except:
+            except Exception:
                 pass
                 
     def _create_stack_branch(self, commits: List[Commit], stack_name: str) -> bool:
@@ -1458,7 +1458,7 @@ class StackedPR:
             # Delete branch if exists
             try:
                 self.git_cmd.must_git(f"branch -D {stack_name}")
-            except:
+            except Exception:
                 pass
                 
             # Create branch from base
@@ -1478,7 +1478,7 @@ class StackedPR:
                         # Try to continue with remaining commits
                         try:
                             self.git_cmd.run_cmd("cherry-pick --abort")
-                        except:
+                        except Exception:
                             pass
                             
                 return True
@@ -1487,7 +1487,7 @@ class StackedPR:
             # Return to original branch
             try:
                 self.git_cmd.must_git("checkout -")
-            except:
+            except Exception:
                 pass
                 
     def _push_branches(self, branches: List[str]) -> None:

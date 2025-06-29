@@ -17,10 +17,10 @@ from pyspr.github import GitHubClient, PullRequest
 if TYPE_CHECKING:
     from pyspr.github import GitHubPullRequestProtocol
 
-log = logging.getLogger(__name__)
-
 import time
 import datetime
+
+log = logging.getLogger(__name__)
 
 @dataclass
 class RepoContext:
@@ -223,7 +223,7 @@ def run_cmd(cmd: str, cwd: Optional[str] = None, check: bool = True,
                 project_root = test_dir
                 break
             test_dir = os.path.dirname(test_dir)
-    except:
+    except Exception:
         pass
 
     # Replace standalone pyspr command with rye run pyspr from project root
@@ -278,7 +278,7 @@ def get_test_prs(git_cmd: RealGit, github: GitHubClient, unique_tag: str) -> Lis
                 if f"test-tag:{unique_tag}" in commit_msg:
                     log.info(f"Found PR #{pr.number} with tag and commit ID {pr.commit.commit_id}")
                     result.append(pr)
-            except:
+            except Exception:
                 pass
     return result
 
