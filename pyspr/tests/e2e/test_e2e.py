@@ -686,8 +686,12 @@ def _run_merge_test(
         merge_cmd += f" -c {count}"
     log.info(f"\nMerging {'to queue' if use_merge_queue else 'all'} PRs{' (partial)' if count else ''}...")
     
+    # Debug: Check if mock GitHub is being used
+    log.info(f"SPR_USING_MOCK_GITHUB={os.environ.get('SPR_USING_MOCK_GITHUB', 'not set')}")
+    
     # No need for manually finding project root since run_cmd handles that
     merge_output = run_cmd(merge_cmd)
+    log.info(f"Merge command output:\n{merge_output}")
 
     # For partial merges, find the top PR number differently based on count
     to_merge = prs[:count] if count is not None else prs
@@ -740,8 +744,14 @@ def _run_merge_test(
             # Get the merge commit - try multiple times to ensure it's available
             merge_sha = ""
             merge_msg = ""
-            for attempt in range(5):
-                run_cmd("git fetch origin main")
+            for attempt in range(10):
+                # Force fetch all refs from the bare repository
+                run_cmd("git fetch origin +refs/heads/*:refs/remotes/origin/*")
+                
+                # Debug: Check what's in the bare repository directly
+                bare_repo_dir = os.path.join(os.path.dirname(repo_dir), "remote.git")
+                bare_log = run_cmd(f"git --git-dir={bare_repo_dir} log --oneline main -10")
+                log.info(f"Commits in bare repository (attempt {attempt + 1}):\n{bare_log}")
                 
                 # Get all commits on origin/main to debug
                 all_commits = git_cmd.must_git("log --oneline origin/main -10").strip()
@@ -766,9 +776,9 @@ def _run_merge_test(
                     break
                     
                 # Wait before retrying
-                if attempt < 4:
+                if attempt < 9:
                     log.info("PR reference not found, waiting before retry...")
-                    time.sleep(2)
+                    time.sleep(3)
             # Verify merge commit contains the right PR number
             pr_ref = f"#{top_pr_num}"
             log.info(f"PR reference to find: '{pr_ref}', length: {len(pr_ref)}")

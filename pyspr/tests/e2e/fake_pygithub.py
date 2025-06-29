@@ -405,7 +405,18 @@ class FakePullRequest:
                 # Fetch the PR branch
                 head_ref = self.data_record.head_ref
                 logger.info(f"Fetching PR branch: {head_ref}")
-                _run_git_command(['fetch', 'origin', head_ref], clone_dir)
+                # First, let's see what branches exist in the remote
+                remote_branches = _run_git_command(['ls-remote', '--heads', 'origin'], clone_dir)
+                logger.info(f"Remote branches:\n{remote_branches}")
+                
+                # Try to fetch the specific branch
+                try:
+                    _run_git_command(['fetch', 'origin', head_ref], clone_dir)
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"Failed to fetch PR branch {head_ref}: {e}")
+                    # Try fetching all branches
+                    logger.info("Fetching all branches instead")
+                    _run_git_command(['fetch', 'origin'], clone_dir)
                 
                 # Create a local branch to track the remote PR branch
                 pr_branch = f"pr-{self.number}"
@@ -437,13 +448,27 @@ class FakePullRequest:
                     logger.info(f"Merging PR branch {pr_branch} with no-ff")
                     _run_git_command(['merge', '--no-ff', '-F', 'merge_message.txt', pr_branch], clone_dir)
                 
+                # Log the merge commit details
+                merge_sha = _run_git_command(['rev-parse', 'HEAD'], clone_dir)
+                merge_log = _run_git_command(['log', '--oneline', '-5'], clone_dir)
+                logger.info(f"Merge commit SHA: {merge_sha}")
+                logger.info(f"Git log after merge:\n{merge_log}")
+                
                 # Push the merge commit to the remote repository
-                _run_git_command(['push', 'origin', 'main'], clone_dir)
+                logger.info(f"Pushing merge commit to origin/main")
+                push_output = _run_git_command(['push', 'origin', 'main'], clone_dir)
+                logger.info(f"Push output: {push_output}")
+                
+                # Verify the push succeeded by checking what's on origin/main
+                verify_sha = _run_git_command(['rev-parse', 'origin/main'], clone_dir)
+                logger.info(f"After push, origin/main is at: {verify_sha}")
                 
                 logger.info(f"Created merge commit for PR #{self.number} with message: {commit_title}")
         except Exception as e:
             logger.error(f"Error creating merge commit: {e}")
             logger.exception(e)  # Log the full exception for debugging
+            # Re-raise to ensure test fails if merge fails
+            raise
         
         # Save state after merging PR
         if self.data_record.github_ref:
