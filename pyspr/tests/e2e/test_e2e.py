@@ -638,10 +638,14 @@ def _run_merge_test(
         # Use static filenames but unique content
         unique = str(uuid.uuid4())[:8]
         test_files: List[str] = []
+        # Get the tag suffix that will be added by make_commit
+        tag_suffix = repo_ctx.tag.split('-')[-1][:8]  # Use last 8 chars of tag
         for i in range(num_commits):
             prefix = "test_merge" if not use_merge_queue else "mq_test"
             filename = f"{prefix}{i+1}.txt"
-            test_files.append(filename)
+            # Store the actual filename that will be created by make_commit
+            actual_filename = f"{filename}.{tag_suffix}"
+            test_files.append(actual_filename)
             content = f"line 1 - {unique}"
             msg = f"Test {'merge queue' if use_merge_queue else 'multi'} commit {i+1}"
             try:
