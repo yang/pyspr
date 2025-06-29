@@ -2,15 +2,12 @@
 
 import os
 import tempfile
-import subprocess
 from pathlib import Path
 
 from pyspr.tests.e2e.fake_pygithub import (
     create_fake_github,
     FakeGithub,
     FakeRepository,
-    FakePullRequest,
-    FakeRef
 )
 
 def test_basic_operations() -> None:
