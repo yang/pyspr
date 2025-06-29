@@ -42,7 +42,7 @@ def main() -> None:
             if not attr.startswith('__'):
                 try:
                     print(f"{attr}: {getattr(e, attr)}")
-                except:
+                except Exception:
                     print(f"{attr}: <unable to get value>")
 
 if __name__ == "__main__":
