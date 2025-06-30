@@ -236,7 +236,7 @@ class StackedPR:
         return info
 
     def sync_commit_stack_to_github(self, ctx: StackedPRContextProtocol, commits: List[Commit], 
-                                  info: GitHubInfo) -> bool:
+                                  info: GitHubInfo, existing_prs: Optional[Dict[str, PullRequest]] = None) -> bool:
         """Sync commits to GitHub."""
         # Check for changes
         output = self.git_cmd.must_git("status --porcelain --untracked-files=no")
@@ -247,14 +247,15 @@ class StackedPR:
                 print(f"Stash failed: {e}")
                 return False
             try:
-                self._do_sync_commit_stack(commits, info)
+                self._do_sync_commit_stack(commits, info, existing_prs)
             finally:
                 self.git_cmd.must_git("stash pop")
         else:
-            self._do_sync_commit_stack(commits, info)
+            self._do_sync_commit_stack(commits, info, existing_prs)
         return True
 
-    def _do_sync_commit_stack(self, commits: List[Commit], info: GitHubInfo) -> None:
+    def _do_sync_commit_stack(self, commits: List[Commit], info: GitHubInfo, 
+                             existing_prs: Optional[Dict[str, PullRequest]] = None) -> None:
         """Do the sync commit stack work."""
         def commit_updated(c: Commit, info: GitHubInfo) -> bool:
             for pr in info.pull_requests:
@@ -276,8 +277,25 @@ class StackedPR:
                 updated_commits.append(commit)
                 
         ref_names: List[str] = []
+        branch_mappings: Dict[str, str] = {}  # Map commit_id to branch name
+        
         for commit in updated_commits:
-            branch_name = branch_name_from_commit(self.config, commit)
+            # Check if we have an existing PR for this commit
+            if existing_prs and commit.commit_id is not None and commit.commit_id in existing_prs:
+                existing_pr = existing_prs[commit.commit_id]
+                # Use the existing PR's branch
+                if existing_pr.from_branch is not None:
+                    branch_name = existing_pr.from_branch
+                    logger.info(f"Reusing existing PR #{existing_pr.number} branch: {branch_name}")
+                else:
+                    # Fallback to regular naming if from_branch is None
+                    branch_name = branch_name_from_commit(self.config, commit)
+            else:
+                # Create new branch with regular naming
+                branch_name = branch_name_from_commit(self.config, commit)
+            
+            if commit.commit_id is not None:
+                branch_mappings[commit.commit_id] = branch_name
             ref_names.append(f"{commit.commit_hash}:refs/heads/{branch_name}")
 
         if ref_names:
@@ -318,10 +336,17 @@ class StackedPR:
                 end_time = time.time()
                 logger.debug(f"Push operation took {end_time - start_time:.2f} seconds")
 
+    def update_pull_requests_with_existing(self, ctx: StackedPRContextProtocol, 
+                                          reviewers: Optional[List[str]] = None,
+                                          existing_prs: Optional[Dict[str, PullRequest]] = None) -> None:
+        """Update pull requests with awareness of existing PRs to reuse."""
+        return self.update_pull_requests(ctx, reviewers, existing_prs=existing_prs)
+
     def update_pull_requests(self, ctx: StackedPRContextProtocol, 
                          reviewers: Optional[List[str]] = None, 
                          count: Optional[int] = None,
-                         labels: Optional[List[str]] = None) -> None:
+                         labels: Optional[List[str]] = None,
+                         existing_prs: Optional[Dict[str, PullRequest]] = None) -> None:
         """Update pull requests for commits."""
         # Combine CLI labels with config labels
         config_labels: List[str] = []  # Initialize with empty list
@@ -341,6 +366,19 @@ class StackedPR:
         github_info = self.fetch_and_get_github_info(ctx)
         if not github_info:
             return
+        
+        # Add existing PRs to github_info if provided
+        if existing_prs:
+            for _, pr in existing_prs.items():
+                # Check if this PR is already in github_info
+                found = False
+                for existing_pr in github_info.pull_requests:
+                    if existing_pr.number == pr.number:
+                        found = True
+                        break
+                if not found:
+                    logger.info(f"Adding existing PR #{pr.number} to github_info")
+                    github_info.pull_requests.append(pr)
 
         # Log all pull requests from GitHub
         logger.debug("All PRs from GitHub BEFORE any filtering:")
@@ -399,7 +437,7 @@ class StackedPR:
                 break
             non_wip_commits.append(commit)
 
-        if not self.sync_commit_stack_to_github(ctx, local_commits, github_info):
+        if not self.sync_commit_stack_to_github(ctx, local_commits, github_info, existing_prs):
             return
 
         # Update PRs
@@ -1382,8 +1420,62 @@ class StackedPR:
                 # Switch to the stack branch and run update logic
                 self.git_cmd.must_git(f"checkout {stack_branch}")
                 try:
+                    # Before running update, we need to check if there are existing PRs
+                    # on pyspr/cp/ branches that we should reuse
+                    existing_prs: Dict[str, PullRequest] = {}
+                    for commit in stack_commits:
+                        # Check for existing PR on breakup branch
+                        breakup_branch = breakup_branch_name_from_commit(self.config, commit)
+                        pr = self.github.get_pull_request_for_branch(ctx, breakup_branch)
+                        if pr:
+                            existing_prs[commit.commit_id] = pr
+                            logger.info(f"Found existing PR #{pr.number} for commit {commit.commit_id} on branch {breakup_branch}")
+                    
                     # Run the update logic for this stack
-                    self.update_pull_requests(ctx, reviewers)
+                    # Pass the existing PRs info so they can be reused
+                    self.update_pull_requests_with_existing(ctx, reviewers, existing_prs)
+                    
+                    # After creating/updating PRs, we need to update any existing PRs 
+                    # that were previously created as single-commit PRs but are now part of the stack
+                    # We need to find ALL PRs for commits in this component, not just the ones
+                    # created on this stack branch
+                    stack_prs: List[PullRequest] = []
+                    
+                    # For each commit in the stack, find its PR (either just created or pre-existing)
+                    for commit in stack_commits:
+                        # Try to find PR by branch name
+                        branch_name = breakup_branch_name_from_commit(self.config, commit)
+                        logger.debug(f"Looking for PR with breakup branch: {branch_name}")
+                        pr = self.github.get_pull_request_for_branch(ctx, branch_name)
+                        
+                        if not pr:
+                            # Try regular branch name
+                            branch_name = branch_name_from_commit(self.config, commit)
+                            logger.debug(f"Looking for PR with regular branch: {branch_name}")
+                            pr = self.github.get_pull_request_for_branch(ctx, branch_name)
+                        
+                        if pr:
+                            logger.debug(f"Found PR #{pr.number} for commit {commit.commit_id}")
+                            # Update the commit info to match our local commit
+                            pr.commit = commit
+                            stack_prs.append(pr)
+                        else:
+                            logger.warning(f"Could not find PR for commit {commit.commit_id}")
+                            print(f"  Warning: Could not find PR for commit {commit.commit_id}")
+                    
+                    # Now update all PRs in the stack with proper stack information
+                    if len(stack_prs) == len(stack_commits):
+                        print(f"  Found all {len(stack_prs)} PRs in the stack, updating them...")
+                        for i, pr in enumerate(stack_prs):
+                            commit = stack_commits[i]
+                            prev_commit = stack_commits[i-1] if i > 0 else None
+                            
+                            # Update the PR to show it's part of a stack
+                            print(f"  Updating PR #{pr.number} to show stack information...")
+                            self.github.update_pull_request(ctx, self.git_cmd, stack_prs, pr, commit, prev_commit)
+                    else:
+                        print(f"  Warning: Found {len(stack_prs)} PRs but expected {len(stack_commits)}")
+                            
                 finally:
                     # Return to original branch
                     self.git_cmd.must_git(f"checkout {current_branch}")

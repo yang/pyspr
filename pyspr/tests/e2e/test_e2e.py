@@ -2001,3 +2001,151 @@ def test_breakup_stacks(test_repo_ctx: RepoContext) -> None:
         assert "pyspr/stack/" in branches_output or "component" in branches_output
     
     log.info("=== TEST BREAKUP STACKS COMPLETED SUCCESSFULLY ===")
+
+
+@run_twice_in_mock_mode
+def test_breakup_dynamic_structure_with_amends(test_repo_ctx: RepoContext) -> None:
+    """Test that breakup --stacks properly handles dynamic structure changes with amended commits.
+    
+    This test verifies that when commits transition from independent to being part of a stack,
+    ALL PRs in the stack are properly updated to show the stack information.
+    """
+    log.info("=== TEST BREAKUP DYNAMIC STRUCTURE WITH AMENDS STARTED ===")
+    ctx = test_repo_ctx
+    git_cmd = ctx.git_cmd
+    
+    # Step 1: Create two independent commits
+    log.info("Step 1: Creating two independent commits...")
+    a_hash = ctx.make_commit("a.txt", "content a", "Add a")
+    b_hash = ctx.make_commit("b.txt", "content b", "Add b")
+    
+    # Step 2: Run breakup --stacks to create initial PRs
+    log.info("Step 2: Running initial breakup --stacks...")
+    output = run_cmd("pyspr breakup --stacks -v")
+    log.info(f"Initial breakup output:\n{output}")
+    
+    # Should create two single-commit PRs
+    assert "single-commit" in output.lower()
+    
+    # Get the created PRs
+    prs_before = ctx.get_test_prs()
+    assert len(prs_before) == 2, f"Expected 2 PRs, got {len(prs_before)}"
+    
+    # Find PR A and PR B
+    pr_a = next((pr for pr in prs_before if "Add a" in pr.title), None)
+    pr_b = next((pr for pr in prs_before if "Add b" in pr.title), None)
+    assert pr_a, "Could not find PR for commit A"
+    assert pr_b, "Could not find PR for commit B"
+    
+    pr_a_num = pr_a.number
+    pr_b_num = pr_b.number
+    log.info(f"Created PR #{pr_a_num} for A and PR #{pr_b_num} for B")
+    
+    # Check that PRs are independent (no stack info)
+    assert "Stack" not in pr_a.body, f"PR A should not have stack info, but has: {pr_a.body}"
+    assert "Stack" not in pr_b.body, f"PR B should not have stack info, but has: {pr_b.body}"
+    
+    # Step 3: Amend commit B to depend on commit A by modifying a.txt
+    log.info("Step 3: Amending commit B to depend on commit A...")
+    
+    # Get the actual filename for a.txt with tag suffix
+    files = git_cmd.must_git("ls-tree --name-only -r HEAD").strip().split('\n')
+    a_file = next((f for f in files if f.startswith("a.txt")), None)
+    assert a_file, "Could not find a.txt file"
+    
+    # Get the original commit message with commit-id
+    original_b_msg = git_cmd.must_git(f"log -1 --format=%B HEAD").strip()
+    
+    # Update the message but preserve the commit-id
+    import re
+    commit_id_match = re.search(r'commit-id:([a-f0-9]{8})', original_b_msg)
+    if commit_id_match:
+        # Replace the subject line but keep the commit-id
+        new_msg = f"Commit B: Create file b and modify a [test-tag:{ctx.tag}]\n\ncommit-id:{commit_id_match.group(1)}"
+        log.info(f"Preserving commit-id for B: {commit_id_match.group(1)}")
+    else:
+        # Fallback if no commit-id found
+        new_msg = f"Commit B: Create file b and modify a [test-tag:{ctx.tag}]"
+    
+    # Amend to add dependency on A by modifying a.txt
+    a_content = git_cmd.must_git(f"show HEAD:{a_file}").strip()
+    with open(a_file, "w") as f:
+        f.write(f"{a_content}\nModified by B\n")
+    
+    run_cmd(f"git add {a_file}")
+    
+    # Use proper escaping for the commit message
+    import shlex
+    git_cmd.must_git(f"commit --amend -m {shlex.quote(new_msg)}")
+    
+    # Step 4: Run breakup --stacks again
+    log.info("Step 4: Running breakup --stacks after amendment...")
+    output2 = run_cmd("pyspr breakup --stacks -v")
+    log.info(f"Second breakup output:\n{output2}")
+    
+    # Should now recognize them as a multi-commit component
+    assert "multi-commit component" in output2.lower() or "component" in output2.lower()
+    
+    # Get the PRs after second breakup
+    prs_after = ctx.get_test_prs()
+    log.info(f"PRs after second breakup: {[f'#{pr.number}' for pr in prs_after]}")
+    
+    # Should still have 2 PRs (reused, not new ones)
+    assert len(prs_after) == 2, f"Expected 2 PRs (reused), got {len(prs_after)}"
+    
+    # Find the updated PRs - they should have the SAME PR numbers
+    pr_a_after = next((pr for pr in prs_after if pr.number == pr_a_num), None)
+    pr_b_after = next((pr for pr in prs_after if pr.number == pr_b_num), None)
+    
+    assert pr_a_after, f"PR #{pr_a_num} should still exist with same number"
+    assert pr_b_after, f"PR #{pr_b_num} should still exist with same number"
+    
+    # Also check that no new PRs were created
+    all_pr_numbers = [pr.number for pr in prs_after]
+    assert pr_a_num in all_pr_numbers, f"Original PR #{pr_a_num} should still exist, but got PRs: {all_pr_numbers}"
+    assert pr_b_num in all_pr_numbers, f"Original PR #{pr_b_num} should still exist, but got PRs: {all_pr_numbers}"
+    
+    # Ensure no higher numbered PRs were created
+    max_pr_num = max(all_pr_numbers)
+    assert max_pr_num <= pr_b_num, f"No new PRs should be created. Original max was #{pr_b_num}, but found #{max_pr_num}"
+    
+    # Re-fetch PR data to get updated bodies (fake GitHub might have stale data)
+    if hasattr(ctx.github, 'repo') and ctx.github.repo:
+        gh_pr_a = ctx.github.repo.get_pull(pr_a_num)
+        gh_pr_b = ctx.github.repo.get_pull(pr_b_num)
+        pr_a_body = gh_pr_a.body
+        pr_b_body = gh_pr_b.body
+    else:
+        pr_a_body = pr_a_after.body
+        pr_b_body = pr_b_after.body
+    
+    # Key assertion: BOTH PRs should now show stack information
+    log.info(f"PR A body after update:\n{pr_a_body}")
+    log.info(f"PR B body after update:\n{pr_b_body}")
+    
+    # CRITICAL: Bottom-of-stack PR (PR A) MUST have stack information
+    # This is the main fix - previously bottom PRs were not updated
+    assert "Stack" in pr_a_body, f"BOTTOM-OF-STACK PR A must have stack info, but has: {pr_a_body}"
+    assert "**Stack**:" in pr_a_body, f"PR A should have formatted stack section, but has: {pr_a_body}"
+    
+    # Top-of-stack PR should also have stack info
+    assert "Stack" in pr_b_body, f"PR B should now have stack info, but has: {pr_b_body}"
+    assert "**Stack**:" in pr_b_body, f"PR B should have formatted stack section, but has: {pr_b_body}"
+    
+    # Verify the stack structure is correct
+    assert f"#{pr_b_num}" in pr_a_body, "Bottom PR A should reference top PR B in its stack"
+    assert f"#{pr_a_num}" in pr_b_body, "Top PR B should reference bottom PR A in its stack"
+    
+    # Additional checks for proper stack formatting
+    # Check that PR A shows it's the current PR in the stack (with arrow)
+    assert "⬅" in pr_a_body or "←" in pr_a_body, "PR A should show arrow indicating it's the current PR in stack view"
+    
+    # Check that the stack warning is present
+    assert "Part of a stack" in pr_a_body, "PR A should have stack warning message"
+    assert "Part of a stack" in pr_b_body, "PR B should have stack warning message"
+    
+    # PR B should target PR A's branch
+    assert pr_b_after.base_ref == pr_a_after.from_branch, f"PR B should target PR A's branch, but targets {pr_b_after.base_ref}"
+    
+    log.info("✓ Both PRs properly updated with stack information")
+    log.info("=== TEST BREAKUP DYNAMIC STRUCTURE WITH AMENDS COMPLETED SUCCESSFULLY ===")

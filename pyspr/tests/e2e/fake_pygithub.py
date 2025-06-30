@@ -547,9 +547,20 @@ class FakeRepository:
         result: List[GitHubPullRequestProtocol] = []
         for pr in self.github_ref.pull_requests.values():
             # Use a helper method to check if PR belongs to this repo
+            # Handle head filter with owner prefix (e.g., "owner:branch")
+            head_match = True
+            if head:
+                if ':' in head:
+                    # Head filter includes owner prefix (e.g., "yang:branch-name")
+                    owner, branch = head.split(':', 1)
+                    head_match = pr.head.ref == branch and pr.data_record.owner_login == owner
+                else:
+                    # Just branch name
+                    head_match = pr.head.ref == head
+            
             if self._pr_belongs_to_repo(pr) and \
                (not state or pr.state == state) and \
-               (not head or pr.head.ref == head) and \
+               head_match and \
                (not base or pr.base.ref == base):
                 result.append(pr)
         
