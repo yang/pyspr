@@ -1274,28 +1274,32 @@ class StackedPR:
         current_branch = self.git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
         original_head = self.git_cmd.must_git("rev-parse HEAD").strip()
         
-        # Determine base ref - check for staging branch in anthropic repo
-        base_ref = f"{remote}/{base_branch}"
+        # Determine base ref - use merge-base to handle commits that may already be in upstream
+        upstream_ref = f"{remote}/{base_branch}"
         try:
-            self.git_cmd.must_git(f"rev-parse {base_ref}")
+            self.git_cmd.must_git(f"rev-parse {upstream_ref}")
         except:
             # Try origin/staging as fallback (common in anthropic repo)
             try:
-                base_ref = f"{remote}/staging"
-                self.git_cmd.must_git(f"rev-parse {base_ref}")
-                logger.debug(f"Using {base_ref} as base (staging branch)")
+                upstream_ref = f"{remote}/staging"
+                self.git_cmd.must_git(f"rev-parse {upstream_ref}")
+                logger.debug(f"Using {upstream_ref} as upstream (staging branch)")
             except:
                 # If remote/branch doesn't exist, try just branch
-                base_ref = base_branch
+                upstream_ref = base_branch
                 try:
-                    self.git_cmd.must_git(f"rev-parse {base_ref}")
+                    self.git_cmd.must_git(f"rev-parse {upstream_ref}")
                 except:
-                    # Last resort - use merge base
-                    try:
-                        base_ref = self.git_cmd.must_git(f"merge-base HEAD {remote}/{base_branch}").strip()
-                    except:
-                        logger.debug(f"Could not find base ref, using HEAD~{len(commits)}")
-                        base_ref = f"HEAD~{len(commits)}"
+                    logger.debug(f"Could not find upstream ref, using {remote}/{base_branch}")
+                    upstream_ref = f"{remote}/{base_branch}"
+        
+        # Always use merge-base for testing cherry-picks to avoid issues with already-merged commits
+        try:
+            base_ref = self.git_cmd.must_git(f"merge-base HEAD {upstream_ref}").strip()
+            logger.debug(f"Using merge-base {base_ref[:8]} between HEAD and {upstream_ref}")
+        except:
+            logger.debug(f"Could not find merge-base, using HEAD~{len(commits)}")
+            base_ref = f"HEAD~{len(commits)}"
         
         # Phase 1: Quick identification of independent vs dependent commits
         logger.info(f"Analyzing {len(commits)} commits for conflicts...")
@@ -1322,14 +1326,16 @@ class StackedPR:
                 
                 # Try to cherry-pick this commit
                 try:
-                    self.git_cmd.must_git(f"cherry-pick {commit.commit_hash}")
+                    self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {commit.commit_hash}")
                     # Success! This commit can be applied independently
                     independent_commits.add(commit.commit_hash)
                     logger.info(f"  {i+1}/{len(commits)}: {commit.commit_hash[:8]} - independent")
-                except:
+                except Exception as e:
                     # Cherry-pick failed, mark as dependent
                     dependent_commits.append((i, commit))
                     logger.info(f"  {i+1}/{len(commits)}: {commit.commit_hash[:8]} - has conflicts")
+                    # Debug: log the actual error
+                    logger.debug(f"    Cherry-pick error: {str(e)}")
                     try:
                         self.git_cmd.must_git("cherry-pick --abort")
                     except:
@@ -1358,11 +1364,11 @@ class StackedPR:
                         
                         # Try with just this earlier commit
                         try:
-                            self.git_cmd.must_git(f"cherry-pick {earlier_commit.commit_hash}")
+                            self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {earlier_commit.commit_hash}")
                             
                             # Now try our commit
                             try:
-                                self.git_cmd.must_git(f"cherry-pick {commit.commit_hash}")
+                                self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {commit.commit_hash}")
                                 # Success! This single commit is sufficient
                                 dependencies[commit.commit_hash].append(earlier_commit.commit_hash)
                                 logger.info(f"    Depends on: {earlier_commit.commit_hash[:8]}")
@@ -1390,10 +1396,10 @@ class StackedPR:
                         try:
                             # Apply all earlier commits in order
                             for j in range(i):
-                                self.git_cmd.must_git(f"cherry-pick {commits[j].commit_hash}")
+                                self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {commits[j].commit_hash}")
                             
                             # Now try our commit
-                            self.git_cmd.must_git(f"cherry-pick {commit.commit_hash}")
+                            self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {commit.commit_hash}")
                             
                             # Success! It can be applied with all earlier commits
                             # It just needs multiple dependencies (not an orphan)
@@ -1402,7 +1408,7 @@ class StackedPR:
                             for j in range(i):
                                 if commits[j].commit_hash not in independent_commits:
                                     dependencies[commit.commit_hash].append(commits[j].commit_hash)
-                        except:
+                        except Exception as e:
                             # Even with all earlier commits, it still fails - true orphan
                             logger.info(f"    Cannot be applied even with all earlier commits - marking as orphan")
                             orphans.add(commit.commit_hash)
@@ -1417,9 +1423,20 @@ class StackedPR:
         finally:
             # Always return to original branch and clean up
             try:
-                # Use reset to handle any uncommitted changes
+                # First switch back to original branch
+                self.git_cmd.must_git(f"checkout -f {current_branch}")
+                # Reset to original HEAD in case branch diverged
                 self.git_cmd.must_git(f"reset --hard {original_head}")
-                self.git_cmd.must_git(f"checkout {current_branch}")
+            except Exception as e:
+                logger.error(f"Failed to restore original branch: {e}")
+                # Try harder to get back
+                try:
+                    self.git_cmd.must_git(f"checkout -f {current_branch}")
+                except:
+                    pass
+            
+            # Clean up test branch
+            try:
                 self.git_cmd.must_git(f"branch -D {test_branch}")
             except:
                 pass
