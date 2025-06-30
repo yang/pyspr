@@ -76,7 +76,7 @@ class RepoContext:
         log.info(f"Found {len(info.pull_requests)} PRs in info")
         for pr in info.pull_requests:
             log.info(f"Checking PR #{pr.number} with commit hash {pr.commit.commit_hash}")
-            if pr.from_branch and (pr.from_branch.startswith('spr/main/') or pr.from_branch.startswith('pyspr/cp/main/')):
+            if pr.from_branch and pr.from_branch.startswith('pyspr/cp/main/'):
                 try:
                     # Check the commit message for test tag
                     commit_msg = self.git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
@@ -90,7 +90,7 @@ class RepoContext:
                     log.info(f"Error checking PR #{pr.number}: {e}")
                     pass
             else:
-                log.info(f"PR #{pr.number} branch '{pr.from_branch}' doesn't start with 'spr/main/'")
+                log.info(f"PR #{pr.number} branch '{pr.from_branch}' doesn't start with 'pyspr/cp/main/'")
         
         log.info(f"Final result: found {len(result)} PRs with tag '{self.tag}'")
         return result
@@ -272,7 +272,7 @@ def get_test_prs(git_cmd: RealGit, github: GitHubClient, unique_tag: str) -> Lis
     if not github_info:
         return result
     for pr in github_info.pull_requests:
-        if pr.from_branch and pr.from_branch.startswith('spr/main/'):
+        if pr.from_branch and pr.from_branch.startswith('pyspr/cp/main/'):
             try:
                 commit_msg = git_cmd.must_git(f"show -s --format=%B {pr.commit.commit_hash}")
                 if f"test-tag:{unique_tag}" in commit_msg:

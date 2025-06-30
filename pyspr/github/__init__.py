@@ -704,11 +704,8 @@ class GitHubClient:
         except Exception:
             in_queue = False
 
-        # Check if this is a breakup PR by looking at the branch name
-        # BUT: if we're part of a multi-PR stack, we should update base branches regardless
-        is_single_breakup = pr.from_branch and pr.from_branch.startswith('pyspr/cp/') and len(prs) <= 1
-        
-        if not in_queue and not is_single_breakup:
+        # Update base branch to maintain stack structure
+        if not in_queue:
             current_base = gh_pr.base.ref
             desired_base = None
             
@@ -726,6 +723,8 @@ class GitHubClient:
                 desired_base = self.config.repo.github_branch_target
                 logger.debug(f"  Should target: {desired_base} (no prev commit)")
                 
+            # For single breakup PRs, always ensure they target the right branch
+            # This is important when transitioning from stacked to independent
             if current_base != desired_base:
                 logger.info(f"  Updating base from {current_base} to {desired_base}")
                 gh_pr.edit(base=desired_base)
@@ -834,10 +833,10 @@ class GitHubClient:
                 gh_pr.merge(merge_method='merge')
 
     def branch_name_from_commit(self, commit: Commit) -> str:
-        """Generate branch name from commit. Matches Go implementation."""
+        """Generate branch name from commit. Now unified to use pyspr/cp/ prefix."""
         # Use github_branch if available, default to 'main'
         remote_branch = self.config.repo.github_branch
-        return f"spr/{remote_branch}/{commit.commit_id}"
+        return f"pyspr/cp/{remote_branch}/{commit.commit_id}"
         
     def format_stack_markdown(self, commit: Commit, stack: List[PullRequest]) -> str:
         """Format stack of PRs as markdown."""
