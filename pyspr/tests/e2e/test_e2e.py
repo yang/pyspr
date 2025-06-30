@@ -1861,18 +1861,18 @@ def test_analyze(test_repo_ctx: RepoContext) -> None:
     # Create a dependent commit (modifies base.txt in a way that depends on initial state)
     base_content = git_cmd.must_git(f"show HEAD~1:{base_filename}")
     modified_base = base_content.replace("line2", "modified-line2")
-    # Write to actual file without suffix for second commit
-    with open("base.txt", "w") as f:
+    # Write to the actual base file with suffix
+    with open(base_filename, "w") as f:
         f.write(modified_base)
-    run_cmd("git add base.txt")
+    run_cmd(f"git add {base_filename}")
     run_cmd(f'git commit -m "Dependent commit - modify line 2 [test-tag:{ctx.tag}]"')
     
     # Create another dependent commit (modifies the same line, will conflict)
-    base_content2 = git_cmd.must_git("show HEAD:base.txt")
+    base_content2 = git_cmd.must_git(f"show HEAD:{base_filename}")
     modified_base2 = base_content2.replace("line3", "another-modified-line3")
-    with open("base.txt", "w") as f:
+    with open(base_filename, "w") as f:
         f.write(modified_base2)
-    run_cmd("git add base.txt")
+    run_cmd(f"git add {base_filename}")
     run_cmd(f'git commit -m "Dependent commit - modify line 3 [test-tag:{ctx.tag}]"')
     
     # Create another independent commit
