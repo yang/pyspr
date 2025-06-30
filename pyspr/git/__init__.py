@@ -236,9 +236,9 @@ def parse_local_commit_stack(commit_log: str) -> Tuple[List[Commit], bool]:
     return commits, True
 
 def branch_name_from_commit(config: PysprConfig, commit: Commit) -> str:
-    """Get branch name for commit. Matches Go implementation."""
+    """Get branch name for commit. Now unified to use pyspr/cp/ prefix."""
     remote_branch = config.repo.github_branch
-    return f"spr/{remote_branch}/{commit.commit_id}"
+    return f"pyspr/cp/{remote_branch}/{commit.commit_id}"
 
 def breakup_branch_name_from_commit(config: PysprConfig, commit: Commit) -> str:
     """Get branch name for breakup commit. Uses pyspr pattern."""

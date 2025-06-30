@@ -1382,6 +1382,21 @@ class StackedPR:
                 branch_name = breakup_branch_name_from_commit(self.config, commit)
                 print(f"\nProcessing single-commit component {i+1}: {commit.subject}")
                 
+                # Check if a PR already exists for this commit (by commit ID)
+                github_info = self.fetch_and_get_github_info(ctx)
+                existing_pr = None
+                if github_info and commit.commit_id:
+                    for pr in github_info.pull_requests:
+                        if pr.commit and pr.commit.commit_id == commit.commit_id:
+                            existing_pr = pr
+                            logger.info(f"Found existing PR #{pr.number} for commit {commit.commit_id}")
+                            break
+                
+                if existing_pr:
+                    # Reuse the existing PR's branch
+                    branch_name = existing_pr.from_branch or branch_name
+                    logger.info(f"Reusing existing PR #{existing_pr.number} branch: {branch_name}")
+                
                 if self._create_breakup_branch(commit, branch_name):
                     single_commit_branches.append(branch_name)
             else:
@@ -1421,15 +1436,16 @@ class StackedPR:
                 self.git_cmd.must_git(f"checkout {stack_branch}")
                 try:
                     # Before running update, we need to check if there are existing PRs
-                    # on pyspr/cp/ branches that we should reuse
+                    # that we should reuse - check all possible branch patterns
                     existing_prs: Dict[str, PullRequest] = {}
                     for commit in stack_commits:
-                        # Check for existing PR on breakup branch
-                        breakup_branch = breakup_branch_name_from_commit(self.config, commit)
-                        pr = self.github.get_pull_request_for_branch(ctx, breakup_branch)
-                        if pr:
+                        # Check for existing PR on any branch pattern
+                        # Since we unified to pyspr/cp/, both branch patterns should be the same
+                        branch_name = branch_name_from_commit(self.config, commit)
+                        pr = self.github.get_pull_request_for_branch(ctx, branch_name)
+                        if pr and commit.commit_id is not None:
                             existing_prs[commit.commit_id] = pr
-                            logger.info(f"Found existing PR #{pr.number} for commit {commit.commit_id} on branch {breakup_branch}")
+                            logger.info(f"Found existing PR #{pr.number} for commit {commit.commit_id} on branch {branch_name}")
                     
                     # Run the update logic for this stack
                     # Pass the existing PRs info so they can be reused
@@ -1625,11 +1641,22 @@ class StackedPR:
                 
             commit = commit_map[branch]
             
-            # Check if PR already exists
+            # Check if PR already exists for this branch
             existing_pr = self.github.get_pull_request_for_branch(ctx, branch)
+            
+            # If not found by branch, try to find by commit ID
+            if not existing_pr and github_info and commit.commit_id:
+                for pr in github_info.pull_requests:
+                    if pr.commit and pr.commit.commit_id == commit.commit_id:
+                        existing_pr = pr
+                        logger.info(f"Found existing PR #{pr.number} by commit ID {commit.commit_id}")
+                        break
             
             if existing_pr:
                 logger.info(f"  PR #{existing_pr.number} already exists for {branch}")
+                # Update the PR to remove stack info and target main
+                # Pass the PR in a list so update logic knows it's a single PR (not part of stack)
+                self.github.update_pull_request(ctx, self.git_cmd, [existing_pr], existing_pr, commit, None)
             else:
                 # Create new PR
                 if github_info:
