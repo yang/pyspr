@@ -1609,8 +1609,8 @@ class StackedPR:
         print_header("Multi-Stack Breakup Analysis", use_emoji=True)
         print(f"\nAnalyzing {len(commits)} commits for dependencies...")
         
-        # Analyze dependencies
-        dependencies = self._analyze_commit_dependencies(commits)
+        # Analyze dependencies using conflict-based detection
+        dependencies = self._analyze_conflict_dependencies(commits)
         
         # Find strongly connected components
         components = self._find_strongly_connected_components(commits, dependencies)
