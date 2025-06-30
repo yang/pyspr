@@ -680,7 +680,8 @@ class GitHubClient:
         # Always update body with current stack info 
         if commit:
             # Check if this is a breakup PR by looking at the branch name
-            is_breakup = bool(pr.from_branch and pr.from_branch.startswith('pyspr/cp/'))
+            # BUT: if we have multiple PRs in the stack, we should show stack info regardless
+            is_breakup = bool(pr.from_branch and pr.from_branch.startswith('pyspr/cp/')) and len(prs) <= 1
             body = self.format_body(commit, prs, is_breakup=is_breakup)
             logger.debug(f"Updating body for PR #{pr.number}:\n{body}")
             gh_pr.edit(body=body)
@@ -704,14 +705,21 @@ class GitHubClient:
             in_queue = False
 
         # Check if this is a breakup PR by looking at the branch name
-        is_breakup = pr.from_branch and pr.from_branch.startswith('pyspr/cp/')
+        # BUT: if we're part of a multi-PR stack, we should update base branches regardless
+        is_single_breakup = pr.from_branch and pr.from_branch.startswith('pyspr/cp/') and len(prs) <= 1
         
-        if not in_queue and not is_breakup:
+        if not in_queue and not is_single_breakup:
             current_base = gh_pr.base.ref
             desired_base = None
             
             if prev_commit:
-                desired_base = self.branch_name_from_commit(prev_commit)
+                # If the current PR is a breakup PR, the previous PR in the stack is likely also a breakup PR
+                if pr.from_branch and pr.from_branch.startswith('pyspr/cp/'):
+                    # Use breakup branch pattern for consistency
+                    from ..git import breakup_branch_name_from_commit
+                    desired_base = breakup_branch_name_from_commit(self.config, prev_commit)
+                else:
+                    desired_base = self.branch_name_from_commit(prev_commit)
                 logger.debug(f"  Should target: {desired_base} (prev commit: {prev_commit.commit_hash[:8]})")
             else:
                 # Use github_branch_target if available, default to 'main'
