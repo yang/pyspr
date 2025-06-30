@@ -132,19 +132,29 @@ Use this command when you want to:
 
 Use `-r` to tag reviewers.
 
-## Running tests in parallel
+## Running tests
 
-To run e2e tests with parallelization using pytest-xdist:
+To run tests, use the provided script:
 
 ```bash
-# Auto-detect number of CPU cores
-rye run pytest -p xdist -n auto -v test_e2e.py
+# Run all tests with auto-detected parallelization
+./run_tests.sh
 
-# Fixed number of workers
-rye run pytest -p xdist -n 4 -v test_e2e.py
+# Run with verbose output
+./run_tests.sh -vsx
 
-# Run specific test pattern with parallelization
-rye run pytest -p xdist -n 2 -v test_e2e.py -k "delete"
+# Run specific tests
+./run_tests.sh -k "test_analyze"
+
+# Run with specific number of workers
+./run_tests.sh -n 4
+```
+
+The `run_tests.sh` script uses pytest-xdist for parallel test execution:
+
+```bash
+# What run_tests.sh does:
+rye run pytest -p xdist -n auto "$@"
 ```
 
 Additional useful options:
