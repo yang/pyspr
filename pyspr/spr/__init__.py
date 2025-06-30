@@ -1112,21 +1112,25 @@ class StackedPR:
         print(f"\nAnalyzing {len(non_wip_commits)} commits for independent submission...")
         
         # Analyze conflict-based dependencies between commits
-        conflict_dependencies = self._analyze_conflict_dependencies(non_wip_commits)
+        conflict_dependencies, orphan_commits = self._analyze_conflict_dependencies(non_wip_commits)
         
-        # Determine which commits are independent vs dependent
+        # Determine which commits are independent vs dependent vs orphaned
         independent_commits: List[Commit] = []
         dependent_commits: List[Tuple[Commit, str]] = []  # (commit, reason)
+        orphaned_commits: List[Commit] = []
         
         for commit in non_wip_commits:
-            deps = conflict_dependencies.get(commit.commit_hash, [])
-            if not deps:
-                independent_commits.append(commit)
+            if commit.commit_hash in orphan_commits:
+                orphaned_commits.append(commit)
             else:
-                # Find which earlier commits this depends on
-                dep_commits = [c for c in non_wip_commits if c.commit_hash in deps]
-                dep_subjects = [c.commit_hash[:8] for c in dep_commits]
-                dependent_commits.append((commit, f"Depends on: {', '.join(dep_subjects)}"))
+                deps = conflict_dependencies.get(commit.commit_hash, [])
+                if not deps:
+                    independent_commits.append(commit)
+                else:
+                    # Find which earlier commits this depends on
+                    dep_commits = [c for c in non_wip_commits if c.commit_hash in deps]
+                    dep_subjects = [c.commit_hash[:8] for c in dep_commits]
+                    dependent_commits.append((commit, f"Depends on: {', '.join(dep_subjects)}"))
         
         # Print results
         print(f"\n✅ Independent commits ({len(independent_commits)}):")
@@ -1145,12 +1149,21 @@ class StackedPR:
                 print(f"     Reason: {reason}")
         else:
             print("   None")
+            
+        print(f"\n⚠️  Orphaned commits ({len(orphaned_commits)}):")
+        if orphaned_commits:
+            print("   These have conflicts that cannot be resolved by any single earlier commit:")
+            for commit in orphaned_commits:
+                print(f"   - {commit.commit_hash[:8]} {commit.subject}")
+        else:
+            print("   None")
         
         # Summary
         print("\nSummary:")
         print(f"  Total commits: {len(non_wip_commits)}")
         print(f"  Independent: {len(independent_commits)} ({len(independent_commits)*100//len(non_wip_commits) if non_wip_commits else 0}%)")
         print(f"  Dependent: {len(dependent_commits)} ({len(dependent_commits)*100//len(non_wip_commits) if non_wip_commits else 0}%)")
+        print(f"  Orphaned: {len(orphaned_commits)} ({len(orphaned_commits)*100//len(non_wip_commits) if non_wip_commits else 0}%)")
         
         if independent_commits:
             print(f"\nTip: You can use 'pyspr breakup' to create independent PRs for the {len(independent_commits)} independent commits.")
@@ -1161,19 +1174,61 @@ class StackedPR:
         # Scenario 1: Strongly Connected Components
         print("\n📊 Scenario 1: Strongly Connected Components")
         print("   (Grouping commits with mutual dependencies)")
-        components = self._find_strongly_connected_components(non_wip_commits, conflict_dependencies)
+        
+        # Create extended dependencies that connect all commits with their transitive dependencies
+        # This ensures that any commit that depends on another (directly or indirectly) 
+        # will be grouped together in the same component
+        extended_dependencies: Dict[str, List[str]] = {}
+        
+        # For each commit, find ALL transitive dependencies and create bidirectional connections
+        for commit in non_wip_commits:
+            commit_hash = commit.commit_hash
+            
+            # Find all transitive dependencies of this commit
+            transitive_deps: Set[str] = set()
+            to_process = list(conflict_dependencies.get(commit_hash, []))
+            processed: Set[str] = set()
+            
+            while to_process:
+                dep = to_process.pop(0)
+                if dep in processed:
+                    continue
+                processed.add(dep)
+                transitive_deps.add(dep)
+                # Add this dep's dependencies
+                to_process.extend(conflict_dependencies.get(dep, []))
+            
+            # If this commit has dependencies, create bidirectional connections
+            # This ensures all related commits end up in the same strongly connected component
+            if transitive_deps:
+                extended_dependencies[commit_hash] = list(transitive_deps)
+                # Also add reverse dependencies to ensure strong connectivity
+                for dep in transitive_deps:
+                    if dep not in extended_dependencies:
+                        extended_dependencies[dep] = []
+                    if commit_hash not in extended_dependencies[dep]:
+                        extended_dependencies[dep].append(commit_hash)
+            else:
+                # Independent commits have no dependencies
+                extended_dependencies[commit_hash] = []
+        
+        components = self._find_strongly_connected_components(non_wip_commits, extended_dependencies)
+        
         print(f"\n   Found {len(components)} component(s):")
         
         for i, component in enumerate(components):
             print(f"\n   Component {i+1} ({len(component)} commits):")
             for commit in component:
-                deps = conflict_dependencies.get(commit.commit_hash, [])
-                # Show dependencies within the analyzed commits
-                dep_commits = [c for c in non_wip_commits if c.commit_hash in deps]
-                if dep_commits:
-                    print(f"     - {commit.commit_hash[:8]} {commit.subject} (depends on: {', '.join([c.commit_hash[:8] for c in dep_commits])})")
+                if commit.commit_hash in orphan_commits:
+                    print(f"     - {commit.commit_hash[:8]} {commit.subject} (has unresolvable conflicts)")
                 else:
-                    print(f"     - {commit.commit_hash[:8]} {commit.subject} (independent)")
+                    deps = conflict_dependencies.get(commit.commit_hash, [])
+                    # Show dependencies within the analyzed commits
+                    dep_commits = [c for c in non_wip_commits if c.commit_hash in deps]
+                    if dep_commits:
+                        print(f"     - {commit.commit_hash[:8]} {commit.subject} (depends on: {', '.join([c.commit_hash[:8] for c in dep_commits])})")
+                    else:
+                        print(f"     - {commit.commit_hash[:8]} {commit.subject} (independent)")
         
         # Scenario 2: Best-Effort Single-Parent Trees
         print("\n🌳 Scenario 2: Best-Effort Single-Parent Trees")
@@ -1191,20 +1246,27 @@ class StackedPR:
             if len(tree) == 1:
                 # Single commit tree
                 commit = tree[0]
-                print(f"\n   Tree {tree_num}:")
-                print(f"     - {commit.commit_hash[:8]} {commit.subject}")
+                if commit.commit_hash in orphan_commits:
+                    print(f"\n   Orphan {tree_num}:")
+                    print(f"     - {commit.commit_hash[:8]} {commit.subject} (unresolvable conflicts)")
+                else:
+                    print(f"\n   Tree {tree_num}:")
+                    print(f"     - {commit.commit_hash[:8]} {commit.subject}")
             else:
                 # Multi-commit tree
                 print(f"\n   Tree {tree_num}:")
                 self._print_tree_structure(tree, conflict_dependencies, prefix="     ")
             tree_num += 1
     
-    def _analyze_conflict_dependencies(self, commits: List[Commit]) -> Dict[str, List[str]]:
+    def _analyze_conflict_dependencies(self, commits: List[Commit]) -> Tuple[Dict[str, List[str]], Set[str]]:
         """Analyze which commits depend on which other commits based on actual conflicts.
         
-        Returns a dict mapping commit hash to list of commit hashes it depends on.
+        Returns:
+            - dict mapping commit hash to list of commit hashes it depends on
+            - set of orphan commit hashes (commits with unresolvable conflicts)
         """
         dependencies: Dict[str, List[str]] = {}
+        orphans: Set[str] = set()
         base_branch = self.config.repo.github_branch
         remote = self.config.repo.github_remote
         
@@ -1319,11 +1381,35 @@ class StackedPR:
                             except:
                                 pass
                     
-                    # If no single commit helps, this might need multiple commits
-                    # For now, we'll leave it as having no direct dependencies
-                    # A more complex algorithm could find minimal sets
+                    # If no single commit helps, check if it needs multiple commits
+                    # Only mark as orphan if it cannot be applied even with ALL earlier commits
                     if not found_dependency:
-                        logger.info(f"    No single earlier commit resolves conflicts")
+                        # Try with ALL earlier commits applied
+                        self.git_cmd.must_git(f"reset --hard {base_ref}")
+                        
+                        try:
+                            # Apply all earlier commits in order
+                            for j in range(i):
+                                self.git_cmd.must_git(f"cherry-pick {commits[j].commit_hash}")
+                            
+                            # Now try our commit
+                            self.git_cmd.must_git(f"cherry-pick {commit.commit_hash}")
+                            
+                            # Success! It can be applied with all earlier commits
+                            # It just needs multiple dependencies (not an orphan)
+                            logger.info(f"    Needs multiple earlier commits (not an orphan)")
+                            # Mark dependencies on all earlier commits that have conflicts
+                            for j in range(i):
+                                if commits[j].commit_hash not in independent_commits:
+                                    dependencies[commit.commit_hash].append(commits[j].commit_hash)
+                        except:
+                            # Even with all earlier commits, it still fails - true orphan
+                            logger.info(f"    Cannot be applied even with all earlier commits - marking as orphan")
+                            orphans.add(commit.commit_hash)
+                            try:
+                                self.git_cmd.must_git("cherry-pick --abort")
+                            except:
+                                pass
         
         except Exception as e:
             logger.error(f"Error during conflict analysis: {e}")
@@ -1338,7 +1424,7 @@ class StackedPR:
             except:
                 pass
                 
-        return dependencies
+        return dependencies, orphans
     
     def _find_strongly_connected_components(self, commits: List[Commit], dependencies: Dict[str, List[str]]) -> List[List[Commit]]:
         """Find strongly connected components using Tarjan's algorithm."""
@@ -1390,7 +1476,7 @@ class StackedPR:
                 strongconnect(commit.commit_hash)
                 
         # Convert back to commits and maintain order
-        commit_map = {c.commit_hash: c for c in commits}
+        commit_map: Dict[str, Commit] = {c.commit_hash: c for c in commits}
         result: List[List[Commit]] = []
         
         for scc in sccs:
@@ -1414,7 +1500,7 @@ class StackedPR:
         
         Each commit will have at most one parent in the resulting trees.
         """
-        commit_map = {c.commit_hash: c for c in commits}
+        commit_map: Dict[str, Commit] = {c.commit_hash: c for c in commits}
         assigned: Set[str] = set()
         trees: List[List[Commit]] = []
         
@@ -1518,7 +1604,7 @@ class StackedPR:
         print(f"\nAnalyzing {len(commits)} commits for dependencies...")
         
         # Analyze dependencies using conflict-based detection
-        dependencies = self._analyze_conflict_dependencies(commits)
+        dependencies, _ = self._analyze_conflict_dependencies(commits)
         
         # Find strongly connected components
         components = self._find_strongly_connected_components(commits, dependencies)
