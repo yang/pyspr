@@ -1851,18 +1851,29 @@ def test_analyze(test_repo_ctx: RepoContext) -> None:
     # First create a base file that will be modified by multiple commits
     ctx.make_commit("base.txt", "line1\nline2\nline3\nline4\nline5\n", "Initial base file")
     
+    # Get the actual filename with suffix that was created
+    tag_suffix = ctx.tag.split('-')[-1][:8]  # Use last 8 chars of tag
+    base_filename = f"base.txt.{tag_suffix}"
+    
     # Create an independent commit (modifies a different file)
     ctx.make_commit("independent1.txt", "independent content", "Independent commit 1")
     
     # Create a dependent commit (modifies base.txt in a way that depends on initial state)
-    base_content = git_cmd.must_git("show HEAD~1:base.txt")
+    base_content = git_cmd.must_git(f"show HEAD~1:{base_filename}")
     modified_base = base_content.replace("line2", "modified-line2")
-    ctx.make_commit("base.txt", modified_base, "Dependent commit - modify line 2")
+    # Write to actual file without suffix for second commit
+    with open("base.txt", "w") as f:
+        f.write(modified_base)
+    run_cmd("git add base.txt")
+    run_cmd(f'git commit -m "Dependent commit - modify line 2 [test-tag:{ctx.tag}]"')
     
     # Create another dependent commit (modifies the same line, will conflict)
     base_content2 = git_cmd.must_git("show HEAD:base.txt")
     modified_base2 = base_content2.replace("line3", "another-modified-line3")
-    ctx.make_commit("base.txt", modified_base2, "Dependent commit - modify line 3")
+    with open("base.txt", "w") as f:
+        f.write(modified_base2)
+    run_cmd("git add base.txt")
+    run_cmd(f'git commit -m "Dependent commit - modify line 3 [test-tag:{ctx.tag}]"')
     
     # Create another independent commit
     ctx.make_commit("independent2.txt", "more independent content", "Independent commit 2")
