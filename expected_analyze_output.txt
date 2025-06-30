@@ -1,0 +1,32 @@
+✅ Independent commits (12):
+   These can be submitted directly to the base branch without conflicts:
+   - f8ceef6d Add retries with forced retries for debugging
+   - 06cb532f Improve logging
+   - e106ab2c Isolated orch
+   - ed52618f Fix ports to make room
+   - 525c4b3c Move train worker to own pod
+   - 83087eaf Add trace spans to broadcasts
+   - 037d6dea sandbox
+   - c8c4188d Disable triospy tracker
+   - 05daa407 Add sharded loading
+   - 82d5e756 Fix concurrency for dist pool
+   - 277d8699 Thin out the logs a bit
+   - 06e73edf Scale up dystro
+
+❌ Dependent commits (5):
+   These require earlier commits or have conflicts:
+   - b634b789 Remove long lived connection
+     Reason: Depends on: f8ceef6d
+   - 581b2cad Log global env stats
+     Reason: Depends on: 06cb532f
+   - 973b88b2 Track top on train pod
+     Reason: Depends on: 525c4b3c
+   - a2d8e2da Fix train worker race
+     Reason: Depends on: 525c4b3c
+   - aa72e309 Disable GC during bcasts
+     Reason: Depends on: 83087eaf
+
+Summary:
+  Total commits: 17
+  Independent: 12 (70%)
+  Dependent: 5 (29%)

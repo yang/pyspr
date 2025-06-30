@@ -81,6 +81,52 @@ See the spr docs for better docs, but a tldr:
 - Amend commits, rebase, etc. rather than just creating new ones or merging.
 - Use `pr up` to update the PR stack to reflect your local commit stack.
 - Use `pr merge` to merge a bunch of PRs (chosen based on your current local commit stack).
+- Use `pr analyze` to analyze which commits can be submitted independently.
+
+### The `analyze` command
+
+The `pr analyze` command helps you understand dependencies between commits in your stack. It identifies which commits can be submitted as independent PRs versus which ones depend on earlier commits.
+
+**How dependencies are determined:**
+- Dependencies are based on actual git conflicts when cherry-picking
+- The analyze command attempts to cherry-pick each commit onto the base branch
+- If a commit cannot be cherry-picked cleanly, it checks which earlier commits are needed
+- A commit is marked as dependent only if cherry-picking specific earlier commits allows it to succeed
+- The goal is to maximize the number of independent PRs that can be submitted in parallel
+
+**Output includes:**
+1. **Independent commits**: Can be submitted directly to the base branch without conflicts
+2. **Dependent commits**: Require earlier commits to be merged first
+3. **Alternative stacking scenarios**:
+   - **Strongly Connected Components**: Groups commits with mutual dependencies
+   - **Single-Parent Trees**: Attempts to create a forest where each commit has at most one parent
+
+**Example usage:**
+```bash
+$ pr analyze
+🎯 Commit Stack Analysis
+
+Analyzing 17 commits for independent submission...
+
+✅ Independent commits (12):
+   These can be submitted directly to the base branch without conflicts:
+   - f8ceef6d Add retries with forced retries for debugging
+   - 06cb532f Improve logging
+   ...
+
+❌ Dependent commits (5):
+   These require earlier commits or have conflicts:
+   - b634b789 Remove long lived connection
+     Reason: Depends on: f8ceef6d
+   ...
+
+Tip: You can use 'pyspr breakup' to create independent PRs for the 12 independent commits.
+```
+
+Use this command when you want to:
+- Understand which commits can be parallelized as separate PRs
+- Find the optimal way to break up a large stack
+- Identify file conflicts between commits
 
 ## Tips
 

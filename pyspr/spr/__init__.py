@@ -4,7 +4,7 @@ import concurrent.futures
 import sys
 import re
 import logging
-from typing import Dict, List, Optional, TypedDict, Sequence, Tuple
+from typing import Dict, List, Optional, TypedDict, Sequence, Tuple, Set
 import time
 from concurrent.futures import Future
 
@@ -95,7 +95,7 @@ class StackedPR:
             logger.debug(f"    {commit_id}: PR #{pr.number}")
         
         # First pass: Find any PRs matching local commits by ID
-        # Only consider spr/main/* PRs as direct matches, not pyspr/cp/* PRs
+        # Only consider regular stacked PRs as direct matches, not pyspr/cp/* breakup PRs
         direct_matches: List[PullRequest] = []
         for commit in local_commits:
             logger.debug(f"  Checking commit {commit.commit_hash[:8]} with ID {commit.commit_id}")
@@ -1093,7 +1093,6 @@ class StackedPR:
     def analyze(self, ctx: StackedPRContextProtocol) -> None:
         """Analyze which commits can be independently submitted without stacking."""
         from ..pretty import print_header
-        import os
         
         # Get local commits
         local_commits = get_local_commit_stack(self.config, self.git_cmd)
@@ -1112,81 +1111,22 @@ class StackedPR:
         print_header("Commit Stack Analysis", use_emoji=True)
         print(f"\nAnalyzing {len(non_wip_commits)} commits for independent submission...")
         
-        # Get the base branch from config
-        base_branch = self.config.repo.github_branch
-        remote = self.config.repo.github_remote
+        # Analyze conflict-based dependencies between commits
+        conflict_dependencies = self._analyze_conflict_dependencies(non_wip_commits)
         
-        # Results tracking
+        # Determine which commits are independent vs dependent
         independent_commits: List[Commit] = []
         dependent_commits: List[Tuple[Commit, str]] = []  # (commit, reason)
         
-        # Create a temporary directory for patch testing
-        import tempfile
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Process each commit
-            for i, commit in enumerate(non_wip_commits):
-                logger.debug(f"Analyzing commit {i+1}/{len(non_wip_commits)}: {commit.commit_hash[:8]} {commit.subject}")
-                
-                # Create a subdirectory for this commit's patch
-                commit_patch_dir = os.path.join(tmpdir, commit.commit_id)
-                os.makedirs(commit_patch_dir, exist_ok=True)
-                
-                # Save current branch before testing patches
-                current_branch = self.git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
-                
-                # Generate patch for this commit
-                try:
-                    # Create patch from the commit
-                    self.git_cmd.must_git(f"format-patch -1 {commit.commit_hash} -o {commit_patch_dir}")
-                    
-                    # Find the generated patch file (git format-patch creates numbered files)
-                    patch_files = [f for f in os.listdir(commit_patch_dir) if f.endswith('.patch')]
-                    if not patch_files:
-                        dependent_commits.append((commit, "Failed to generate patch"))
-                        continue
-                    
-                    # Test if patch applies cleanly to base branch
-                    try:
-                        
-                        # Create a temporary test branch
-                        test_branch = f"pyspr-analyze-test-{commit.commit_id}"
-                        try:
-                            self.git_cmd.must_git(f"branch -D {test_branch}")
-                        except Exception:
-                            pass  # Branch doesn't exist
-                        
-                        # Checkout base branch in detached HEAD to avoid modifying it
-                        self.git_cmd.must_git(f"checkout -q {remote}/{base_branch}")
-                        
-                        # Try to apply the patch
-                        patch_path = os.path.join(commit_patch_dir, patch_files[0])
-                        try:
-                            # Use --check to test without actually applying
-                            self.git_cmd.must_git(f"apply --check {patch_path}")
-                            independent_commits.append(commit)
-                        except Exception as e:
-                            # Patch doesn't apply cleanly
-                            error_msg = str(e)
-                            if "patch does not apply" in error_msg:
-                                dependent_commits.append((commit, "Conflicts with base branch"))
-                            else:
-                                dependent_commits.append((commit, f"Cannot apply: {error_msg}"))
-                        
-                        # Return to original branch
-                        self.git_cmd.must_git(f"checkout -q {current_branch}")
-                        
-                    except Exception as e:
-                        logger.debug(f"Error testing patch: {e}")
-                        dependent_commits.append((commit, f"Test failed: {str(e)}"))
-                        # Make sure we're back on the original branch
-                        try:
-                            self.git_cmd.must_git(f"checkout -q {current_branch}")
-                        except Exception:
-                            pass
-                        
-                except Exception as e:
-                    logger.debug(f"Error generating patch: {e}")
-                    dependent_commits.append((commit, f"Failed to generate patch: {str(e)}"))
+        for commit in non_wip_commits:
+            deps = conflict_dependencies.get(commit.commit_hash, [])
+            if not deps:
+                independent_commits.append(commit)
+            else:
+                # Find which earlier commits this depends on
+                dep_commits = [c for c in non_wip_commits if c.commit_hash in deps]
+                dep_subjects = [c.commit_hash[:8] for c in dep_commits]
+                dependent_commits.append((commit, f"Depends on: {', '.join(dep_subjects)}"))
         
         # Print results
         print(f"\n✅ Independent commits ({len(independent_commits)}):")
@@ -1214,6 +1154,226 @@ class StackedPR:
         
         if independent_commits:
             print(f"\nTip: You can use 'pyspr breakup' to create independent PRs for the {len(independent_commits)} independent commits.")
+        
+        # Show alternative stacking scenarios
+        print_header("Alternative Stacking Scenarios", use_emoji=True)
+        
+        # Scenario 1: Strongly Connected Components
+        print("\n📊 Scenario 1: Strongly Connected Components")
+        print("   (Grouping commits with mutual dependencies)")
+        components = self._find_strongly_connected_components(non_wip_commits, conflict_dependencies)
+        print(f"\n   Found {len(components)} component(s):")
+        
+        for i, component in enumerate(components):
+            print(f"\n   Component {i+1} ({len(component)} commits):")
+            for commit in component:
+                deps = conflict_dependencies.get(commit.commit_hash, [])
+                # Show dependencies within the analyzed commits
+                dep_commits = [c for c in non_wip_commits if c.commit_hash in deps]
+                if dep_commits:
+                    print(f"     - {commit.commit_hash[:8]} {commit.subject} (depends on: {', '.join([c.commit_hash[:8] for c in dep_commits])})")
+                else:
+                    print(f"     - {commit.commit_hash[:8]} {commit.subject} (independent)")
+        
+        # Scenario 2: Best-Effort Single-Parent Trees
+        print("\n🌳 Scenario 2: Best-Effort Single-Parent Trees")
+        print("   (Attempting to create trees where each commit has at most one parent)")
+        trees = self._create_single_parent_trees(non_wip_commits, conflict_dependencies)
+        
+        # Count trees and orphans
+        tree_count = len([t for t in trees if len(t) > 1])
+        singleton_count = len([t for t in trees if len(t) == 1])
+        
+        print(f"\n   Created {tree_count} tree(s) and {singleton_count} orphan(s):")
+        
+        tree_num = 1
+        for tree in trees:
+            if len(tree) == 1:
+                # Single commit tree
+                commit = tree[0]
+                print(f"\n   Tree {tree_num}:")
+                print(f"     - {commit.commit_hash[:8]} {commit.subject}")
+            else:
+                # Multi-commit tree
+                print(f"\n   Tree {tree_num}:")
+                self._print_tree_structure(tree, conflict_dependencies, prefix="     ")
+            tree_num += 1
+    
+    def _analyze_conflict_dependencies(self, commits: List[Commit]) -> Dict[str, List[str]]:
+        """Analyze which commits depend on which other commits based on actual conflicts.
+        
+        Returns a dict mapping commit hash to list of commit hashes it depends on.
+        """
+        dependencies: Dict[str, List[str]] = {}
+        base_branch = self.config.repo.github_branch
+        remote = self.config.repo.github_remote
+        
+        # Save current branch and HEAD
+        current_branch = self.git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
+        original_head = self.git_cmd.must_git("rev-parse HEAD").strip()
+        
+        # Determine base ref - check for staging branch in anthropic repo
+        base_ref = f"{remote}/{base_branch}"
+        try:
+            self.git_cmd.must_git(f"rev-parse {base_ref}")
+        except:
+            # Try origin/staging as fallback (common in anthropic repo)
+            try:
+                base_ref = f"{remote}/staging"
+                self.git_cmd.must_git(f"rev-parse {base_ref}")
+                logger.debug(f"Using {base_ref} as base (staging branch)")
+            except:
+                # If remote/branch doesn't exist, try just branch
+                base_ref = base_branch
+                try:
+                    self.git_cmd.must_git(f"rev-parse {base_ref}")
+                except:
+                    # Last resort - use merge base
+                    try:
+                        base_ref = self.git_cmd.must_git(f"merge-base HEAD {remote}/{base_branch}").strip()
+                    except:
+                        logger.debug(f"Could not find base ref, using HEAD~{len(commits)}")
+                        base_ref = f"HEAD~{len(commits)}"
+        
+        # Phase 1: Quick identification of independent vs dependent commits
+        logger.info(f"Analyzing {len(commits)} commits for conflicts...")
+        independent_commits: Set[str] = set()
+        dependent_commits: List[Tuple[int, Commit]] = []
+        
+        # Create single test branch for all operations
+        test_branch = f"pyspr-analyze-test"
+        try:
+            self.git_cmd.must_git(f"branch -D {test_branch}")
+        except:
+            pass
+        
+        try:
+            # Create test branch from base
+            self.git_cmd.must_git(f"checkout -b {test_branch} {base_ref}")
+            
+            # First pass: identify which commits can cherry-pick cleanly
+            for i, commit in enumerate(commits):
+                dependencies[commit.commit_hash] = []
+                
+                # Reset to base for each test
+                self.git_cmd.must_git(f"reset --hard {base_ref}")
+                
+                # Try to cherry-pick this commit
+                try:
+                    self.git_cmd.must_git(f"cherry-pick {commit.commit_hash}")
+                    # Success! This commit can be applied independently
+                    independent_commits.add(commit.commit_hash)
+                    logger.info(f"  {i+1}/{len(commits)}: {commit.commit_hash[:8]} - independent")
+                except:
+                    # Cherry-pick failed, mark as dependent
+                    dependent_commits.append((i, commit))
+                    logger.info(f"  {i+1}/{len(commits)}: {commit.commit_hash[:8]} - has conflicts")
+                    try:
+                        self.git_cmd.must_git("cherry-pick --abort")
+                    except:
+                        pass
+            
+            # Phase 2: For dependent commits, find specific dependencies
+            # Use a more efficient algorithm that tests minimal combinations
+            if dependent_commits:
+                logger.info(f"Finding dependencies for {len(dependent_commits)} conflicting commits...")
+                
+                for idx, (i, commit) in enumerate(dependent_commits):
+                    logger.info(f"  Analyzing dependencies {idx+1}/{len(dependent_commits)}: {commit.commit_hash[:8]}")
+                    
+                    # Reset to base
+                    self.git_cmd.must_git(f"reset --hard {base_ref}")
+                    
+                    # Try to find the minimal set of commits needed
+                    # Start by checking each earlier commit individually
+                    found_dependency = False
+                    
+                    for j in range(i):
+                        earlier_commit = commits[j]
+                        
+                        # Reset to base
+                        self.git_cmd.must_git(f"reset --hard {base_ref}")
+                        
+                        # Try with just this earlier commit
+                        try:
+                            self.git_cmd.must_git(f"cherry-pick {earlier_commit.commit_hash}")
+                            
+                            # Now try our commit
+                            try:
+                                self.git_cmd.must_git(f"cherry-pick {commit.commit_hash}")
+                                # Success! This single commit is sufficient
+                                dependencies[commit.commit_hash].append(earlier_commit.commit_hash)
+                                logger.info(f"    Depends on: {earlier_commit.commit_hash[:8]}")
+                                found_dependency = True
+                                # For performance, once we find a dependency, we can stop
+                                # looking for more unless we need the complete graph
+                                break
+                            except:
+                                try:
+                                    self.git_cmd.must_git("cherry-pick --abort")
+                                except:
+                                    pass
+                        except:
+                            try:
+                                self.git_cmd.must_git("cherry-pick --abort")
+                            except:
+                                pass
+                    
+                    # If no single commit helps, this might need multiple commits
+                    # For now, we'll leave it as having no direct dependencies
+                    # A more complex algorithm could find minimal sets
+                    if not found_dependency:
+                        logger.info(f"    No single earlier commit resolves conflicts")
+        
+        except Exception as e:
+            logger.error(f"Error during conflict analysis: {e}")
+        
+        finally:
+            # Always return to original branch and clean up
+            try:
+                # Use reset to handle any uncommitted changes
+                self.git_cmd.must_git(f"reset --hard {original_head}")
+                self.git_cmd.must_git(f"checkout {current_branch}")
+                self.git_cmd.must_git(f"branch -D {test_branch}")
+            except:
+                pass
+                
+        return dependencies
+    
+    def _analyze_file_dependencies(self, commits: List[Commit]) -> Dict[str, List[str]]:
+        """Analyze which commits depend on which other commits based on file changes.
+        
+        Returns a dict mapping commit hash to list of commit hashes it depends on.
+        """
+        dependencies: Dict[str, List[str]] = {}
+        
+        # Get changed files for each commit
+        commit_files: Dict[str, Set[str]] = {}
+        for commit in commits:
+            try:
+                # Get the list of files changed in this commit
+                output = self.git_cmd.must_git(f"diff-tree --no-commit-id --name-only -r {commit.commit_hash}")
+                files = set(line.strip() for line in output.strip().split('\n') if line.strip())
+                commit_files[commit.commit_hash] = files
+            except Exception as e:
+                logger.debug(f"Error getting files for commit {commit.commit_hash}: {e}")
+                commit_files[commit.commit_hash] = set()
+        
+        # For each commit, check if it modifies files that were modified by earlier commits
+        for i, commit in enumerate(commits):
+            dependencies[commit.commit_hash] = []
+            current_files = commit_files[commit.commit_hash]
+            
+            # Check against all earlier commits
+            for j in range(i):
+                earlier_commit = commits[j]
+                earlier_files = commit_files[earlier_commit.commit_hash]
+                
+                # If there's file overlap, this commit depends on the earlier one
+                if current_files & earlier_files:  # Set intersection
+                    dependencies[commit.commit_hash].append(earlier_commit.commit_hash)
+        
+        return dependencies
     
     def _analyze_commit_dependencies(self, commits: List[Commit]) -> Dict[str, List[str]]:
         """Analyze which commits depend on which other commits.
@@ -1340,6 +1500,107 @@ class StackedPR:
         result.sort(key=lambda comp: next(i for i, x in enumerate(commits) if x.commit_hash == comp[0].commit_hash))
         
         return result
+    
+    def _create_single_parent_trees(self, commits: List[Commit], dependencies: Dict[str, List[str]]) -> List[List[Commit]]:
+        """Create a forest of single-parent trees from commits and dependencies.
+        
+        Each commit will have at most one parent in the resulting trees.
+        """
+        commit_map = {c.commit_hash: c for c in commits}
+        assigned: Set[str] = set()
+        trees: List[List[Commit]] = []
+        
+        # Build parent mapping (each commit has at most one parent)
+        parent_map: Dict[str, Optional[str]] = {}
+        
+        for commit in commits:
+            deps = dependencies.get(commit.commit_hash, [])
+            if deps:
+                # Choose the most recent dependency as parent
+                parent_map[commit.commit_hash] = deps[-1]
+                print(f"  Placed {commit.commit_hash[:8]} under {deps[-1][:8]} (actual dependency)")
+            else:
+                parent_map[commit.commit_hash] = None
+        
+        # Build trees by finding roots and traversing
+        def build_tree_from_root(root_hash: str) -> List[Commit]:
+            tree: List[Commit] = []
+            
+            def add_to_tree(commit_hash: str, depth: int = 0) -> None:
+                if commit_hash in assigned:
+                    return
+                assigned.add(commit_hash)
+                
+                # Add current commit at its depth position
+                commit = commit_map[commit_hash]
+                while len(tree) <= depth:
+                    tree.append(commit)  # Placeholder, will be replaced
+                tree[depth] = commit
+                
+                # Find children
+                children = [h for h, p in parent_map.items() if p == commit_hash and h not in assigned]
+                for child_hash in children:
+                    add_to_tree(child_hash, depth + 1)
+            
+            add_to_tree(root_hash)
+            return tree[:len([c for c in tree if c])]  # Trim to actual size
+        
+        # Find all roots (commits with no parent in our set)
+        roots = [c.commit_hash for c in commits if parent_map.get(c.commit_hash) is None]
+        
+        # Build tree from each root
+        for root in roots:
+            if root not in assigned:
+                tree = build_tree_from_root(root)
+                if tree:
+                    trees.append(tree)
+        
+        # Handle any remaining unassigned commits as single-node trees
+        for commit in commits:
+            if commit.commit_hash not in assigned:
+                trees.append([commit])
+        
+        return trees
+    
+    def _print_tree_structure(self, tree: List[Commit], dependencies: Dict[str, List[str]], prefix: str = "", is_last: bool = True) -> None:
+        """Print a tree structure with proper indentation."""
+        if not tree:
+            return
+            
+        # Build parent-child relationships for this tree
+        tree_hashes = {c.commit_hash for c in tree}
+        parent_map: Dict[str, Optional[str]] = {}
+        children_map: Dict[str, List[str]] = {c.commit_hash: [] for c in tree}
+        
+        for commit in tree:
+            deps = dependencies.get(commit.commit_hash, [])
+            # Find parent within this tree
+            tree_deps = [d for d in deps if d in tree_hashes]
+            if tree_deps:
+                parent_map[commit.commit_hash] = tree_deps[-1]  # Most recent dependency
+                children_map[tree_deps[-1]].append(commit.commit_hash)
+            else:
+                parent_map[commit.commit_hash] = None
+        
+        # Find root(s)
+        roots = [c for c in tree if parent_map.get(c.commit_hash) is None]
+        
+        def print_node(commit: Commit, indent: str = "", is_last_child: bool = True) -> None:
+            # Print the commit
+            print(f"{indent}- {commit.commit_hash[:8]} {commit.subject}")
+            
+            # Print children
+            children = children_map.get(commit.commit_hash, [])
+            for i, child_hash in enumerate(children):
+                child = next(c for c in tree if c.commit_hash == child_hash)
+                is_last = i == len(children) - 1
+                child_indent = indent + ("  " if is_last_child else "  ")
+                print_node(child, child_indent, is_last)
+        
+        # Print each root and its subtree
+        for i, root in enumerate(roots):
+            is_last_root = i == len(roots) - 1
+            print_node(root, prefix, is_last_root)
     
     def _breakup_into_stacks(self, ctx: StackedPRContextProtocol, commits: List[Commit], reviewers: Optional[List[str]] = None) -> None:
         """Break up commits into multiple PR stacks based on dependencies."""
