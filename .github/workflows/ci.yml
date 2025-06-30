@@ -53,4 +53,4 @@ jobs:
       run: rye sync --no-lock
     
     - name: Run tests
-      run: rye run pytest -p xdist -n auto -vsx
+      run: ./run_tests.sh -vsx
