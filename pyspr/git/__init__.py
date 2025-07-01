@@ -265,7 +265,7 @@ class RealGit:
         if no_rebase:
             # Skip any commands that could modify commit hashes
             if any(cmd_str.startswith(cmd) for cmd in ("rebase",)):
-                logger.debug(f"Skipping command '{cmd_str}' due to --no-rebase")
+                logger.info(f"Skipping command '{cmd_str}' due to --no-rebase")
                 return ""
 
         if self.config.tool.pretend and 'push' in cmd_str:
@@ -274,7 +274,7 @@ class RealGit:
             return ""
 
         # Log git commands at debug level
-        logger.debug(f"> git {cmd_str}")
+        logger.info(f"> git {cmd_str}")
         try:
             # Use GitPython
             repo = git.Repo(os.getcwd(), search_parent_directories=True)
