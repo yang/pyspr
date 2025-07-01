@@ -231,7 +231,27 @@ def test_analyze_complex_dependencies(test_repo_ctx: RepoContext) -> None:
     assert scenario2_match, "Could not find Scenario 2 summary"
     trees_count = int(scenario2_match.group(1))
     orphans_count = int(scenario2_match.group(2))
-    assert trees_count >= 2, f"Expected at least 2 trees, got {trees_count}"
+    assert trees_count == 5, f"Expected 5 trees, got {trees_count}"
+    assert orphans_count == 1, f"Expected 1 orphan in Scenario 2, got {orphans_count}"
+    
+    # Check that each independent commit is a tree root
+    expected_roots = ["A", "F", "H", "K", "M"]
+    for root in expected_roots:
+        pattern = rf"Tree \d+:\s*\n\s*- \w+ {root}\b"
+        assert re.search(pattern, output, re.MULTILINE), f"Expected {root} to be a tree root"
+    
+    # Verify key parent-child relationships in trees
+    relationships = [
+        ("A", "B", r"- \w+ A\n\s+- \w+ B"),
+        ("H", "I", r"- \w+ H\n\s+- \w+ I"), 
+        ("K", "L", r"- \w+ K\n\s+- \w+ L"),
+    ]
+    for parent, child, pattern in relationships:
+        assert re.search(pattern, output, re.MULTILINE), f"Expected {parent}→{child} relationship"
+    
+    # Verify G is an orphan
+    assert re.search(r"Orphan \d+:\s*\n\s*- \w+ G", output) or "orphans: G" in output, \
+        "Expected G to be marked as an orphan"
     
     scenario3_match = re.search(r"Created (\d+) stack\(s\) and (\d+) orphan\(s\)", output)
     assert scenario3_match, "Could not find Scenario 3 summary"

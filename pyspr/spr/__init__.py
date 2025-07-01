@@ -1424,35 +1424,35 @@ class StackedPR:
                             except:
                                 pass
                     
-                    # If no single commit helps, check if it needs multiple commits
-                    # Only mark as orphan if it cannot be applied even with ALL earlier commits
+                    # If no single commit helps, this commit has multiple dependencies
+                    # In the context of single-parent trees, this makes it an orphan
                     if not found_dependency:
-                        # Try with ALL earlier commits applied
+                        logger.info(f"    Requires multiple commits - marking as orphan")
+                        orphans.add(commit.commit_hash)
+                        
+                        # Still track what it depends on for informational purposes
                         self.git_cmd.must_git(f"reset --hard {base_ref}")
                         
-                        try:
-                            # Apply all earlier commits in order
-                            for j in range(i):
-                                self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {commits[j].commit_hash}")
+                        # Check which commits it actually depends on
+                        for j in range(i):
+                            earlier_commit = commits[j]
                             
-                            # Now try our commit
-                            self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {commit.commit_hash}")
+                            # Apply earlier commits up to this one
+                            self.git_cmd.must_git(f"reset --hard {base_ref}")
+                            for k in range(j + 1):
+                                self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {commits[k].commit_hash}")
                             
-                            # Success! It can be applied with all earlier commits
-                            # It just needs multiple dependencies (not an orphan)
-                            logger.info(f"    Needs multiple earlier commits (not an orphan)")
-                            # Mark dependencies on all earlier commits that have conflicts
-                            for j in range(i):
-                                if commits[j].commit_hash not in independent_commits:
-                                    dependencies[commit.commit_hash].append(commits[j].commit_hash)
-                        except Exception as e:
-                            # Even with all earlier commits, it still fails - true orphan
-                            logger.info(f"    Cannot be applied even with all earlier commits - marking as orphan")
-                            orphans.add(commit.commit_hash)
+                            # Try our commit
                             try:
-                                self.git_cmd.must_git("cherry-pick --abort")
+                                self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {commit.commit_hash}")
+                                # If we get here, commit j is sufficient when combined with earlier ones
+                                dependencies[commit.commit_hash].append(commits[j].commit_hash)
+                                break
                             except:
-                                pass
+                                try:
+                                    self.git_cmd.must_git("cherry-pick --abort")
+                                except:
+                                    pass
         
         except Exception as e:
             logger.error(f"Error during conflict analysis: {e}")
