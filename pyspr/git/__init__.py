@@ -135,14 +135,19 @@ def get_local_commit_stack(config: PysprConfig, git_cmd: GitInterface) -> List[C
 
                     max_changed = i
 
-            commits_changed = commits_new[-(max_changed + 1):]
-
-            # Now rewrite history with the new commit IDs
-            git_cmd.must_git(f"checkout {curr_branch}")
-            git_cmd.must_git(f"reset --hard HEAD~{len(commits_changed)}")
-            for commit in commits_changed:
-                cherry_pick_cmd = f"cherry-pick {commit.commit_hash}"
-                git_cmd.must_git(cherry_pick_cmd)
+            # Only rewrite history if we actually changed commits
+            if max_changed >= 0:
+                commits_changed = commits_new[-(max_changed + 1):]
+                
+                # Now rewrite history with the new commit IDs
+                git_cmd.must_git(f"checkout {curr_branch}")
+                git_cmd.must_git(f"reset --hard HEAD~{len(commits_changed)}")
+                for commit in commits_changed:
+                    cherry_pick_cmd = f"cherry-pick {commit.commit_hash}"
+                    git_cmd.must_git(cherry_pick_cmd)
+            else:
+                # No commits were changed, just ensure we're on the right branch
+                git_cmd.must_git(f"checkout {curr_branch}")
                 
             return commits_new
         except Exception as e:
@@ -167,6 +172,15 @@ def get_local_commit_stack(config: PysprConfig, git_cmd: GitInterface) -> List[C
             git_cmd.must_git(f"checkout {curr_branch}")
             git_cmd.must_git(f"reset --hard {original_head}")
             raise Exception(f"Failed to add commit IDs: {e}")
+        finally:
+            # Always ensure we're back on the original branch
+            try:
+                current = git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
+                if current != curr_branch:
+                    logger.info(f"Restoring branch from {current} to {curr_branch}")
+                    git_cmd.must_git(f"checkout {curr_branch}")
+            except Exception as e:
+                logger.error(f"Failed to restore branch in finally block: {e}")
 
     return commits
 
