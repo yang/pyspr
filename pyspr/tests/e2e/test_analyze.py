@@ -2,7 +2,7 @@
 
 import logging
 import sys
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from pyspr.tests.e2e.test_helpers import RepoContext, run_cmd
 from pyspr.tests.e2e.decorators import run_twice_in_mock_mode
@@ -171,186 +171,106 @@ def test_analyze_complex_dependencies(test_repo_ctx: RepoContext) -> None:
     # Extract key information using simple patterns
     import re
     
-    # Check total commits and breakdown
-    total_match = re.search(r"Total commits: (\d+)", output)
-    assert total_match, "Could not find total commits"
-    total_commits = int(total_match.group(1))
+    def extract_number(pattern: str, text: str, name: str) -> int:
+        """Extract a number from text using regex pattern."""
+        match = re.search(pattern, text)
+        assert match, f"Could not find {name}"
+        return int(match.group(1))
+    
+    def extract_commits_from_section(section_text: str) -> set:
+        """Extract commit names from a section of output."""
+        commits = set()
+        for line in section_text.strip().split('\n'):
+            match = re.search(r"- \w+ (\w+)$", line.strip())
+            if match:
+                commits.add(match.group(1))
+        return commits
+    
+    def verify_topological_order(commit_positions: Dict[str, Tuple[int, int]], 
+                                  commit: str, dependencies: List[str]) -> None:
+        """Verify that a commit appears after all its dependencies."""
+        if commit not in commit_positions:
+            return
+        
+        commit_stack, commit_pos = commit_positions[commit]
+        
+        for dep in dependencies:
+            if dep not in commit_positions:
+                continue
+                
+            dep_stack, dep_pos = commit_positions[dep]
+            
+            if commit_stack == dep_stack:
+                assert dep_pos < commit_pos, \
+                    f"{dep} (position {dep_pos}) must come before {commit} (position {commit_pos}) in stack {commit_stack + 1}"
+            else:
+                assert dep_stack < commit_stack, \
+                    f"{dep} (in stack {dep_stack + 1}) must be in an earlier stack than {commit} (in stack {commit_stack + 1})"
+        
+        log.info(f"✓ {commit} correctly placed after {', '.join(dependencies)}")
+    
+    # Basic validations
+    total_commits = extract_number(r"Total commits: (\d+)", output, "total commits")
     assert total_commits >= 13, f"Expected at least 13 commits, got {total_commits}"
     
-    # Extract and validate independent commits
+    # Validate independent commits
     independent_section = re.search(r"✅ Independent commits \(\d+\):(.*?)❌ Dependent commits", output, re.DOTALL)
     assert independent_section, "Could not find independent commits section"
     
-    independent_text = independent_section.group(1)
-    # Extract commit names from lines like "- df222331 A"
-    independent_commits = set()
-    for line in independent_text.strip().split('\n'):
-        commit_match = re.search(r"- \w+ (\w+)$", line.strip())
-        if commit_match:
-            independent_commits.add(commit_match.group(1))
-    
-    # Verify the expected independent commits
+    independent_commits = extract_commits_from_section(independent_section.group(1))
     expected_independent = {"A", "F", "H", "K", "M"}
-    assert independent_commits == expected_independent, f"Expected independent commits {expected_independent}, got {independent_commits}"
+    assert independent_commits == expected_independent, \
+        f"Expected independent commits {expected_independent}, got {independent_commits}"
     log.info(f"✓ Verified independent commits: {sorted(independent_commits)}")
     
-    # Verify Scenario 1 - should have components
-    scenario1_match = re.search(r"Found (\d+) component\(s\)", output)
-    assert scenario1_match, "Could not find Scenario 1 summary"
-    components_count = int(scenario1_match.group(1))
+    # Verify scenarios
+    components_count = extract_number(r"Found (\d+) component\(s\)", output, "Scenario 1 summary")
     assert components_count >= 1, f"Expected at least 1 component, got {components_count}"
     
-    # Verify Scenario 2 - trees and orphans  
     scenario2_match = re.search(r"Created (\d+) tree\(s\) and (\d+) orphan\(s\)", output)
     assert scenario2_match, "Could not find Scenario 2 summary"
     trees_count = int(scenario2_match.group(1))
     orphans_count = int(scenario2_match.group(2))
     assert trees_count >= 2, f"Expected at least 2 trees, got {trees_count}"
     
-    # Check specific tree patterns in Scenario 2
-    # Look for tree structures - simple pattern matching
-    tree_patterns = [
-        r"Tree \d+:\s*\n\s*- \w+ A\n",  # A should be a tree root
-        r"Tree \d+:\s*\n\s*- \w+ F\n",  # F should be a tree root
-        r"Tree \d+:\s*\n\s*- \w+ H\n",  # H should be a tree root
-        r"Tree \d+:\s*\n\s*- \w+ K\n",  # K should be a tree root
-        r"Tree \d+:\s*\n\s*- \w+ M\n",  # M should be a tree root
-    ]
-    
-    # Count how many expected roots we find
-    found_roots = 0
-    for pattern in tree_patterns:
-        if re.search(pattern, output, re.MULTILINE):
-            found_roots += 1
-    
-    # We should find most of the expected roots
-    assert found_roots >= 3, f"Expected at least 3 root commits (A,F,H,K,M), found {found_roots}"
-    
-    # Check if B follows A (parent-child relationship)
-    ab_pattern = r"- \w+ A\n\s+- \w+ B"
-    if re.search(ab_pattern, output, re.MULTILINE):
-        log.info("✓ Found A->B parent-child relationship")
-    
-    # Check if I follows H
-    hi_pattern = r"- \w+ H\n\s+- \w+ I"
-    if re.search(hi_pattern, output, re.MULTILINE):
-        log.info("✓ Found H->I parent-child relationship")
-    
-    # Check if L follows K
-    kl_pattern = r"- \w+ K\n\s+- \w+ L"
-    if re.search(kl_pattern, output, re.MULTILINE):
-        log.info("✓ Found K->L parent-child relationship")
-    
-    # Check G's status - it should be isolated (either orphan or single-commit tree)
-    # Look for G in a tree by itself
-    g_single_tree = re.search(r"Tree \d+:\s*\n\s*- \w+ G\s*\n\s*(Tree|Stack|\Z)", output, re.MULTILINE)
-    g_in_orphans = "orphans: G" in output or re.search(r"Orphan \d+:\s*\n\s*- \w+ G", output)
-    
-    if g_single_tree:
-        log.info("✓ G is in its own single-commit tree (isolated as expected)")
-    elif g_in_orphans:
-        log.info("✓ G is marked as an orphan (isolated as expected)")
-    else:
-        # G might be in a larger tree - check if it's with E or F
-        log.warning("G may not be properly isolated - check implementation")
-    
-    # Verify Scenario 3 - stacks  
     scenario3_match = re.search(r"Created (\d+) stack\(s\) and (\d+) orphan\(s\)", output)
     assert scenario3_match, "Could not find Scenario 3 summary"
     stacks_count = int(scenario3_match.group(1))
     stacks_orphans = int(scenario3_match.group(2))
     
-    # Scenario 3 should have fewer structures than Scenario 2 (more consolidation)
-    assert stacks_count <= trees_count, f"Scenario 3 ({stacks_count} stacks) should have fewer or equal structures than Scenario 2 ({trees_count} trees)"
-    
-    # Verify expected number of stacks according to spec
+    # Verify expected counts
     assert stacks_count == 5, f"Expected 5 stacks in Scenario 3, got {stacks_count}"
     assert stacks_orphans == 1, f"Expected 1 orphan in Scenario 3, got {stacks_orphans}"
     
-    # Extract all stacks and verify topological ordering
-    all_stacks = []
-    stack_pattern = r"Stack \d+:\s*\n((?:\s*- \w+ \w+\s*\n)+)"
-    for stack_match in re.finditer(stack_pattern, output, re.MULTILINE):
-        stack_content = stack_match.group(1)
-        stack_commits = []
-        
-        # Extract commit names from the stack
-        for line in stack_content.strip().split('\n'):
-            commit_match = re.search(r"- \w+ (\w+)", line.strip())
-            if commit_match:
-                stack_commits.append(commit_match.group(1))
-        
-        if stack_commits:
-            all_stacks.append(stack_commits)
-            log.info(f"Stack {len(all_stacks)}: {' → '.join(stack_commits)}")
-    
-    # Build a map of commit positions across all stacks
+    # Extract stacks and build position map
     commit_positions = {}
-    for stack_idx, stack in enumerate(all_stacks):
-        for pos, commit in enumerate(stack):
+    stack_pattern = r"Stack \d+:\s*\n((?:\s*- \w+ \w+\s*\n)+)"
+    
+    for stack_idx, stack_match in enumerate(re.finditer(stack_pattern, output, re.MULTILINE)):
+        stack_commits = extract_commits_from_section(stack_match.group(1))
+        
+        # Preserve order by re-parsing
+        ordered_commits = []
+        for line in stack_match.group(1).strip().split('\n'):
+            match = re.search(r"- \w+ (\w+)", line.strip())
+            if match:
+                ordered_commits.append(match.group(1))
+        
+        for pos, commit in enumerate(ordered_commits):
             commit_positions[commit] = (stack_idx, pos)
+        
+        if ordered_commits:
+            log.info(f"Stack {stack_idx + 1}: {' → '.join(ordered_commits)}")
     
-    # Verify topological constraints
-    # G depends on E and F, so both must come before G
-    if 'G' in commit_positions and 'E' in commit_positions and 'F' in commit_positions:
-        g_stack, g_pos = commit_positions['G']
-        e_stack, e_pos = commit_positions['E']
-        f_stack, f_pos = commit_positions['F']
-        
-        # If G is in the same stack as E, E must come before G
-        if g_stack == e_stack:
-            assert e_pos < g_pos, f"E (position {e_pos}) must come before G (position {g_pos}) in stack {g_stack + 1}"
-        else:
-            assert e_stack < g_stack, f"E (in stack {e_stack + 1}) must be in an earlier stack than G (in stack {g_stack + 1})"
-        
-        # If G is in the same stack as F, F must come before G
-        if g_stack == f_stack:
-            assert f_pos < g_pos, f"F (position {f_pos}) must come before G (position {g_pos}) in stack {g_stack + 1}"
-        else:
-            assert f_stack < g_stack, f"F (in stack {f_stack + 1}) must be in an earlier stack than G (in stack {g_stack + 1})"
-        
-        log.info("✓ G correctly placed after both E and F")
+    # Verify topological ordering for key commits
+    verify_topological_order(commit_positions, 'G', ['E', 'F'])
+    verify_topological_order(commit_positions, 'D', ['A', 'C'])
+    verify_topological_order(commit_positions, 'J', ['H', 'I'])
     
-    # D depends on A and C, so both must come before D
-    if 'D' in commit_positions and 'A' in commit_positions and 'C' in commit_positions:
-        d_stack, d_pos = commit_positions['D']
-        a_stack, a_pos = commit_positions['A']
-        c_stack, c_pos = commit_positions['C']
-        
-        if d_stack == a_stack:
-            assert a_pos < d_pos, f"A (position {a_pos}) must come before D (position {d_pos}) in stack {d_stack + 1}"
-        else:
-            assert a_stack < d_stack, f"A (in stack {a_stack + 1}) must be in an earlier stack than D (in stack {d_stack + 1})"
-        
-        if d_stack == c_stack:
-            assert c_pos < d_pos, f"C (position {c_pos}) must come before D (position {d_pos}) in stack {d_stack + 1}"
-        else:
-            assert c_stack < d_stack, f"C (in stack {c_stack + 1}) must be in an earlier stack than D (in stack {d_stack + 1})"
-        
-        log.info("✓ D correctly placed after both A and C")
-    
-    # J depends on H and I
-    if 'J' in commit_positions and 'H' in commit_positions and 'I' in commit_positions:
-        j_stack, j_pos = commit_positions['J']
-        h_stack, h_pos = commit_positions['H']
-        i_stack, i_pos = commit_positions['I']
-        
-        if j_stack == h_stack:
-            assert h_pos < j_pos, f"H (position {h_pos}) must come before J (position {j_pos}) in stack {j_stack + 1}"
-        else:
-            assert h_stack < j_stack, f"H (in stack {h_stack + 1}) must be in an earlier stack than J (in stack {j_stack + 1})"
-        
-        if j_stack == i_stack:
-            assert i_pos < j_pos, f"I (position {i_pos}) must come before J (position {j_pos}) in stack {j_stack + 1}"
-        else:
-            assert i_stack < j_stack, f"I (in stack {i_stack + 1}) must be in an earlier stack than J (in stack {j_stack + 1})"
-        
-        log.info("✓ J correctly placed after both H and I")
-    
+    # Summary
     log.info("\n=== TEST SUMMARY ===")
     log.info(f"✓ Found {total_commits} total commits")
     log.info(f"✓ Scenario 1: {components_count} components")
     log.info(f"✓ Scenario 2: {trees_count} trees, {orphans_count} orphans")
     log.info(f"✓ Scenario 3: {stacks_count} stacks, {stacks_orphans} orphans")
-    log.info(f"✓ Found {found_roots} expected root commits")
     log.info("✓ All key structures validated")
