@@ -172,15 +172,6 @@ def get_local_commit_stack(config: PysprConfig, git_cmd: GitInterface) -> List[C
             git_cmd.must_git(f"checkout {curr_branch}")
             git_cmd.must_git(f"reset --hard {original_head}")
             raise Exception(f"Failed to add commit IDs: {e}")
-        finally:
-            # Always ensure we're back on the original branch
-            try:
-                current = git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
-                if current != curr_branch:
-                    logger.info(f"Restoring branch from {current} to {curr_branch}")
-                    git_cmd.must_git(f"checkout {curr_branch}")
-            except Exception as e:
-                logger.error(f"Failed to restore branch in finally block: {e}")
 
     return commits
 

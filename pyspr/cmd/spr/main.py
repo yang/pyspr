@@ -279,8 +279,17 @@ def analyze(ctx: Context, directory: Optional[str], verbose: int) -> None:
     setup_logging(verbose)
     
     config, git_cmd, github = setup_git(directory)
-    stackedpr = StackedPR(config, github, git_cmd)
-    stackedpr.analyze(ctx)
+    
+    # Save current git state
+    current_branch = git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
+    current_head = git_cmd.must_git("rev-parse HEAD").strip()
+    
+    try:
+        stackedpr = StackedPR(config, github, git_cmd)
+        stackedpr.analyze(ctx)
+    finally:
+        # Always restore git state
+        restore_git_state(git_cmd, current_branch, current_head)
 
 
 def main() -> None:
