@@ -103,7 +103,7 @@ def save_git_state(git_cmd: GitInterface) -> GitState:
 
 def restore_git_state(git_cmd: GitInterface, state: GitState) -> None:
     """Attempt to restore git to a known good state."""
-    logger.info("Attempting to restore repository state...")
+    logger.debug("Attempting to restore repository state...")
     
     # First abort any in-progress operations
     for abort_cmd in ["cherry-pick --abort", "rebase --abort", "merge --abort"]:
@@ -124,7 +124,7 @@ def restore_git_state(git_cmd: GitInterface, state: GitState) -> None:
     # Reset to original HEAD
     try:
         git_cmd.must_git(f"reset --hard {state.head}")
-        logger.info("Repository restored to original state")
+        logger.debug("Repository restored to original state")
     except Exception as e:
         logger.error(f"Failed to reset to {state.head}: {e}")
         logger.error("Repository may be in an inconsistent state")
@@ -162,11 +162,11 @@ def setup_git(directory: Optional[str] = None) -> Tuple[Config, RealGit, GitHubC
     
     # Use mock GitHub if available and not explicitly disabled
     if is_mock_available and should_use_mock_github():
-        logger.info("Using mock GitHub client")
+        logger.debug("Using mock GitHub client")
         # Explicitly set force_mock=False to rely on environment variables
         github = create_github_client(None, config, force_mock=False)
     else:
-        logger.info("Using real GitHub client")
+        logger.debug("Using real GitHub client")
         # Need to create real PyGithub client with adapter
         from ...github import find_github_token
         from ...github.adapters import PyGithubAdapter

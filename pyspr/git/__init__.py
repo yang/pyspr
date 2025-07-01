@@ -38,15 +38,15 @@ def get_local_commit_stack(config: PysprConfig, git_cmd: GitInterface) -> List[C
     valid = True
     commits, valid = parse_local_commit_stack(commit_log)
     
-    logger.info(f"get_local_commit_stack: parsed {len(commits)} commits, valid={valid}")
+    logger.debug(f"get_local_commit_stack: parsed {len(commits)} commits, valid={valid}")
     if commits:
-        logger.info("Parsed commits:")
+        logger.debug("Parsed commits:")
         for c in commits:
-            logger.info(f"  {c.commit_hash[:8]}: id={c.commit_id}, subject='{c.subject}'")
+            logger.debug(f"  {c.commit_hash[:8]}: id={c.commit_id}, subject='{c.subject}'")
     
     # If not valid, it means commits are missing IDs - add them
     if not valid:
-        logger.info("Parsing marked as invalid - some commits are missing commit-ids")
+        logger.debug("Parsing marked as invalid - some commits are missing commit-ids")
         # Get all commits for test
         commit_hashes: List[str] = []
         target = "HEAD"  # Default target
@@ -94,7 +94,7 @@ def get_local_commit_stack(config: PysprConfig, git_cmd: GitInterface) -> List[C
                     logger.debug(f"Commit {cid[:8]} already has commit-id: {commit_id}")
                 else:
                     # Need to add ID
-                    logger.info(f"Commit {cid[:8]} missing commit-id, will add one")
+                    logger.debug(f"Commit {cid[:8]} missing commit-id, will add one")
                     new_id = str(uuid.uuid4())[:8]
                     
                     # Get current message
@@ -108,9 +108,9 @@ def get_local_commit_stack(config: PysprConfig, git_cmd: GitInterface) -> List[C
                         ps_output = subprocess.run(['ps', 'aux'], capture_output=True, text=True).stdout
                         git_processes = [line for line in ps_output.split('\n') if 'git' in line and 'grep' not in line and 'gitstatus' not in line and 'rsync' not in line]
                         if git_processes:
-                            logging.info(f"Active git processes before checkout {cid}:")
+                            logging.debug(f"Active git processes before checkout {cid}:")
                             for proc in git_processes:
-                                logging.info(f"  {proc}")
+                                logging.debug(f"  {proc}")
                         
                         # Check for index.lock
                         lock_path = os.path.join(os.getcwd(), '.git', 'index.lock')
@@ -158,9 +158,9 @@ def get_local_commit_stack(config: PysprConfig, git_cmd: GitInterface) -> List[C
                 ps_output = subprocess.run(['ps', 'aux'], capture_output=True, text=True).stdout
                 git_processes = [line for line in ps_output.split('\n') if 'git' in line and 'grep' not in line and 'gitstatus' not in line and 'rsync' not in line]
                 if git_processes:
-                    logging.info(f"Active git processes before cleanup checkout {curr_branch}:")
+                    logging.debug(f"Active git processes before cleanup checkout {curr_branch}:")
                     for proc in git_processes:
-                        logging.info(f"  {proc}")
+                        logging.debug(f"  {proc}")
                 
                 # Check for index.lock
                 lock_path = os.path.join(os.getcwd(), '.git', 'index.lock')
@@ -273,8 +273,8 @@ class RealGit:
             logger.info(f"> git {cmd_str}")
             return ""
 
-        # Always log git commands
-        logger.info(f"> git {cmd_str}")
+        # Log git commands at debug level
+        logger.debug(f"> git {cmd_str}")
         try:
             # Use GitPython
             repo = git.Repo(os.getcwd(), search_parent_directories=True)

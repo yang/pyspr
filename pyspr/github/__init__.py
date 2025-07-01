@@ -297,7 +297,7 @@ class GitHubClient:
         self.config = config
         if github_client is not None:
             self.client = github_client
-            logger.info("Using provided GitHub client implementation")
+            logger.debug("Using provided GitHub client implementation")
         else:
             # No client provided - this will cause AttributeError when client is used
             # This matches the original behavior when no token was found

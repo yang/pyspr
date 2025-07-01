@@ -1495,7 +1495,7 @@ class StackedPR:
             # Process each commit in order (bottom-up)
             for i, commit in enumerate(commits):
                 placed = False
-                logger.debug(f"Processing commit {i+1}/{len(commits)}: {commit.commit_hash[:8]} {commit.subject}")
+                print(f"\n⏳ Processing commit {i+1}/{len(commits)}: {commit.commit_hash[:8]} {commit.subject}")
                 
                 # First try: cherry-pick directly onto merge-base
                 self.git_cmd.must_git(f"reset --hard {base_ref}")
@@ -1507,7 +1507,7 @@ class StackedPR:
                     commit_to_tree[commit.commit_hash] = commit.commit_hash
                     placed_commits.append(commit)
                     placed = True
-                    logger.debug(f"  Placed {commit.commit_hash[:8]} as root (can cherry-pick to merge-base)")
+                    print(f"  ✅ Placed {commit.commit_hash[:8]} as root (can cherry-pick to merge-base)")
                 except:
                     try:
                         self.git_cmd.must_git("cherry-pick --abort")
@@ -1543,7 +1543,7 @@ class StackedPR:
                             commit_to_tree[commit.commit_hash] = tree_root
                             placed_commits.append(commit)
                             placed = True
-                            logger.debug(f"  Placed {commit.commit_hash[:8]} as child of {prev_commit.commit_hash[:8]}")
+                            print(f"  ✅ Placed {commit.commit_hash[:8]} as child of {prev_commit.commit_hash[:8]}")
                             break
                         except:
                             try:
@@ -1629,7 +1629,7 @@ class StackedPR:
             # Process each commit in order (bottom-up)
             for i, commit in enumerate(commits):
                 placed = False
-                logger.debug(f"Processing commit {i+1}/{len(commits)}: {commit.commit_hash[:8]} {commit.subject}")
+                print(f"\n⏳ Processing commit {i+1}/{len(commits)}: {commit.commit_hash[:8]} {commit.subject}")
                 
                 # Get dependencies for this commit
                 commit_deps = dependencies.get(commit.commit_hash, [])
@@ -1650,7 +1650,7 @@ class StackedPR:
                         stacks.append([commit])
                         placed_commits[commit.commit_hash] = stack_idx
                         placed = True
-                        logger.debug(f"  Started new stack {stack_idx + 1} with {commit.commit_hash[:8]}")
+                        print(f"  🆕 Started new stack {stack_idx + 1} with {commit.commit_hash[:8]}")
                     except:
                         try:
                             self.git_cmd.must_git("cherry-pick --abort")
@@ -1683,7 +1683,7 @@ class StackedPR:
                             stacks[stack_idx].append(commit)
                             placed_commits[commit.commit_hash] = stack_idx
                             placed = True
-                            logger.debug(f"  Added {commit.commit_hash[:8]} to stack {stack_idx + 1}")
+                            print(f"  ➕ Added {commit.commit_hash[:8]} to stack {stack_idx + 1}")
                         except:
                             try:
                                 self.git_cmd.must_git("cherry-pick --abort")
@@ -1710,7 +1710,7 @@ class StackedPR:
                             stacks[j].append(commit)
                             placed_commits[commit.commit_hash] = j
                             placed = True
-                            logger.debug(f"  Added {commit.commit_hash[:8]} to stack {j+1} (fallback)")
+                            print(f"  ➕ Added {commit.commit_hash[:8]} to stack {j+1} (fallback)")
                             break
                         except:
                             try:
@@ -1929,13 +1929,6 @@ class StackedPR:
                 print(f"\n  ⏳ Pushing {len(single_commit_branches)} single-commit branches...")
                 self._push_branches(single_commit_branches)
                 print(f"  ✅ Pushed {len(single_commit_branches)} branches")
-            
-            # Push stack branches
-            if multi_commit_stacks:
-                print(f"\n  ⏳ Pushing {len(multi_commit_stacks)} stack branches...")
-                stack_branches = [name for name, _ in multi_commit_stacks]
-                self._push_branches(stack_branches)
-                print(f"  ✅ Pushed {len(multi_commit_stacks)} branches")
         else:
             print(f"\n  [PRETEND] Would push {len(single_commit_branches) + len(multi_commit_stacks)} branches")
         
