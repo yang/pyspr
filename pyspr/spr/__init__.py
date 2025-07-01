@@ -1547,7 +1547,7 @@ class StackedPR:
                 # If still not placed, it's an orphan
                 if not placed:
                     orphans.append(commit)
-                    logger.debug(f"  Marked {commit.commit_hash[:8]} as orphan (cannot be added to any stack)")
+                    print(f"  Marked {commit.commit_hash[:8]} as orphan (cannot be added to any stack)")
         
         except Exception as e:
             logger.error(f"Error during stack creation: {e}")
@@ -1651,12 +1651,13 @@ class StackedPR:
         # Use stack-based approach without dependencies
         stacks, orphan_commits = self._create_stacks(commits)
         components = stacks
-        # Add orphans as single-commit components
-        for orphan in orphan_commits:
-            components.append([orphan])
         
         # Display results
-        print(f"\nFound {len(components)} stack(s):")
+        stack_count = len([s for s in stacks if len(s) > 0])
+        if orphan_commits:
+            print(f"\nFound {stack_count} stack(s):")
+        else:
+            print(f"\nFound {len(components)} stack(s):")
         label = "Stack"
         
         # Display components
@@ -1665,6 +1666,12 @@ class StackedPR:
             for commit in component:
                 print(f"  - {commit.commit_hash[:8]} {commit.subject}")
         
+        # Display orphans separately if any
+        if orphan_commits:
+            print(f"\nOrphaned commits ({len(orphan_commits)}):")
+            for orphan in orphan_commits:
+                print(f"  - {orphan.commit_hash[:8]} {orphan.subject}")
+        
         # Get current branch
         current_branch = self.git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
         
@@ -1672,7 +1679,7 @@ class StackedPR:
         single_commit_branches: List[str] = []
         multi_commit_stacks: List[Tuple[str, List[Commit]]] = []  # (stack_branch, commits)
         
-        # Count single vs multi-commit components
+        # Count single vs multi-commit components (excluding orphans)
         single_count = sum(1 for c in components if len(c) == 1)
         multi_count = len(components) - single_count
 
@@ -1812,14 +1819,12 @@ class StackedPR:
                     self.git_cmd.must_git(f"checkout {current_branch}")
         
         # Check for orphaned commits
-        orphan_count = sum(1 for c in components if len(c) == 1 and c[0] in orphan_commits)
+        orphan_count = len(orphan_commits)
         if orphan_count > 0:
             print_header(f"Orphaned Commits ({orphan_count} commits)", use_emoji=True)
             print("\n  These commits couldn't be added to any stack:")
-            for component in components:
-                if len(component) == 1 and component[0] in orphan_commits:
-                    commit = component[0]
-                    print(f"  - {commit.subject}")
+            for commit in orphan_commits:
+                print(f"  - {commit.subject}")
 
         # Summary
         print_header("Summary", use_emoji=True)
