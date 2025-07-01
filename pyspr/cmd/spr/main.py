@@ -68,7 +68,40 @@ def cli(ctx: Context) -> None:
     """SPR - Stacked Pull Requests on GitHub."""
     ctx.obj = {}
 
-def restore_git_state(git_cmd: GitInterface, branch: str, head: str) -> None:
+class GitState:
+    """Holds git state for restoration."""
+    def __init__(self, branch: str, head: str, stash_ref: Optional[str] = None):
+        self.branch = branch
+        self.head = head
+        self.stash_ref = stash_ref
+
+def save_git_state(git_cmd: GitInterface) -> GitState:
+    """Save current git state including uncommitted changes."""
+    current_branch = git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
+    current_head = git_cmd.must_git("rev-parse HEAD").strip()
+    
+    # Check if there are any changes to stash
+    stash_ref = None
+    try:
+        # Check for uncommitted changes
+        status = git_cmd.must_git("status --porcelain")
+        if status.strip():
+            logger.info("Stashing uncommitted changes...")
+            # Create a stash with a descriptive message
+            stash_output = git_cmd.must_git("stash push -m 'pyspr: auto-stash before command'")
+            # Extract stash reference from output
+            if "Saved working directory" in stash_output:
+                stash_list = git_cmd.must_git("stash list -1")
+                if stash_list:
+                    # Extract stash ref (e.g., "stash@{0}")
+                    stash_ref = stash_list.split(":")[0].strip()
+                    logger.info(f"Created stash: {stash_ref}")
+    except Exception as e:
+        logger.warning(f"Failed to stash changes: {e}")
+    
+    return GitState(current_branch, current_head, stash_ref)
+
+def restore_git_state(git_cmd: GitInterface, state: GitState) -> None:
     """Attempt to restore git to a known good state."""
     logger.info("Attempting to restore repository state...")
     
@@ -81,21 +114,32 @@ def restore_git_state(git_cmd: GitInterface, branch: str, head: str) -> None:
     
     # Try to checkout original branch
     try:
-        git_cmd.must_git(f"checkout {branch}")
+        git_cmd.must_git(f"checkout {state.branch}")
     except Exception:
         try:
-            git_cmd.must_git(f"checkout -f {branch}")
+            git_cmd.must_git(f"checkout -f {state.branch}")
         except Exception:
-            logger.error(f"Failed to checkout {branch}")
+            logger.error(f"Failed to checkout {state.branch}")
     
     # Reset to original HEAD
     try:
-        git_cmd.must_git(f"reset --hard {head}")
+        git_cmd.must_git(f"reset --hard {state.head}")
         logger.info("Repository restored to original state")
     except Exception as e:
-        logger.error(f"Failed to reset to {head}: {e}")
+        logger.error(f"Failed to reset to {state.head}: {e}")
         logger.error("Repository may be in an inconsistent state")
-        logger.error(f"To manually restore: git checkout {branch} && git reset --hard {head}")
+        logger.error(f"To manually restore: git checkout {state.branch} && git reset --hard {state.head}")
+    
+    # Restore stashed changes if any
+    if state.stash_ref:
+        try:
+            logger.info(f"Restoring stashed changes from {state.stash_ref}...")
+            git_cmd.must_git(f"stash pop {state.stash_ref}")
+            logger.info("Stashed changes restored")
+        except Exception as e:
+            logger.warning(f"Failed to restore stashed changes: {e}")
+            logger.warning(f"Your changes are still saved in {state.stash_ref}")
+            logger.warning("You can manually restore with: git stash pop")
 
 def setup_git(directory: Optional[str] = None) -> Tuple[Config, RealGit, GitHubClient]:
     """Setup Git command and config."""
@@ -164,12 +208,7 @@ def update(ctx: Context, directory: Optional[str], reviewer: List[str],
     config.tool.pretend = pretend  # Set pretend mode
     
     # Save current git state for recovery
-    try:
-        current_branch = git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
-        current_head = git_cmd.must_git("rev-parse HEAD").strip()
-    except Exception as e:
-        logger.error(f"Failed to get current git state: {e}")
-        sys.exit(1)
+    git_state = save_git_state(git_cmd)
     
     try:
         if no_rebase:
@@ -179,8 +218,17 @@ def update(ctx: Context, directory: Optional[str], reviewer: List[str],
         stackedpr.update_pull_requests(ctx, reviewer if reviewer else None, count, labels=list(label) if label else None)
     except Exception as e:
         logger.error(f"Error during update: {e}")
-        restore_git_state(git_cmd, current_branch, current_head)
+        restore_git_state(git_cmd, git_state)
         sys.exit(1)
+    finally:
+        # Always try to restore state if we still have uncommitted changes
+        try:
+            status = git_cmd.must_git("status --porcelain")
+            if not status.strip() and git_state.stash_ref:
+                # No uncommitted changes but we have a stash - restore it
+                restore_git_state(git_cmd, git_state)
+        except Exception:
+            pass
 
 @cli.command(name="status", help="Show status of open pull requests")
 @click.option('-C', '--directory', type=click.Path(exists=True, file_okay=False, dir_okay=True),
@@ -244,12 +292,7 @@ def breakup(ctx: Context, directory: Optional[str], verbose: int, pretend: bool,
     config.tool.pretend = pretend  # Set pretend mode
     
     # Save current git state for recovery
-    try:
-        current_branch = git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
-        current_head = git_cmd.must_git("rev-parse HEAD").strip()
-    except Exception as e:
-        logger.error(f"Failed to get current git state: {e}")
-        sys.exit(1)
+    git_state = save_git_state(git_cmd)
     
     try:
         if no_rebase:
@@ -265,8 +308,17 @@ def breakup(ctx: Context, directory: Optional[str], verbose: int, pretend: bool,
         stackedpr.breakup_pull_requests(ctx, reviewer if reviewer else None, count, commit_ids, stacks, stack_mode)
     except Exception as e:
         logger.error(f"Error during breakup: {e}")
-        restore_git_state(git_cmd, current_branch, current_head)
+        restore_git_state(git_cmd, git_state)
         sys.exit(1)
+    finally:
+        # Always try to restore state if we still have uncommitted changes
+        try:
+            status = git_cmd.must_git("status --porcelain")
+            if not status.strip() and git_state.stash_ref:
+                # No uncommitted changes but we have a stash - restore it
+                restore_git_state(git_cmd, git_state)
+        except Exception:
+            pass
 
 @cli.command(name="analyze", help="Analyze which commits can be independently submitted without stacking")
 @click.option('-C', '--directory', type=click.Path(exists=True, file_okay=False, dir_okay=True),
@@ -281,15 +333,14 @@ def analyze(ctx: Context, directory: Optional[str], verbose: int) -> None:
     config, git_cmd, github = setup_git(directory)
     
     # Save current git state
-    current_branch = git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
-    current_head = git_cmd.must_git("rev-parse HEAD").strip()
+    git_state = save_git_state(git_cmd)
     
     try:
         stackedpr = StackedPR(config, github, git_cmd)
         stackedpr.analyze(ctx)
     finally:
         # Always restore git state
-        restore_git_state(git_cmd, current_branch, current_head)
+        restore_git_state(git_cmd, git_state)
 
 
 def main() -> None:
