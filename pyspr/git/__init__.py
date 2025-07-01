@@ -4,6 +4,7 @@ import os
 import re
 import uuid
 import logging
+import time
 from typing import List, Optional, Tuple
 import git
 from git.exc import GitCommandError, InvalidGitRepositoryError
@@ -275,26 +276,65 @@ class RealGit:
 
         # Log git commands at debug level
         logger.info(f"> git {cmd_str}")
-        try:
-            # Use GitPython
-            repo = git.Repo(os.getcwd(), search_parent_directories=True)
-            git_cmd = repo.git
-            # Convert command to method call
-            import shlex
-            cmd_parts = shlex.split(cmd_str)
-            git_command = cmd_parts[0]
-            git_args = cmd_parts[1:]
-            method = getattr(git_cmd, git_command.replace('-', '_'))
-            result = method(*git_args)
-            return result if isinstance(result, str) else str(result)
-        except GitCommandError as e:
-            raise Exception(f"Git command failed: {str(e)}")
-        except InvalidGitRepositoryError:
-            raise Exception("Not in a git repository")
-        except Exception as e:
-            if str(e):
-                logger.error(f"Git error: {e}")
-            raise
+        
+        # Check if this is a cherry-pick command without --no-gpg-sign
+        is_cherry_pick = cmd_str.startswith("cherry-pick") and "--no-gpg-sign" not in cmd_str
+        max_retries = 3 if is_cherry_pick else 1
+        
+        if is_cherry_pick:
+            logger.debug(f"Detected cherry-pick command, will retry up to {max_retries} times on GPG signing failure")
+        
+        last_exception = None
+        for attempt in range(max_retries):
+            try:
+                # Use GitPython
+                repo = git.Repo(os.getcwd(), search_parent_directories=True)
+                git_cmd = repo.git
+                # Convert command to method call
+                import shlex
+                cmd_parts = shlex.split(cmd_str)
+                git_command = cmd_parts[0]
+                git_args = cmd_parts[1:]
+                method = getattr(git_cmd, git_command.replace('-', '_'))
+                result = method(*git_args)
+                return result if isinstance(result, str) else str(result)
+            except GitCommandError as e:
+                last_exception = e
+                # Check if this is a GPG signing failure
+                if is_cherry_pick and any(msg in str(e) for msg in [
+                    "communication with agent failed",
+                    "Couldn't sign message", 
+                    "failed to write commit object",
+                    "Signing file"
+                ]):
+                    if attempt < max_retries - 1:
+                        logger.warning(f"GPG signing failed during cherry-pick, attempt {attempt + 1}/{max_retries}: {str(e)}")
+                        # Abort the failed cherry-pick
+                        try:
+                            abort_repo = git.Repo(os.getcwd(), search_parent_directories=True)
+                            abort_repo.git.cherry_pick('--abort')
+                            logger.debug("Aborted failed cherry-pick")
+                        except Exception:
+                            # cherry-pick --abort might fail if not in cherry-pick state
+                            pass
+                        # Wait with exponential backoff
+                        wait_time = (2 ** attempt) * 0.5  # 0.5s, 1s, 2s
+                        logger.info(f"Waiting {wait_time}s before retry...")
+                        time.sleep(wait_time)
+                        continue
+                # Not a signing error or not cherry-pick, raise immediately
+                raise Exception(f"Git command failed: {str(e)}")
+            except InvalidGitRepositoryError:
+                raise Exception("Not in a git repository")
+            except Exception as e:
+                if str(e):
+                    logger.error(f"Git error: {e}")
+                raise
+        
+        # All retries exhausted
+        if last_exception:
+            raise Exception(f"Git command failed after {max_retries} attempts: {str(last_exception)}")
+        raise Exception("Unexpected error in git command")
 
     def must_git(self, command: str, output: Optional[str] = None) -> str:
         """Run git command, failing on error."""
