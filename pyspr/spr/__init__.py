@@ -736,7 +736,7 @@ class StackedPR:
             pr.merged = True
             print(str(pr))
 
-    def breakup_pull_requests(self, ctx: StackedPRContextProtocol, reviewers: Optional[List[str]] = None, count: Optional[int] = None, commit_ids: Optional[List[str]] = None, stacks: bool = False) -> None:
+    def breakup_pull_requests(self, ctx: StackedPRContextProtocol, reviewers: Optional[List[str]] = None, count: Optional[int] = None, commit_ids: Optional[List[str]] = None, stacks: bool = False, stack_mode: str = 'components') -> None:
         """Break up current commit stack into independent branches/PRs.
         
         If stacks=True, creates multiple PR stacks based on commit dependencies.
@@ -786,7 +786,7 @@ class StackedPR:
         
         # If stacks mode is enabled, analyze dependencies and create multiple PR stacks
         if stacks:
-            return self._breakup_into_stacks(ctx, non_wip_commits, reviewers)
+            return self._breakup_into_stacks(ctx, non_wip_commits, reviewers, stack_mode)
         
         # Get current branch to restore at the end
         current_branch = self.git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
@@ -1235,28 +1235,65 @@ class StackedPR:
         print("   (Attempting to create trees where each commit has at most one parent)")
         trees = self._create_single_parent_trees(non_wip_commits, conflict_dependencies)
         
-        # Count trees and orphans
-        tree_count = len([t for t in trees if len(t) > 1])
-        singleton_count = len([t for t in trees if len(t) == 1])
-        
-        print(f"\n   Created {tree_count} tree(s) and {singleton_count} orphan(s):")
-        
-        tree_num = 1
+        # Separate trees from orphans
+        actual_trees = []
+        orphan_trees = []
         for tree in trees:
             if len(tree) == 1:
-                # Single commit tree
+                # Check if this single-commit tree is actually placed or is an orphan
+                # The new algorithm marks orphans by returning them as single-commit trees
+                # after failing to place them anywhere
                 commit = tree[0]
+                # Look for a specific marker or check against our orphan set
+                # For now, we'll check if it was marked as orphan in the first phase
                 if commit.commit_hash in orphan_commits:
-                    print(f"\n   Orphan {tree_num}:")
-                    print(f"     - {commit.commit_hash[:8]} {commit.subject} (unresolvable conflicts)")
+                    orphan_trees.append(tree)
                 else:
-                    print(f"\n   Tree {tree_num}:")
-                    print(f"     - {commit.commit_hash[:8]} {commit.subject}")
+                    actual_trees.append(tree)
             else:
-                # Multi-commit tree
-                print(f"\n   Tree {tree_num}:")
+                actual_trees.append(tree)
+        
+        tree_count = len(actual_trees)
+        orphan_count = len(orphan_trees)
+        
+        print(f"\n   Created {tree_count} tree(s) and {orphan_count} orphan(s):")
+        
+        # Print trees first
+        for i, tree in enumerate(actual_trees, 1):
+            print(f"\n   Tree {i}:")
+            if len(tree) == 1:
+                print(f"     - {tree[0].commit_hash[:8]} {tree[0].subject}")
+            else:
                 self._print_tree_structure(tree, conflict_dependencies, prefix="     ")
-            tree_num += 1
+        
+        # Then print orphans
+        for i, tree in enumerate(orphan_trees, 1):
+            commit = tree[0]
+            print(f"\n   Orphan {i}:")
+            print(f"     - {commit.commit_hash[:8]} {commit.subject} (multiple conflicting dependencies)")
+        
+        # Scenario 3: Stack-based approach (less shallow, fewer orphans)
+        print("\n📚 Scenario 3: Stack-Based Approach")
+        print("   (Building stacks where commits can be added to existing stack tips)")
+        stacks, stack_orphans = self._create_stacks(non_wip_commits, conflict_dependencies)
+        
+        stack_count = len([s for s in stacks if len(s) > 0])
+        orphan_count = len(stack_orphans)
+        
+        print(f"\n   Created {stack_count} stack(s) and {orphan_count} orphan(s):")
+        
+        # Print stacks first
+        for i, stack in enumerate(stacks, 1):
+            if stack:  # Skip empty stacks
+                print(f"\n   Stack {i}:")
+                for j, commit in enumerate(stack):
+                    indent = "     " + "  " * j
+                    print(f"{indent}- {commit.commit_hash[:8]} {commit.subject}")
+        
+        # Then print orphans
+        for i, orphan in enumerate(stack_orphans, 1):
+            print(f"\n   Orphan {i}:")
+            print(f"     - {orphan.commit_hash[:8]} {orphan.subject} (cannot be added to any stack)")
     
     def _analyze_conflict_dependencies(self, commits: List[Commit]) -> Tuple[Dict[str, List[str]], Set[str]]:
         """Analyze which commits depend on which other commits based on actual conflicts.
@@ -1515,63 +1552,342 @@ class StackedPR:
     def _create_single_parent_trees(self, commits: List[Commit], dependencies: Dict[str, List[str]]) -> List[List[Commit]]:
         """Create a forest of single-parent trees from commits and dependencies.
         
-        Each commit will have at most one parent in the resulting trees.
+        Algorithm (as specified in test):
+        For each commit bottom-up, relocate it into a tree:
+          - Try cherry-picking to merge-base
+          - Or else cherry-pick onto any prior relocated commit (loop over all prior ones)
+          - Or else mark as orphan
+        This gives you trees.
         """
         commit_map: Dict[str, Commit] = {c.commit_hash: c for c in commits}
-        assigned: Set[str] = set()
-        trees: List[List[Commit]] = []
         
-        # Build parent mapping (each commit has at most one parent)
+        # Trees will be stored as dict mapping root_hash -> list of commits in tree
+        trees: Dict[str, List[Commit]] = {}
+        # Parent relationships
         parent_map: Dict[str, Optional[str]] = {}
+        # Track which commits are orphans
+        orphan_commits: List[Commit] = []
+        # Track placement of commits in trees
+        commit_to_tree: Dict[str, str] = {}  # commit_hash -> tree_root_hash
         
-        for commit in commits:
-            deps = dependencies.get(commit.commit_hash, [])
-            if deps:
-                # Choose the most recent dependency as parent
-                parent_map[commit.commit_hash] = deps[-1]
-                print(f"  Placed {commit.commit_hash[:8]} under {deps[-1][:8]} (actual dependency)")
-            else:
-                parent_map[commit.commit_hash] = None
+        # Get merge-base for testing
+        base_branch = self.config.repo.github_branch
+        remote = self.config.repo.github_remote
+        upstream_ref = f"{remote}/{base_branch}"
         
-        # Build trees by finding roots and traversing
-        def build_tree_from_root(root_hash: str) -> List[Commit]:
-            tree: List[Commit] = []
+        try:
+            base_ref = self.git_cmd.must_git(f"merge-base HEAD {upstream_ref}").strip()
+        except:
+            base_ref = f"HEAD~{len(commits)}"
+        
+        # Save current state
+        current_branch = self.git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
+        original_head = self.git_cmd.must_git("rev-parse HEAD").strip()
+        
+        # Create test branch
+        test_branch = f"pyspr-scenario2-test"
+        try:
+            self.git_cmd.must_git(f"branch -D {test_branch}")
+        except:
+            pass
+        
+        placed_commits: List[Commit] = []  # Commits successfully placed in order
+        
+        try:
+            self.git_cmd.must_git(f"checkout -b {test_branch} {base_ref}")
             
-            def add_to_tree(commit_hash: str, depth: int = 0) -> None:
-                if commit_hash in assigned:
-                    return
-                assigned.add(commit_hash)
+            # Process each commit in order (bottom-up)
+            for i, commit in enumerate(commits):
+                placed = False
+                logger.debug(f"Processing commit {i+1}/{len(commits)}: {commit.commit_hash[:8]} {commit.subject}")
                 
-                # Add current commit at its depth position
-                commit = commit_map[commit_hash]
-                while len(tree) <= depth:
-                    tree.append(commit)  # Placeholder, will be replaced
-                tree[depth] = commit
+                # First try: cherry-pick directly onto merge-base
+                self.git_cmd.must_git(f"reset --hard {base_ref}")
+                try:
+                    self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {commit.commit_hash}")
+                    # Success! This is a root
+                    parent_map[commit.commit_hash] = None
+                    trees[commit.commit_hash] = [commit]
+                    commit_to_tree[commit.commit_hash] = commit.commit_hash
+                    placed_commits.append(commit)
+                    placed = True
+                    logger.debug(f"  Placed {commit.commit_hash[:8]} as root (can cherry-pick to merge-base)")
+                except:
+                    try:
+                        self.git_cmd.must_git("cherry-pick --abort")
+                    except:
+                        pass
                 
-                # Find children
-                children = [h for h, p in parent_map.items() if p == commit_hash and h not in assigned]
-                for child_hash in children:
-                    add_to_tree(child_hash, depth + 1)
+                # Second try: cherry-pick onto each previously placed commit
+                if not placed:
+                    for j in range(len(placed_commits)):  # Try all prior relocated commits
+                        prev_commit = placed_commits[j]
+                        
+                        # Build the path to this commit in its tree
+                        path_commits = []
+                        current = prev_commit.commit_hash
+                        while current:
+                            path_commits.append(current)
+                            current = parent_map.get(current)
+                        path_commits.reverse()
+                        
+                        # Apply all commits in the path
+                        self.git_cmd.must_git(f"reset --hard {base_ref}")
+                        try:
+                            for path_hash in path_commits:
+                                self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {path_hash}")
+                            
+                            # Now try our commit
+                            self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {commit.commit_hash}")
+                            
+                            # Success! Add to the tree
+                            parent_map[commit.commit_hash] = prev_commit.commit_hash
+                            tree_root = commit_to_tree[prev_commit.commit_hash]
+                            trees[tree_root].append(commit)
+                            commit_to_tree[commit.commit_hash] = tree_root
+                            placed_commits.append(commit)
+                            placed = True
+                            logger.debug(f"  Placed {commit.commit_hash[:8]} as child of {prev_commit.commit_hash[:8]}")
+                            break
+                        except:
+                            try:
+                                self.git_cmd.must_git("cherry-pick --abort")
+                            except:
+                                pass
+                
+                # If still not placed, mark as orphan
+                if not placed:
+                    orphan_commits.append(commit)
+                    logger.debug(f"  Marked {commit.commit_hash[:8]} as orphan (cannot place anywhere)")
+        
+        except Exception as e:
+            logger.error(f"Error during tree creation: {e}")
+        
+        finally:
+            # Always return to original branch and clean up
+            try:
+                self.git_cmd.must_git(f"checkout -f {current_branch}")
+                self.git_cmd.must_git(f"reset --hard {original_head}")
+            except Exception as e:
+                logger.error(f"Failed to restore original branch: {e}")
             
-            add_to_tree(root_hash)
-            return tree[:len([c for c in tree if c])]  # Trim to actual size
+            try:
+                self.git_cmd.must_git(f"branch -D {test_branch}")
+            except:
+                pass
         
-        # Find all roots (commits with no parent in our set)
-        roots = [c.commit_hash for c in commits if parent_map.get(c.commit_hash) is None]
+        # Convert trees dict to list format
+        result = []
         
-        # Build tree from each root
-        for root in roots:
-            if root not in assigned:
-                tree = build_tree_from_root(root)
-                if tree:
-                    trees.append(tree)
+        # First add all non-empty trees
+        for root_hash, tree_commits in trees.items():
+            if tree_commits:
+                result.append(tree_commits)
         
-        # Handle any remaining unassigned commits as single-node trees
-        for commit in commits:
-            if commit.commit_hash not in assigned:
-                trees.append([commit])
+        # Then add orphans as single-commit trees
+        for orphan in orphan_commits:
+            result.append([orphan])
         
-        return trees
+        return result
+    
+    def _create_stacks(self, commits: List[Commit], dependencies: Dict[str, List[str]]) -> Tuple[List[List[Commit]], List[Commit]]:
+        """Create stacks using a less shallow approach than trees.
+        
+        Algorithm:
+        For each commit bottom-up, add it to a stack:
+          - Try cherry-picking to merge-base, starting a new stack
+          - Or else cherry-pick it to an existing stack (tip) that contains all dependencies
+          - Or else mark as orphan
+        This will be less shallow vs trees but expect fewer orphans.
+        """
+        # Get merge-base for testing
+        base_branch = self.config.repo.github_branch
+        remote = self.config.repo.github_remote
+        upstream_ref = f"{remote}/{base_branch}"
+        
+        try:
+            base_ref = self.git_cmd.must_git(f"merge-base HEAD {upstream_ref}").strip()
+        except:
+            base_ref = f"HEAD~{len(commits)}"
+        
+        # Save current state
+        current_branch = self.git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
+        original_head = self.git_cmd.must_git("rev-parse HEAD").strip()
+        
+        # Create test branch
+        test_branch = f"pyspr-scenario3-test"
+        try:
+            self.git_cmd.must_git(f"branch -D {test_branch}")
+        except:
+            pass
+        
+        stacks: List[List[Commit]] = []  # Each stack is a list of commits
+        orphans: List[Commit] = []
+        
+        # Create a mapping of commits to track which have been placed
+        placed_commits: Dict[str, int] = {}  # commit_hash -> stack_index
+        
+        try:
+            self.git_cmd.must_git(f"checkout -b {test_branch} {base_ref}")
+            
+            # Process each commit in order (bottom-up)
+            for i, commit in enumerate(commits):
+                placed = False
+                logger.debug(f"Processing commit {i+1}/{len(commits)}: {commit.commit_hash[:8]} {commit.subject}")
+                
+                # Get dependencies for this commit
+                commit_deps = dependencies.get(commit.commit_hash, [])
+                
+                # Check if we can start a new stack
+                # We start a new stack if:
+                # 1. The commit has no dependencies, OR
+                # 2. None of its dependencies have been placed yet
+                can_start_new = not commit_deps or not any(dep in placed_commits for dep in commit_deps)
+                
+                if can_start_new:
+                    # Try cherry-picking directly onto merge-base
+                    self.git_cmd.must_git(f"reset --hard {base_ref}")
+                    try:
+                        self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {commit.commit_hash}")
+                        # Success! Start a new stack
+                        stack_idx = len(stacks)
+                        stacks.append([commit])
+                        placed_commits[commit.commit_hash] = stack_idx
+                        placed = True
+                        logger.debug(f"  Started new stack {stack_idx + 1} with {commit.commit_hash[:8]}")
+                    except:
+                        try:
+                            self.git_cmd.must_git("cherry-pick --abort")
+                        except:
+                            pass
+                
+                # If not placed and has dependencies, try to add to the stack containing its dependencies
+                if not placed and commit_deps:
+                    # Find which stack(s) contain our dependencies
+                    dep_stacks = set()
+                    for dep in commit_deps:
+                        if dep in placed_commits:
+                            dep_stacks.add(placed_commits[dep])
+                    
+                    # If all dependencies are in the same stack, try to add to that stack
+                    if len(dep_stacks) == 1:
+                        stack_idx = dep_stacks.pop()
+                        
+                        # Reset and apply all commits in the stack
+                        self.git_cmd.must_git(f"reset --hard {base_ref}")
+                        try:
+                            # Apply all commits in the stack
+                            for stack_commit in stacks[stack_idx]:
+                                self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {stack_commit.commit_hash}")
+                            
+                            # Now try our commit
+                            self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {commit.commit_hash}")
+                            
+                            # Success! Add to this stack
+                            stacks[stack_idx].append(commit)
+                            placed_commits[commit.commit_hash] = stack_idx
+                            placed = True
+                            logger.debug(f"  Added {commit.commit_hash[:8]} to stack {stack_idx + 1}")
+                        except:
+                            try:
+                                self.git_cmd.must_git("cherry-pick --abort")
+                            except:
+                                pass
+                
+                # If still not placed, try any stack that works
+                if not placed:
+                    for j in range(len(stacks)):
+                        if not stacks[j]:  # Skip empty stacks
+                            continue
+                        
+                        # Reset and apply all commits in the stack
+                        self.git_cmd.must_git(f"reset --hard {base_ref}")
+                        try:
+                            # Apply all commits in the stack
+                            for stack_commit in stacks[j]:
+                                self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {stack_commit.commit_hash}")
+                            
+                            # Now try our commit
+                            self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {commit.commit_hash}")
+                            
+                            # Success! Add to this stack
+                            stacks[j].append(commit)
+                            placed_commits[commit.commit_hash] = j
+                            placed = True
+                            logger.debug(f"  Added {commit.commit_hash[:8]} to stack {j+1} (fallback)")
+                            break
+                        except:
+                            try:
+                                self.git_cmd.must_git("cherry-pick --abort")
+                            except:
+                                pass
+                
+                # If still not placed, it's an orphan
+                if not placed:
+                    orphans.append(commit)
+                    logger.debug(f"  Marked {commit.commit_hash[:8]} as orphan (cannot be added to any stack)")
+        
+        except Exception as e:
+            logger.error(f"Error during stack creation: {e}")
+        
+        finally:
+            # Always return to original branch and clean up
+            try:
+                self.git_cmd.must_git(f"checkout -f {current_branch}")
+                self.git_cmd.must_git(f"reset --hard {original_head}")
+            except Exception as e:
+                logger.error(f"Failed to restore original branch: {e}")
+            
+            try:
+                self.git_cmd.must_git(f"branch -D {test_branch}")
+            except:
+                pass
+        
+        return stacks, orphans
+    
+    def _get_tree_path(self, commit: Commit, parent_map: Dict[str, Optional[str]], commit_map: Dict[str, Commit]) -> List[Commit]:
+        """Get all commits from root to this commit in order."""
+        path = []
+        current = commit.commit_hash
+        while current:
+            path.append(commit_map[current])
+            current = parent_map.get(current)
+        path.reverse()
+        return path
+    
+    def _find_root(self, commit_hash: str, parent_map: Dict[str, Optional[str]]) -> str:
+        """Find the root of the tree containing this commit."""
+        current = commit_hash
+        while parent_map.get(current) is not None:
+            current = parent_map[current]
+        return current
+    
+    def _build_tree_structure(self, root: Commit, tree_commits: List[Commit], parent_map: Dict[str, Optional[str]]) -> List[Commit]:
+        """Build ordered tree structure from root and commits."""
+        # Create a mapping of parent -> children
+        children_map: Dict[str, List[Commit]] = {root.commit_hash: []}
+        for commit in tree_commits:
+            parent = parent_map.get(commit.commit_hash)
+            if parent not in children_map:
+                children_map[parent] = []
+            children_map[parent].append(commit)
+        
+        # Build tree recursively
+        result = []
+        
+        def add_subtree(commit: Commit, depth: int = 0):
+            # Ensure result list is long enough
+            while len(result) <= depth:
+                result.append(None)
+            result[depth] = commit
+            
+            # Add children
+            if commit.commit_hash in children_map:
+                for i, child in enumerate(children_map[commit.commit_hash]):
+                    add_subtree(child, depth + 1)
+        
+        add_subtree(root)
+        return [c for c in result if c is not None]
     
     def _print_tree_structure(self, tree: List[Commit], dependencies: Dict[str, List[str]], prefix: str = "", is_last: bool = True) -> None:
         """Print a tree structure with proper indentation."""
@@ -1613,24 +1929,64 @@ class StackedPR:
             is_last_root = i == len(roots) - 1
             print_node(root, prefix, is_last_root)
     
-    def _breakup_into_stacks(self, ctx: StackedPRContextProtocol, commits: List[Commit], reviewers: Optional[List[str]] = None) -> None:
-        """Break up commits into multiple PR stacks based on dependencies."""
+    def _breakup_into_stacks(self, ctx: StackedPRContextProtocol, commits: List[Commit], reviewers: Optional[List[str]] = None, stack_mode: str = 'components') -> None:
+        """Break up commits into multiple PR stacks based on dependencies.
+        
+        Args:
+            stack_mode: 'components' for strongly connected components (scenario 1),
+                       'trees' for single-parent trees (scenario 2),
+                       'stacks' for stack-based approach (scenario 3)
+        """
         from ..pretty import print_header
         
-        print_header("Multi-Stack Breakup Analysis", use_emoji=True)
+        mode_names = {
+            'components': 'Strongly Connected Components',
+            'trees': 'Single-Parent Trees',
+            'stacks': 'Stack-Based Approach'
+        }
+        
+        print_header(f"Multi-Stack Breakup Analysis ({mode_names.get(stack_mode, stack_mode)})", use_emoji=True)
         print(f"\nAnalyzing {len(commits)} commits for dependencies...")
         
         # Analyze dependencies using conflict-based detection
-        dependencies, _ = self._analyze_conflict_dependencies(commits)
+        dependencies, orphans = self._analyze_conflict_dependencies(commits)
         
-        # Find strongly connected components
-        components = self._find_strongly_connected_components(commits, dependencies)
+        # Choose algorithm based on mode
+        if stack_mode == 'trees':
+            # Scenario 2: Single-parent trees
+            components_raw = self._create_single_parent_trees(commits, dependencies)
+            # Convert to list of commits
+            components = []
+            for tree in components_raw:
+                if isinstance(tree, list):
+                    components.append(tree)
+                else:
+                    components.append([tree])
+        elif stack_mode == 'stacks':
+            # Scenario 3: Stack-based approach
+            stacks, orphan_commits = self._create_stacks(commits, dependencies)
+            components = stacks
+            # Add orphans as single-commit components
+            for orphan in orphan_commits:
+                components.append([orphan])
+        else:
+            # Default: Scenario 1 - strongly connected components
+            components = self._find_strongly_connected_components(commits, dependencies)
         
-        print(f"\nFound {len(components)} component(s):")
+        # Display results based on mode
+        if stack_mode == 'trees':
+            print(f"\nFound {len(components)} tree(s):")
+            label = "Tree"
+        elif stack_mode == 'stacks':
+            print(f"\nFound {len(components)} stack(s):")
+            label = "Stack"
+        else:
+            print(f"\nFound {len(components)} component(s):")
+            label = "Component"
         
         # Display components
         for i, component in enumerate(components):
-            print(f"\nComponent {i+1} ({len(component)} commits):")
+            print(f"\n{label} {i+1} ({len(component)} commits):")
             for commit in component:
                 deps = dependencies.get(commit.commit_hash, [])
                 # Only show deps within the component

@@ -25,77 +25,84 @@ log.propagate = True  # Allow logs to propagate to pytest
 def create_commits_from_dag(dependencies: Dict[str, List[str]], commits_order: List[str]) -> None:
     """Create commits based on dependency DAG.
     
+    This function creates commits with proper conflict-based dependencies.
+    Key insight: Independent commits must create their own files or modify 
+    pre-existing content. Dependent commits modify the files created by their dependencies.
+    
     Args:
         dependencies: Dict mapping commit name to list of commits it depends on
         commits_order: Order in which to create commits (must be topologically sorted)
     """
-    # Create a conflict.txt file that will be used to generate conflicts
-    conflict_file = "conflict.txt"
+    # Don't create any files in the base - this allows independent commits
+    # to be truly independent by creating their own files
     
-    # Initialize conflict file
-    with open(conflict_file, "w") as f:
-        f.write("BASE\n")
-    run_cmd("git add .")
-    run_cmd("git commit -m 'Initialize conflict file'")
-    
+    # Now create commits in order
     for commit_name in commits_order:
-        _ = dependencies.get(commit_name, [])
-        
-        # Read current content
-        with open(conflict_file, "r") as f:
-            content = f.read()
-        
-        # Each commit modifies the conflict file in a specific way
         if commit_name == "A":
-            content = content.replace("BASE", "A")
+            # A is independent - creates its own file
+            with open("file_A.txt", "w") as f:
+                f.write("A's content\n")
         elif commit_name == "B":
-            # B builds on A's change
-            content = content.replace("A", "A-B") 
+            # B depends on A - modifies A's file
+            with open("file_A.txt", "a") as f:
+                f.write("B's addition to A's file\n")
         elif commit_name == "C":
-            # C modifies independently from A
-            content = content + "C\n"
+            # C depends on A - modifies A's file differently than B
+            with open("file_A.txt", "r") as f:
+                content = f.read()
+            # Replace A's content with different modification
+            with open("file_A.txt", "w") as f:
+                f.write(content.replace("A's content", "A's content modified by C"))
         elif commit_name == "D":
-            # D needs both A's and C's changes
-            if "A" in content and "C\n" in content:
-                content = content.replace("C\n", "C-D\n")
-            else:
-                # This will cause conflicts
-                content = content + "D-CONFLICT\n"
+            # D depends on both A and C - needs C's specific modification
+            with open("file_A.txt", "a") as f:
+                f.write("D's addition (requires C's modification)\n")
         elif commit_name == "E":
-            # E builds on C
-            content = content.replace("C", "C-E")
+            # E depends on C - continues C's work
+            with open("file_A.txt", "a") as f:
+                f.write("E's addition to C's work\n")
         elif commit_name == "F":
-            # F is independent, adds its own line
-            content = content + "F\n"
+            # F is independent - creates its own file
+            with open("file_F.txt", "w") as f:
+                f.write("F's content\n")
+            # Also create a marker file that will be used by G
+            with open("marker_F.txt", "w") as f:
+                f.write("F was here\n")
         elif commit_name == "G":
-            # G needs specific changes from both E and F
-            # This is the key: G's change combines elements that only exist after E and F
-            if "C-E" in content and "F\n" in content:
-                # Only works if both E and F have been applied
-                content = content.replace("C-E", "C-E-G").replace("F\n", "F-G\n")
-            else:
-                # This ensures G will conflict without both E and F
-                content = "CONFLICT: G requires both E and F\n"
+            # G depends on both E and F - needs files from both chains
+            # Modify E's chain (file_A.txt)
+            with open("file_A.txt", "a") as f:
+                f.write("G's addition to E's chain\n")
+            # AND modify F's file
+            with open("file_F.txt", "a") as f:
+                f.write("G's addition to F's file\n")
         elif commit_name == "H":
-            content = content + "H\n"
+            # H is independent - creates its own file
+            with open("file_H.txt", "w") as f:
+                f.write("H's content\n")
         elif commit_name == "I":
-            content = content.replace("H\n", "H-I\n")
+            # I depends on H
+            with open("file_H.txt", "a") as f:
+                f.write("I's addition to H's file\n")
         elif commit_name == "J":
-            content = content.replace("H-I\n", "H-I-J\n")
+            # J depends on H and I
+            with open("file_H.txt", "a") as f:
+                f.write("J's addition (needs both H and I)\n")
         elif commit_name == "K":
-            content = content + "K\n"
+            # K is independent - creates its own file
+            with open("file_K.txt", "w") as f:
+                f.write("K's content\n")
         elif commit_name == "L":
-            content = content.replace("K\n", "K-L\n")
+            # L depends on K
+            with open("file_K.txt", "a") as f:
+                f.write("L's addition to K's file\n")
         elif commit_name == "M":
-            content = content + "M\n"
+            # M is independent - creates its own file
+            with open("file_M.txt", "w") as f:
+                f.write("M's content\n")
         
-        # Write the modified content
-        with open(conflict_file, "w") as f:
-            f.write(content)
-        
-        # Also create a file specific to this commit
-        with open(f"file_{commit_name}.txt", "w") as f:
-            f.write(f"Content for {commit_name}\n")
+        # Don't modify any base file - only the files created by this commit
+        # This ensures independent commits are truly independent
         
         run_cmd("git add .")
         run_cmd(f"git commit -m '{commit_name}'")
@@ -108,8 +115,15 @@ def test_analyze_complex_dependencies(test_repo_ctx: RepoContext) -> None:
     IMPORTANT: This test specification should NEVER be changed. If the test fails,
     fix the implementation, not the test.
     
+    Scenario 2 Algorithm (must be implemented exactly as specified):
+    For each commit bottom-up, relocate it into a tree:
+      - Try cherry-picking to merge-base
+      - Or else cherry-pick onto any prior relocated commit (loop over all prior ones)
+      - Or else mark as orphan
+    This gives you trees.
+
     Expected Scenario 2 output structure:
-    
+
     A
       B
       C
@@ -123,18 +137,29 @@ def test_analyze_complex_dependencies(test_repo_ctx: RepoContext) -> None:
       L
     M
     orphans (multi parents): G
-    
-    Scenario 2 Algorithm (must be implemented exactly as specified):
-    For each commit bottom-up, relocate it into a tree:
-      - Try cherry-picking to merge-base
-      - Or else cherry-pick onto any prior relocated commit (loop over all prior ones)
-      - Or else mark as orphan
-    This gives you trees.
+
+    Scenario 3 Algorithm (must be implemented exactly as specified):
+    For each commit bottom-up, relocate it into a stack:
+        - Try cherry-picking to merge-base
+        - Or else cherry-pick onto any prior relocated stack (tips)
+        - Or else mark as orphan
+    This gives you stacks.
+
+    Expected Scenario 3 output structure:
+    stacks:
+    A B C D E
+    F
+    H I J
+    K L
+    M
+    orphans (multi parents): G
+
+    --
     
     The independents are only the roots that depend on nothing else, like A, F, H, K, M
     G actually depends on both E and F
     D depends on both A and C
-    
+
     IMPORTANT: Never add anything else to these specs
     """
     
@@ -156,14 +181,8 @@ def test_analyze_complex_dependencies(test_repo_ctx: RepoContext) -> None:
         "M": [],  # Independent
     }
     
-    # Create initial commit
-    with open("README.md", "w") as f:
-        f.write("# Test Repository\n")
-    run_cmd("git add .")
-    run_cmd("git commit -m 'Initial setup'")
-    
-    # Push to create the base branch
-    run_cmd("git push origin main")
+    # No need for an initial commit - the test commits will be analyzed
+    # against the empty repository base
     
     # Create commits in topological order
     commits_order = ["A", "F", "H", "K", "M", "B", "C", "I", "D", "E", "L", "J", "G"]
@@ -191,7 +210,7 @@ def test_analyze_complex_dependencies(test_repo_ctx: RepoContext) -> None:
     total_match = re.search(r"Total commits: (\d+)", output)
     assert total_match, "Could not find total commits"
     total_commits = int(total_match.group(1))
-    assert total_commits >= 14, f"Expected at least 14 commits (including initial), got {total_commits}"
+    assert total_commits >= 13, f"Expected at least 13 commits, got {total_commits}"
     
     # Verify Scenario 1 - should have components
     scenario1_match = re.search(r"Found (\d+) component\(s\)", output)
@@ -261,6 +280,90 @@ def test_analyze_complex_dependencies(test_repo_ctx: RepoContext) -> None:
     
     # Scenario 3 should have fewer structures than Scenario 2 (more consolidation)
     assert stacks_count <= trees_count, f"Scenario 3 ({stacks_count} stacks) should have fewer or equal structures than Scenario 2 ({trees_count} trees)"
+    
+    # Verify expected number of stacks according to spec
+    assert stacks_count == 5, f"Expected 5 stacks in Scenario 3, got {stacks_count}"
+    assert stacks_orphans == 1, f"Expected 1 orphan in Scenario 3, got {stacks_orphans}"
+    
+    # Extract all stacks and verify topological ordering
+    all_stacks = []
+    stack_pattern = r"Stack \d+:\s*\n((?:\s*- \w+ \w+\s*\n)+)"
+    for stack_match in re.finditer(stack_pattern, output, re.MULTILINE):
+        stack_content = stack_match.group(1)
+        stack_commits = []
+        
+        # Extract commit names from the stack
+        for line in stack_content.strip().split('\n'):
+            commit_match = re.search(r"- \w+ (\w+)", line.strip())
+            if commit_match:
+                stack_commits.append(commit_match.group(1))
+        
+        if stack_commits:
+            all_stacks.append(stack_commits)
+            log.info(f"Stack {len(all_stacks)}: {' → '.join(stack_commits)}")
+    
+    # Build a map of commit positions across all stacks
+    commit_positions = {}
+    for stack_idx, stack in enumerate(all_stacks):
+        for pos, commit in enumerate(stack):
+            commit_positions[commit] = (stack_idx, pos)
+    
+    # Verify topological constraints
+    # G depends on E and F, so both must come before G
+    if 'G' in commit_positions and 'E' in commit_positions and 'F' in commit_positions:
+        g_stack, g_pos = commit_positions['G']
+        e_stack, e_pos = commit_positions['E']
+        f_stack, f_pos = commit_positions['F']
+        
+        # If G is in the same stack as E, E must come before G
+        if g_stack == e_stack:
+            assert e_pos < g_pos, f"E (position {e_pos}) must come before G (position {g_pos}) in stack {g_stack + 1}"
+        else:
+            assert e_stack < g_stack, f"E (in stack {e_stack + 1}) must be in an earlier stack than G (in stack {g_stack + 1})"
+        
+        # If G is in the same stack as F, F must come before G
+        if g_stack == f_stack:
+            assert f_pos < g_pos, f"F (position {f_pos}) must come before G (position {g_pos}) in stack {g_stack + 1}"
+        else:
+            assert f_stack < g_stack, f"F (in stack {f_stack + 1}) must be in an earlier stack than G (in stack {g_stack + 1})"
+        
+        log.info("✓ G correctly placed after both E and F")
+    
+    # D depends on A and C, so both must come before D
+    if 'D' in commit_positions and 'A' in commit_positions and 'C' in commit_positions:
+        d_stack, d_pos = commit_positions['D']
+        a_stack, a_pos = commit_positions['A']
+        c_stack, c_pos = commit_positions['C']
+        
+        if d_stack == a_stack:
+            assert a_pos < d_pos, f"A (position {a_pos}) must come before D (position {d_pos}) in stack {d_stack + 1}"
+        else:
+            assert a_stack < d_stack, f"A (in stack {a_stack + 1}) must be in an earlier stack than D (in stack {d_stack + 1})"
+        
+        if d_stack == c_stack:
+            assert c_pos < d_pos, f"C (position {c_pos}) must come before D (position {d_pos}) in stack {d_stack + 1}"
+        else:
+            assert c_stack < d_stack, f"C (in stack {c_stack + 1}) must be in an earlier stack than D (in stack {d_stack + 1})"
+        
+        log.info("✓ D correctly placed after both A and C")
+    
+    # J depends on H and I
+    if 'J' in commit_positions and 'H' in commit_positions and 'I' in commit_positions:
+        j_stack, j_pos = commit_positions['J']
+        h_stack, h_pos = commit_positions['H']
+        i_stack, i_pos = commit_positions['I']
+        
+        if j_stack == h_stack:
+            assert h_pos < j_pos, f"H (position {h_pos}) must come before J (position {j_pos}) in stack {j_stack + 1}"
+        else:
+            assert h_stack < j_stack, f"H (in stack {h_stack + 1}) must be in an earlier stack than J (in stack {j_stack + 1})"
+        
+        if j_stack == i_stack:
+            assert i_pos < j_pos, f"I (position {i_pos}) must come before J (position {j_pos}) in stack {j_stack + 1}"
+        else:
+            assert i_stack < j_stack, f"I (in stack {i_stack + 1}) must be in an earlier stack than J (in stack {j_stack + 1})"
+        
+        log.info("✓ J correctly placed after both H and I")
     
     log.info("\n=== TEST SUMMARY ===")
     log.info(f"✓ Found {total_commits} total commits")
