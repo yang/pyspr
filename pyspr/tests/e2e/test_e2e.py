@@ -1890,7 +1890,7 @@ def test_analyze(test_repo_ctx: RepoContext) -> None:
     assert "Commit Stack Analysis" in output, "Output should contain analysis header"
     assert "Independent commits" in output, "Output should have independent commits section"
     assert "Dependent commits" in output, "Output should have dependent commits section"
-    assert "Summary:" in output, "Output should have summary section"
+    assert "SUMMARY" in output, "Output should have summary section"
     
     # Verify independent commits are identified
     assert "Independent commit 1" in output, "Should identify first independent commit"
@@ -1907,7 +1907,8 @@ def test_analyze(test_repo_ctx: RepoContext) -> None:
     # Verify summary counts
     assert "Total commits: 5" in output, "Should count 5 non-WIP commits"
     assert "Independent: 3" in output, "Should have 3 independent commits"
-    assert "Dependent: 2" in output, "Should have 2 dependent commits"
+    assert "Dependent: 1" in output, "Should have 1 dependent commit"
+    assert "Orphaned: 1" in output, "Should have 1 orphaned commit"
     
     # Verify tip about breakup command
     assert "pyspr breakup" in output, "Should suggest using breakup for independent commits"

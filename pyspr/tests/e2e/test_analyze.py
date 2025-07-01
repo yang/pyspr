@@ -163,7 +163,7 @@ def test_analyze_complex_dependencies(test_repo_ctx: RepoContext) -> None:
     assert "✅ Independent commits (" in output
     assert "❌ Dependent commits (" in output
     assert "⚠️  Orphaned commits (" in output
-    assert "🎯 Stacking Scenarios" in output
+    assert "🏗️ Stacking Scenarios" in output
     assert "🌳 Trees: Best-Effort Single-Parent Trees" in output
     assert "📚 Stacks: Stack-Based Approach" in output
     
