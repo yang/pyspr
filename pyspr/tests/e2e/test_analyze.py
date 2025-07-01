@@ -212,6 +212,23 @@ def test_analyze_complex_dependencies(test_repo_ctx: RepoContext) -> None:
     total_commits = int(total_match.group(1))
     assert total_commits >= 13, f"Expected at least 13 commits, got {total_commits}"
     
+    # Extract and validate independent commits
+    independent_section = re.search(r"✅ Independent commits \(\d+\):(.*?)❌ Dependent commits", output, re.DOTALL)
+    assert independent_section, "Could not find independent commits section"
+    
+    independent_text = independent_section.group(1)
+    # Extract commit names from lines like "- df222331 A"
+    independent_commits = set()
+    for line in independent_text.strip().split('\n'):
+        commit_match = re.search(r"- \w+ (\w+)$", line.strip())
+        if commit_match:
+            independent_commits.add(commit_match.group(1))
+    
+    # Verify the expected independent commits
+    expected_independent = {"A", "F", "H", "K", "M"}
+    assert independent_commits == expected_independent, f"Expected independent commits {expected_independent}, got {independent_commits}"
+    log.info(f"✓ Verified independent commits: {sorted(independent_commits)}")
+    
     # Verify Scenario 1 - should have components
     scenario1_match = re.search(r"Found (\d+) component\(s\)", output)
     assert scenario1_match, "Could not find Scenario 1 summary"
