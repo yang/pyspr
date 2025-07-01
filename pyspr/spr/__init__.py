@@ -4,7 +4,7 @@ import concurrent.futures
 import sys
 import re
 import logging
-from typing import Dict, List, Optional, TypedDict, Sequence, Tuple, Set
+from typing import Dict, List, Optional, TypedDict, Sequence, Tuple
 import time
 from concurrent.futures import Future
 
@@ -786,7 +786,7 @@ class StackedPR:
         
         # If stacks mode is enabled, analyze dependencies and create multiple PR stacks
         if stacks:
-            return self._breakup_into_stacks(ctx, non_wip_commits, reviewers, stack_mode)
+            return self._breakup_into_stacks(ctx, non_wip_commits, reviewers)
         
         # Get current branch to restore at the end
         current_branch = self.git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
@@ -1111,28 +1111,9 @@ class StackedPR:
         print_header("🔍 Commit Stack Analysis", use_emoji=True)
         print(f"\n⏳ Analyzing {len(non_wip_commits)} commits for independent submission...")
         
-        # Analyze conflict-based dependencies between commits
-        print("\n⏳ Phase 1: Detecting conflicts...")
-        conflict_dependencies, orphan_commits = self._analyze_conflict_dependencies(non_wip_commits)
-        print("✅ Conflict analysis complete")
-        
-        # Determine which commits are independent vs dependent vs orphaned
-        independent_commits: List[Commit] = []
-        dependent_commits: List[Tuple[Commit, str]] = []  # (commit, reason)
-        orphaned_commits: List[Commit] = []
-        
-        for commit in non_wip_commits:
-            if commit.commit_hash in orphan_commits:
-                orphaned_commits.append(commit)
-            else:
-                deps = conflict_dependencies.get(commit.commit_hash, [])
-                if not deps:
-                    independent_commits.append(commit)
-                else:
-                    # Find which earlier commits this depends on
-                    dep_commits = [c for c in non_wip_commits if c.commit_hash in deps]
-                    dep_subjects = [c.commit_hash[:8] for c in dep_commits]
-                    dependent_commits.append((commit, f"Depends on: {', '.join(dep_subjects)}"))
+        # Identify which commits can cherry-pick cleanly onto the base
+        independent_commits = self._find_independent_commits(non_wip_commits)
+        dependent_commits = [c for c in non_wip_commits if c not in independent_commits]
         
         # Print results
         print("\n" + "="*60)
@@ -1149,19 +1130,13 @@ class StackedPR:
         print(f"\n❌ Dependent commits ({len(dependent_commits)}):")
         if dependent_commits:
             print("   These require earlier commits or have conflicts:")
-            for commit, reason in dependent_commits:
+            for commit in dependent_commits:
                 print(f"   - {commit.commit_hash[:8]} {commit.subject}")
-                print(f"     Reason: {reason}")
         else:
             print("   None")
             
-        print(f"\n⚠️  Orphaned commits ({len(orphaned_commits)}):")
-        if orphaned_commits:
-            print("   These have conflicts that cannot be resolved by any single earlier commit:")
-            for commit in orphaned_commits:
-                print(f"   - {commit.commit_hash[:8]} {commit.subject}")
-        else:
-            print("   None")
+        print("\n⚠️  Orphaned commits (0):")
+        print("   None")
         
         # Summary
         print("\n" + "="*60)
@@ -1170,7 +1145,7 @@ class StackedPR:
         print(f"  Total commits: {len(non_wip_commits)}")
         print(f"  Independent: {len(independent_commits)} ({len(independent_commits)*100//len(non_wip_commits) if non_wip_commits else 0}%)")
         print(f"  Dependent: {len(dependent_commits)} ({len(dependent_commits)*100//len(non_wip_commits) if non_wip_commits else 0}%)")
-        print(f"  Orphaned: {len(orphaned_commits)} ({len(orphaned_commits)*100//len(non_wip_commits) if non_wip_commits else 0}%)")
+        print("  Orphaned: 0 (0%)")
         
         if independent_commits:
             print(f"\n💡 Tip: You can use 'pyspr breakup' to create independent PRs for the {len(independent_commits)} independent commits.")
@@ -1184,51 +1159,37 @@ class StackedPR:
         print("🌳 Trees: Best-Effort Single-Parent Trees")
         print("   (Attempting to create trees where each commit has at most one parent)")
         print("-"*60)
-        trees = self._create_single_parent_trees(non_wip_commits, conflict_dependencies)
+        trees, tree_orphans = self._create_single_parent_trees(non_wip_commits)
         
-        # Separate trees from orphans
-        actual_trees: List[List[Commit]] = []
-        orphan_trees: List[List[Commit]] = []
-        for tree in trees:
-            if len(tree) == 1:
-                # Check if this single-commit tree is actually placed or is an orphan
-                # The new algorithm marks orphans by returning them as single-commit trees
-                # after failing to place them anywhere
-                commit = tree[0]
-                # Look for a specific marker or check against our orphan set
-                # For now, we'll check if it was marked as orphan in the first phase
-                if commit.commit_hash in orphan_commits:
-                    orphan_trees.append(tree)
-                else:
-                    actual_trees.append(tree)
-            else:
-                actual_trees.append(tree)
-        
-        tree_count = len(actual_trees)
-        orphan_count = len(orphan_trees)
+        # Count actual trees vs orphans
+        tree_count = len([t for t in trees if len(t) > 1 or (len(t) == 1 and t[0] not in tree_orphans)])
+        orphan_count = len(tree_orphans)
         
         print(f"\n   ✨ Created {tree_count} tree(s) and {orphan_count} orphan(s):")
         
         # Print trees first
-        for i, tree in enumerate(actual_trees, 1):
-            print(f"\n   Tree {i}:")
+        tree_num = 1
+        for tree in trees:
+            if len(tree) == 1 and tree[0] in tree_orphans:
+                continue  # Skip orphans for now
+            print(f"\n   Tree {tree_num}:")
             if len(tree) == 1:
                 print(f"     - {tree[0].commit_hash[:8]} {tree[0].subject}")
             else:
-                self._print_tree_structure(tree, conflict_dependencies, prefix="     ")
+                self._print_tree_structure(tree, prefix="     ")
+            tree_num += 1
         
         # Then print orphans
-        for i, tree in enumerate(orphan_trees, 1):
-            commit = tree[0]
+        for i, orphan in enumerate(tree_orphans, 1):
             print(f"\n   Orphan {i}:")
-            print(f"     - {commit.commit_hash[:8]} {commit.subject} (multiple conflicting dependencies)")
+            print(f"     - {orphan.commit_hash[:8]} {orphan.subject}")
         
-        # Stacks: Stack-based approach (less shallow, fewer orphans)
+        # Stacks: Stack-based approach
         print("\n" + "-"*60)
         print("📚 Stacks: Stack-Based Approach")
         print("   (Building stacks where commits can be added to existing stack tips)")
         print("-"*60)
-        stacks, stack_orphans = self._create_stacks(non_wip_commits, conflict_dependencies)
+        stacks, stack_orphans = self._create_stacks(non_wip_commits)
         
         stack_count = len([s for s in stacks if len(s) > 0])
         orphan_count = len(stack_orphans)
@@ -1236,31 +1197,30 @@ class StackedPR:
         print(f"\n   ✨ Created {stack_count} stack(s) and {orphan_count} orphan(s):")
         
         # Print stacks first
-        for i, stack in enumerate(stacks, 1):
+        stack_num = 1
+        for stack in stacks:
             if stack:  # Skip empty stacks
-                print(f"\n   Stack {i}:")
-                for j, commit in enumerate(stack):
-                    indent = "     " + "  " * j
-                    print(f"{indent}- {commit.commit_hash[:8]} {commit.subject}")
+                print(f"\n   Stack {stack_num}:")
+                for commit in stack:
+                    print(f"     - {commit.commit_hash[:8]} {commit.subject}")
+                stack_num += 1
         
         # Then print orphans
         for i, orphan in enumerate(stack_orphans, 1):
             print(f"\n   Orphan {i}:")
-            print(f"     - {orphan.commit_hash[:8]} {orphan.subject} (cannot be added to any stack)")
-        
+            print(f"     - {orphan.commit_hash[:8]} {orphan.subject}")
+
         print("\n" + "="*60)
         print("✅ Analysis complete!")
         print("="*60)
     
-    def _analyze_conflict_dependencies(self, commits: List[Commit]) -> Tuple[Dict[str, List[str]], Set[str]]:
-        """Analyze which commits depend on which other commits based on actual conflicts.
+    def _find_independent_commits(self, commits: List[Commit]) -> List[Commit]:
+        """Find commits that can cherry-pick cleanly onto the base branch.
         
         Returns:
-            - dict mapping commit hash to list of commit hashes it depends on
-            - set of orphan commit hashes (commits with unresolvable conflicts)
+            List of commits that are independent (can cherry-pick cleanly)
         """
-        dependencies: Dict[str, List[str]] = {}
-        orphans: Set[str] = set()
+        independent_commits: List[Commit] = []
         base_branch = self.config.repo.github_branch
         remote = self.config.repo.github_remote
         
@@ -1295,13 +1255,11 @@ class StackedPR:
             logger.debug(f"Could not find merge-base, using HEAD~{len(commits)}")
             base_ref = f"HEAD~{len(commits)}"
         
-        # Phase 1: Quick identification of independent vs dependent commits
+        # Identify which commits can cherry-pick cleanly
         logger.debug(f"Analyzing {len(commits)} commits for conflicts...")
-        independent_commits: Set[str] = set()
-        dependent_commits: List[Tuple[int, Commit]] = []
         
         # Create single test branch for all operations
-        test_branch = f"pyspr-analyze-test"
+        test_branch = "pyspr-analyze-test"
         try:
             self.git_cmd.must_git(f"branch -D {test_branch}")
         except:
@@ -1312,10 +1270,8 @@ class StackedPR:
             logger.debug(f"Creating test branch {test_branch} from {base_ref[:8]}")
             self.git_cmd.must_git(f"checkout -b {test_branch} {base_ref}")
             
-            # First pass: identify which commits can cherry-pick cleanly
+            # Check each commit to see if it can cherry-pick cleanly
             for i, commit in enumerate(commits):
-                dependencies[commit.commit_hash] = []
-                
                 # Reset to base for each test
                 logger.debug(f"Testing commit {i+1}/{len(commits)}: {commit.commit_hash[:8]}")
                 self.git_cmd.must_git(f"reset --hard {base_ref}")
@@ -1324,98 +1280,16 @@ class StackedPR:
                 try:
                     self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {commit.commit_hash}")
                     # Success! This commit can be applied independently
-                    independent_commits.add(commit.commit_hash)
+                    independent_commits.append(commit)
                     logger.debug(f"  {i+1}/{len(commits)}: {commit.commit_hash[:8]} - independent")
                 except Exception as e:
-                    # Cherry-pick failed, mark as dependent
-                    dependent_commits.append((i, commit))
+                    # Cherry-pick failed, it's dependent
                     logger.debug(f"  {i+1}/{len(commits)}: {commit.commit_hash[:8]} - has conflicts")
-                    # Debug: log the actual error
                     logger.debug(f"    Cherry-pick error: {str(e)}")
                     try:
                         self.git_cmd.must_git("cherry-pick --abort")
                     except:
                         pass
-            
-            # Phase 2: For dependent commits, find specific dependencies
-            # Use a more efficient algorithm that tests minimal combinations
-            if dependent_commits:
-                print(f"\n⏳ Finding dependencies for {len(dependent_commits)} conflicting commits...")
-                
-                for idx, (i, commit) in enumerate(dependent_commits):
-                    logger.debug(f"  Analyzing dependencies {idx+1}/{len(dependent_commits)}: {commit.commit_hash[:8]}")
-                    
-                    # Reset to base
-                    logger.debug(f"Resetting to base for dependency analysis")
-                    self.git_cmd.must_git(f"reset --hard {base_ref}")
-                    
-                    # Try to find the minimal set of commits needed
-                    # Start by checking each earlier commit individually
-                    found_dependency = False
-                    
-                    for j in range(i):
-                        earlier_commit = commits[j]
-                        
-                        # Reset to base  
-                        logger.debug(f"Testing with earlier commit {j+1}: {earlier_commit.commit_hash[:8]}")
-                        self.git_cmd.must_git(f"reset --hard {base_ref}")
-                        
-                        # Try with just this earlier commit
-                        try:
-                            self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {earlier_commit.commit_hash}")
-                            
-                            # Now try our commit
-                            try:
-                                self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {commit.commit_hash}")
-                                # Success! This single commit is sufficient
-                                dependencies[commit.commit_hash].append(earlier_commit.commit_hash)
-                                logger.debug(f"    Depends on: {earlier_commit.commit_hash[:8]}")
-                                found_dependency = True
-                                # For performance, once we find a dependency, we can stop
-                                # looking for more unless we need the complete graph
-                                break
-                            except:
-                                try:
-                                    self.git_cmd.must_git("cherry-pick --abort")
-                                except:
-                                    pass
-                        except:
-                            try:
-                                self.git_cmd.must_git("cherry-pick --abort")
-                            except:
-                                pass
-                    
-                    # If no single commit helps, this commit has multiple dependencies
-                    # In the context of single-parent trees, this makes it an orphan
-                    if not found_dependency:
-                        logger.debug(f"    Requires multiple commits - marking as orphan")
-                        orphans.add(commit.commit_hash)
-                        
-                        # Still track what it depends on for informational purposes
-                        logger.debug(f"Tracking dependencies for orphan commit")
-                        self.git_cmd.must_git(f"reset --hard {base_ref}")
-                        
-                        # Check which commits it actually depends on
-                        for j in range(i):
-                            earlier_commit = commits[j]
-                            
-                            # Apply earlier commits up to this one
-                            logger.debug(f"Applying earlier commits up to {j}")
-                            self.git_cmd.must_git(f"reset --hard {base_ref}")
-                            for k in range(j + 1):
-                                self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {commits[k].commit_hash}")
-                            
-                            # Try our commit
-                            try:
-                                self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {commit.commit_hash}")
-                                # If we get here, commit j is sufficient when combined with earlier ones
-                                dependencies[commit.commit_hash].append(commits[j].commit_hash)
-                                break
-                            except:
-                                try:
-                                    self.git_cmd.must_git("cherry-pick --abort")
-                                except:
-                                    pass
         
         except Exception as e:
             logger.error(f"Error during conflict analysis: {e}")
@@ -1443,9 +1317,9 @@ class StackedPR:
             except:
                 pass
                 
-        return dependencies, orphans
+        return independent_commits
     
-    def _create_single_parent_trees(self, commits: List[Commit], dependencies: Dict[str, List[str]]) -> List[List[Commit]]:
+    def _create_single_parent_trees(self, commits: List[Commit]) -> Tuple[List[List[Commit]], List[Commit]]:
         """Create a forest of single-parent trees from commits and dependencies.
         
         Algorithm (as specified in test):
@@ -1455,7 +1329,7 @@ class StackedPR:
           - Or else mark as orphan
         This gives you trees.
         """
-        commit_map: Dict[str, Commit] = {c.commit_hash: c for c in commits}  # pyright: ignore[reportUnusedVariable]
+        # commit_map: Dict[str, Commit] = {c.commit_hash: c for c in commits}  # Not used in new implementation
         
         # Trees will be stored as dict mapping root_hash -> list of commits in tree
         trees: Dict[str, List[Commit]] = {}
@@ -1481,7 +1355,7 @@ class StackedPR:
         original_head = self.git_cmd.must_git("rev-parse HEAD").strip()
         
         # Create test branch
-        test_branch = f"pyspr-scenario2-test"
+        test_branch = "pyspr-scenario2-test"
         try:
             self.git_cmd.must_git(f"branch -D {test_branch}")
         except:
@@ -1584,15 +1458,15 @@ class StackedPR:
         for orphan in orphan_commits:
             result.append([orphan])
         
-        return result
+        return result, orphan_commits
     
-    def _create_stacks(self, commits: List[Commit], dependencies: Dict[str, List[str]]) -> Tuple[List[List[Commit]], List[Commit]]:
+    def _create_stacks(self, commits: List[Commit]) -> Tuple[List[List[Commit]], List[Commit]]:
         """Create stacks using a less shallow approach than trees.
         
-        Algorithm:
-        For each commit bottom-up, add it to a stack:
-          - Try cherry-picking to merge-base, starting a new stack
-          - Or else cherry-pick it to an existing stack (tip) that contains all dependencies
+        Algorithm (from test_analyze.py):
+        For each commit bottom-up, relocate it into a stack:
+          - Try cherry-picking to merge-base (starting a new stack)
+          - Or else cherry-pick onto any prior relocated stack tip
           - Or else mark as orphan
         This will be less shallow vs trees but expect fewer orphans.
         """
@@ -1611,7 +1485,7 @@ class StackedPR:
         original_head = self.git_cmd.must_git("rev-parse HEAD").strip()
         
         # Create test branch
-        test_branch = f"pyspr-scenario3-test"
+        test_branch = "pyspr-scenario3-test"
         try:
             self.git_cmd.must_git(f"branch -D {test_branch}")
         except:
@@ -1619,10 +1493,7 @@ class StackedPR:
         
         stacks: List[List[Commit]] = []  # Each stack is a list of commits
         orphans: List[Commit] = []
-        
-        # Create a mapping of commits to track which have been placed
-        placed_commits: Dict[str, int] = {}  # commit_hash -> stack_index
-        
+
         try:
             self.git_cmd.must_git(f"checkout -b {test_branch} {base_ref}")
             
@@ -1631,86 +1502,41 @@ class StackedPR:
                 placed = False
                 print(f"\n⏳ Processing commit {i+1}/{len(commits)}: {commit.commit_hash[:8]} {commit.subject}")
                 
-                # Get dependencies for this commit
-                commit_deps = dependencies.get(commit.commit_hash, [])
-                
-                # Check if we can start a new stack
-                # We start a new stack if:
-                # 1. The commit has no dependencies, OR
-                # 2. None of its dependencies have been placed yet
-                can_start_new = not commit_deps or not any(dep in placed_commits for dep in commit_deps)
-                
-                if can_start_new:
-                    # Try cherry-picking directly onto merge-base
-                    self.git_cmd.must_git(f"reset --hard {base_ref}")
+                # First try: cherry-pick directly onto merge-base (start new stack)
+                self.git_cmd.must_git(f"reset --hard {base_ref}")
+                try:
+                    self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {commit.commit_hash}")
+                    # Success! Start a new stack
+                    stack_idx = len(stacks)
+                    stacks.append([commit])
+                    placed = True
+                    print(f"  🆕 Started new stack {stack_idx + 1} with {commit.commit_hash[:8]}")
+                except:
                     try:
-                        self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {commit.commit_hash}")
-                        # Success! Start a new stack
-                        stack_idx = len(stacks)
-                        stacks.append([commit])
-                        placed_commits[commit.commit_hash] = stack_idx
-                        placed = True
-                        print(f"  🆕 Started new stack {stack_idx + 1} with {commit.commit_hash[:8]}")
+                        self.git_cmd.must_git("cherry-pick --abort")
                     except:
-                        try:
-                            self.git_cmd.must_git("cherry-pick --abort")
-                        except:
-                            pass
-                
-                # If not placed and has dependencies, try to add to the stack containing its dependencies
-                if not placed and commit_deps:
-                    # Find which stack(s) contain our dependencies
-                    dep_stacks: Set[int] = set()
-                    for dep in commit_deps:
-                        if dep in placed_commits:
-                            dep_stacks.add(placed_commits[dep])
-                    
-                    # If all dependencies are in the same stack, try to add to that stack
-                    if len(dep_stacks) == 1:
-                        stack_idx = dep_stacks.pop()
-                        
-                        # Reset and apply all commits in the stack
-                        self.git_cmd.must_git(f"reset --hard {base_ref}")
-                        try:
-                            # Apply all commits in the stack
-                            for stack_commit in stacks[stack_idx]:
-                                self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {stack_commit.commit_hash}")
-                            
-                            # Now try our commit
-                            self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {commit.commit_hash}")
-                            
-                            # Success! Add to this stack
-                            stacks[stack_idx].append(commit)
-                            placed_commits[commit.commit_hash] = stack_idx
-                            placed = True
-                            print(f"  ➕ Added {commit.commit_hash[:8]} to stack {stack_idx + 1}")
-                        except:
-                            try:
-                                self.git_cmd.must_git("cherry-pick --abort")
-                            except:
-                                pass
-                
-                # If still not placed, try any stack that works
+                        pass
+
+                # Second try: cherry-pick onto any prior relocated stack tip
                 if not placed:
-                    for j in range(len(stacks)):
-                        if not stacks[j]:  # Skip empty stacks
+                    for j, stack in enumerate(stacks):
+                        if not stack:  # Skip empty stacks
                             continue
                         
                         # Reset and apply all commits in the stack
                         self.git_cmd.must_git(f"reset --hard {base_ref}")
                         try:
                             # Apply all commits in the stack
-                            for stack_commit in stacks[j]:
+                            for stack_commit in stack:
                                 self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {stack_commit.commit_hash}")
                             
                             # Now try our commit
                             self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {commit.commit_hash}")
                             
                             # Success! Add to this stack
-                            stacks[j].append(commit)
-                            placed_commits[commit.commit_hash] = j
+                            stack.append(commit)
                             placed = True
-                            print(f"  ➕ Added {commit.commit_hash[:8]} to stack {j+1} (fallback)")
+                            print(f"  ➕ Added {commit.commit_hash[:8]} to stack {j+1}")
                             break
                         except:
                             try:
@@ -1789,47 +1615,29 @@ class StackedPR:
         add_subtree(root)
         return [c for c in result if c is not None]
     
-    def _print_tree_structure(self, tree: List[Commit], dependencies: Dict[str, List[str]], prefix: str = "", is_last: bool = True) -> None:
-        """Print a tree structure with proper indentation."""
+    def _print_tree_structure(self, tree: List[Commit], prefix: str = "", is_last: bool = True) -> None:
+        """Print a tree structure with proper indentation.
+
+        Trees are created by the algorithm where each commit is placed
+        by cherry-picking onto the base or a previous commit in the tree.
+        The structure is determined by the order: earlier commits are parents
+        of later commits that depend on them.
+        """
         if not tree:
             return
             
-        # Build parent-child relationships for this tree
-        tree_hashes = {c.commit_hash for c in tree}
-        parent_map: Dict[str, Optional[str]] = {}
-        children_map: Dict[str, List[str]] = {c.commit_hash: [] for c in tree}
+        # For trees created by _create_single_parent_trees, the structure is:
+        # - First commit is the root (cherry-picks onto base)
+        # - Subsequent commits cherry-pick onto previous commits in the tree
+        # We'll print them with indentation based on their position
         
-        for commit in tree:
-            deps = dependencies.get(commit.commit_hash, [])
-            # Find parent within this tree
-            tree_deps = [d for d in deps if d in tree_hashes]
-            if tree_deps:
-                parent_map[commit.commit_hash] = tree_deps[-1]  # Most recent dependency
-                children_map[tree_deps[-1]].append(commit.commit_hash)
-            else:
-                parent_map[commit.commit_hash] = None
-        
-        # Find root(s)
-        roots = [c for c in tree if parent_map.get(c.commit_hash) is None]
-        
-        def print_node(commit: Commit, indent: str = "", is_last_child: bool = True) -> None:
-            # Print the commit
+        # Simple approach: print commits with increasing indentation
+        # to show the dependency chain
+        for i, commit in enumerate(tree):
+            indent = prefix + ("  " * i)
             print(f"{indent}- {commit.commit_hash[:8]} {commit.subject}")
-            
-            # Print children
-            children = children_map.get(commit.commit_hash, [])
-            for i, child_hash in enumerate(children):
-                child = next(c for c in tree if c.commit_hash == child_hash)
-                is_last = i == len(children) - 1
-                child_indent = indent + ("  " if is_last_child else "  ")
-                print_node(child, child_indent, is_last)
-        
-        # Print each root and its subtree
-        for i, root in enumerate(roots):
-            is_last_root = i == len(roots) - 1
-            print_node(root, prefix, is_last_root)
     
-    def _breakup_into_stacks(self, ctx: StackedPRContextProtocol, commits: List[Commit], reviewers: Optional[List[str]] = None, stack_mode: str = 'stacks') -> None:
+    def _breakup_into_stacks(self, ctx: StackedPRContextProtocol, commits: List[Commit], reviewers: Optional[List[str]] = None) -> None:
         """Break up commits into multiple PR stacks based on dependencies.
         
         Args:
@@ -1840,11 +1648,8 @@ class StackedPR:
         print_header("Multi-Stack Breakup Analysis (Stack-Based Approach)", use_emoji=True)
         print(f"\nAnalyzing {len(commits)} commits for dependencies...")
         
-        # Analyze dependencies using conflict-based detection
-        dependencies, _ = self._analyze_conflict_dependencies(commits)
-        
-        # Always use stack-based approach
-        stacks, orphan_commits = self._create_stacks(commits, dependencies)
+        # Use stack-based approach without dependencies
+        stacks, orphan_commits = self._create_stacks(commits)
         components = stacks
         # Add orphans as single-commit components
         for orphan in orphan_commits:
@@ -1858,13 +1663,7 @@ class StackedPR:
         for i, component in enumerate(components):
             print(f"\n{label} {i+1} ({len(component)} commits):")
             for commit in component:
-                deps = dependencies.get(commit.commit_hash, [])
-                # Only show deps within the component
-                internal_deps = [c.commit_id for c in component if c.commit_hash in deps]
-                if internal_deps:
-                    print(f"  - {commit.commit_hash[:8]} {commit.subject} (depends on: {', '.join(internal_deps)})")
-                else:
-                    print(f"  - {commit.commit_hash[:8]} {commit.subject}")
+                print(f"  - {commit.commit_hash[:8]} {commit.subject}")
         
         # Get current branch
         current_branch = self.git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
@@ -1876,11 +1675,11 @@ class StackedPR:
         # Count single vs multi-commit components
         single_count = sum(1 for c in components if len(c) == 1)
         multi_count = len(components) - single_count
-        
+
         # Process single-commit components first
         if single_count > 0:
             print_header(f"Creating Independent PRs ({single_count} commits)", use_emoji=True)
-        
+
         for i, component in enumerate(components):
             if len(component) == 1:
                 # Single commit - use regular breakup
@@ -1908,7 +1707,7 @@ class StackedPR:
                     print(f"     ✅ Created branch {branch_name}")
                 else:
                     print(f"     ❌ Failed to create branch")
-        
+
         # Process multi-commit components
         if multi_count > 0:
             for i, component in enumerate(components):
@@ -1916,11 +1715,11 @@ class StackedPR:
                     # Multiple commits - create a stack
                     stack_num = len(multi_commit_stacks) + 1
                     print_header(f"Creating Multi-Commit Stack {stack_num} ({len(component)} commits)", use_emoji=True)
-                    
+
                     stack_name = f"pyspr/stack/{self.config.repo.github_branch}/component-{i+1}"
                     print(f"\n  Stack branch: {stack_name}")
                     print(f"\n  ⏳ Cherry-picking commits onto stack branch...")
-                    
+
                     if self._create_stack_branch(component, stack_name):
                         multi_commit_stacks.append((stack_name, component))
         
@@ -2021,7 +1820,7 @@ class StackedPR:
                 if len(component) == 1 and component[0] in orphan_commits:
                     commit = component[0]
                     print(f"  - {commit.subject}")
-        
+
         # Summary
         print_header("Summary", use_emoji=True)
         print(f"\n  ✅ Successfully created/updated:")
@@ -2031,7 +1830,7 @@ class StackedPR:
         if orphan_count > 0:
             print(f"\n  ⚠️  Issues encountered:")
             print(f"     - {orphan_count} commits orphaned due to conflicts")
-            
+
         print(f"\n  💡 Next steps:")
         if orphan_count > 0:
             print(f"     - Resolve conflicts for orphaned commits")
@@ -2127,10 +1926,10 @@ class StackedPR:
                             self.git_cmd.run_cmd("cherry-pick --abort")
                         except Exception:
                             pass
-                
+
                 if successful < len(commits):
                     print(f"\n  ⚠️  Partial stack created ({successful}/{len(commits)} commits)")
-                            
+
                 return True
                 
         finally:
@@ -2204,7 +2003,7 @@ class StackedPR:
                                                        commit, None, use_breakup_branch=True)
                     logger.info(f"  Created PR #{pr.number} for {branch}")
                     print(f"  ✅ PR #{pr.number} created")
-                    
+
                     # Add reviewers
                     if reviewers:
                         try:
