@@ -80,14 +80,14 @@ def test_analyze_complex_dependencies(test_repo_ctx: RepoContext) -> None:
     IMPORTANT: This test specification should NEVER be changed. If the test fails,
     fix the implementation, not the test.
     
-    Scenario 2 Algorithm (must be implemented exactly as specified):
+    Trees Algorithm (must be implemented exactly as specified):
     For each commit bottom-up, relocate it into a tree:
       - Try cherry-picking to merge-base
       - Or else cherry-pick onto any prior relocated commit (loop over all prior ones)
       - Or else mark as orphan
     This gives you trees.
 
-    Expected Scenario 2 output structure:
+    Expected Trees output structure:
 
     A
       B
@@ -103,14 +103,14 @@ def test_analyze_complex_dependencies(test_repo_ctx: RepoContext) -> None:
     M
     orphans (multi parents): G
 
-    Scenario 3 Algorithm (must be implemented exactly as specified):
+    Stacks Algorithm (must be implemented exactly as specified):
     For each commit bottom-up, relocate it into a stack:
         - Try cherry-picking to merge-base
         - Or else cherry-pick onto any prior relocated stack (tips)
         - Or else mark as orphan
     This gives you stacks.
 
-    Expected Scenario 3 output structure:
+    Expected Stacks output structure:
     stacks:
     A B C D E
     F
@@ -163,10 +163,9 @@ def test_analyze_complex_dependencies(test_repo_ctx: RepoContext) -> None:
     assert "✅ Independent commits (" in output
     assert "❌ Dependent commits (" in output
     assert "⚠️  Orphaned commits (" in output
-    assert "🎯 Alternative Stacking Scenarios" in output
-    assert "📊 Scenario 1: Strongly Connected Components" in output
-    assert "🌳 Scenario 2: Best-Effort Single-Parent Trees" in output
-    assert "📚 Scenario 3: Stack-Based Approach" in output
+    assert "🎯 Stacking Scenarios" in output
+    assert "🌳 Trees: Best-Effort Single-Parent Trees" in output
+    assert "📚 Stacks: Stack-Based Approach" in output
     
     # Extract key information using simple patterns
     import re
@@ -224,65 +223,119 @@ def test_analyze_complex_dependencies(test_repo_ctx: RepoContext) -> None:
     log.info(f"✓ Verified independent commits: {sorted(independent_commits)}")
     
     # Verify scenarios
-    components_count = extract_number(r"Found (\d+) component\(s\)", output, "Scenario 1 summary")
-    assert components_count >= 1, f"Expected at least 1 component, got {components_count}"
-    
-    scenario2_match = re.search(r"Created (\d+) tree\(s\) and (\d+) orphan\(s\)", output)
-    assert scenario2_match, "Could not find Scenario 2 summary"
-    trees_count = int(scenario2_match.group(1))
-    orphans_count = int(scenario2_match.group(2))
+    trees_match = re.search(r"Created (\d+) tree\(s\) and (\d+) orphan\(s\)", output)
+    assert trees_match, "Could not find Trees summary"
+    trees_count = int(trees_match.group(1))
+    orphans_count = int(trees_match.group(2))
     assert trees_count == 5, f"Expected 5 trees, got {trees_count}"
-    assert orphans_count == 1, f"Expected 1 orphan in Scenario 2, got {orphans_count}"
+    assert orphans_count == 1, f"Expected 1 orphan in Trees, got {orphans_count}"
     
-    # Check that each independent commit is a tree root
-    expected_roots = ["A", "F", "H", "K", "M"]
-    for root in expected_roots:
-        pattern = rf"Tree \d+:\s*\n\s*- \w+ {root}\b"
-        assert re.search(pattern, output, re.MULTILINE), f"Expected {root} to be a tree root"
+    def parse_tree_structure(output: str) -> Dict[str, List[Tuple[int, str]]]:
+        """Parse tree structure from output. Returns {root: [(depth, node), ...]}"""
+        trees = {}
+        tree_pattern = r"Tree (\d+):\s*\n((?:\s*- \w+ \w+\s*\n)+)"
+        
+        for match in re.finditer(tree_pattern, output, re.MULTILINE):
+            tree_lines = match.group(2).strip().split('\n')
+            nodes = []
+            
+            for line in tree_lines:
+                depth = (len(line) - len(line.lstrip())) // 2
+                node_match = re.search(r"- \w+ (\w+)", line)
+                if node_match:
+                    nodes.append((depth, node_match.group(1)))
+            
+            if nodes:
+                trees[nodes[0][1]] = nodes
+        
+        return trees
     
-    # Verify key parent-child relationships in trees
-    relationships = [
-        ("A", "B", r"- \w+ A\n\s+- \w+ B"),
-        ("H", "I", r"- \w+ H\n\s+- \w+ I"), 
-        ("K", "L", r"- \w+ K\n\s+- \w+ L"),
-    ]
-    for parent, child, pattern in relationships:
-        assert re.search(pattern, output, re.MULTILINE), f"Expected {parent}→{child} relationship"
+    def verify_tree_structure(trees: Dict[str, List[Tuple[int, str]]], 
+                              expected: Dict[str, List[str]]) -> None:
+        """Verify trees match expected structure."""
+        # Check all expected trees exist
+        for root, expected_nodes in expected.items():
+            assert root in trees, f"Expected tree with root {root}"
+            
+            actual_nodes = [node for _, node in trees[root]]
+            assert actual_nodes == expected_nodes, \
+                f"Tree {root}: expected {expected_nodes}, got {actual_nodes}"
+        
+        # Check no extra trees
+        assert set(trees.keys()) == set(expected.keys()), \
+            f"Expected trees {set(expected.keys())}, got {set(trees.keys())}"
     
-    # Verify G is an orphan
-    assert re.search(r"Orphan \d+:\s*\n\s*- \w+ G", output) or "orphans: G" in output, \
-        "Expected G to be marked as an orphan"
+    # Define expected Trees structure
+    expected_trees = {
+        "A": ["A", "B", "C", "D", "E"],
+        "F": ["F"],
+        "H": ["H", "I", "J"],
+        "K": ["K", "L"],
+        "M": ["M"]
+    }
     
-    scenario3_match = re.search(r"Created (\d+) stack\(s\) and (\d+) orphan\(s\)", output)
-    assert scenario3_match, "Could not find Scenario 3 summary"
-    stacks_count = int(scenario3_match.group(1))
-    stacks_orphans = int(scenario3_match.group(2))
+    # Verify Trees
+    trees = parse_tree_structure(output)
+    verify_tree_structure(trees, expected_trees)
+    
+    # Verify G is orphan
+    assert re.search(r"Orphan \d+:\s*\n\s*- \w+ G", output, re.MULTILINE), \
+        "Expected G to be marked as orphan"
+    
+    stacks_match = re.search(r"Created (\d+) stack\(s\) and (\d+) orphan\(s\)", output)
+    assert stacks_match, "Could not find Stacks summary"
+    stacks_count = int(stacks_match.group(1))
+    stacks_orphans = int(stacks_match.group(2))
     
     # Verify expected counts
-    assert stacks_count == 5, f"Expected 5 stacks in Scenario 3, got {stacks_count}"
-    assert stacks_orphans == 1, f"Expected 1 orphan in Scenario 3, got {stacks_orphans}"
+    assert stacks_count == 5, f"Expected 5 stacks, got {stacks_count}"
+    assert stacks_orphans == 1, f"Expected 1 orphan in Stacks, got {stacks_orphans}"
     
-    # Extract stacks and build position map
+    def parse_stack_structure(output: str) -> List[List[str]]:
+        """Parse stack structure from output. Returns list of stacks."""
+        stacks = []
+        stack_pattern = r"Stack \d+:\s*\n((?:\s*- \w+ \w+\s*\n)+)"
+        
+        for match in re.finditer(stack_pattern, output, re.MULTILINE):
+            stack_nodes = []
+            for line in match.group(1).strip().split('\n'):
+                node_match = re.search(r"- \w+ (\w+)", line)
+                if node_match:
+                    stack_nodes.append(node_match.group(1))
+            
+            if stack_nodes:
+                stacks.append(stack_nodes)
+        
+        return stacks
+    
+    # Define expected Stacks structure
+    expected_stacks = [
+        ["A", "B", "C", "D", "E"],
+        ["F"],
+        ["H", "I", "J"],
+        ["K", "L"],
+        ["M"]
+    ]
+    
+    # Verify Stacks
+    stacks = parse_stack_structure(output)
+    assert len(stacks) == len(expected_stacks), \
+        f"Expected {len(expected_stacks)} stacks, got {len(stacks)}"
+    
+    # Sort both expected and actual by first element for comparison
+    stacks_sorted = sorted(stacks, key=lambda s: s[0])
+    expected_sorted = sorted(expected_stacks, key=lambda s: s[0])
+    
+    assert stacks_sorted == expected_sorted, \
+        f"Stack structure mismatch:\nExpected: {expected_sorted}\nGot: {stacks_sorted}"
+    
+    # Build position map for topological ordering checks
     commit_positions = {}
-    stack_pattern = r"Stack \d+:\s*\n((?:\s*- \w+ \w+\s*\n)+)"
-    
-    for stack_idx, stack_match in enumerate(re.finditer(stack_pattern, output, re.MULTILINE)):
-        stack_commits = extract_commits_from_section(stack_match.group(1))
-        
-        # Preserve order by re-parsing
-        ordered_commits = []
-        for line in stack_match.group(1).strip().split('\n'):
-            match = re.search(r"- \w+ (\w+)", line.strip())
-            if match:
-                ordered_commits.append(match.group(1))
-        
-        for pos, commit in enumerate(ordered_commits):
+    for stack_idx, stack in enumerate(stacks):
+        for pos, commit in enumerate(stack):
             commit_positions[commit] = (stack_idx, pos)
-        
-        if ordered_commits:
-            log.info(f"Stack {stack_idx + 1}: {' → '.join(ordered_commits)}")
     
-    # Verify topological ordering for key commits
+    # Verify topological ordering for multi-parent commits
     verify_topological_order(commit_positions, 'G', ['E', 'F'])
     verify_topological_order(commit_positions, 'D', ['A', 'C'])
     verify_topological_order(commit_positions, 'J', ['H', 'I'])
@@ -290,7 +343,6 @@ def test_analyze_complex_dependencies(test_repo_ctx: RepoContext) -> None:
     # Summary
     log.info("\n=== TEST SUMMARY ===")
     log.info(f"✓ Found {total_commits} total commits")
-    log.info(f"✓ Scenario 1: {components_count} components")
-    log.info(f"✓ Scenario 2: {trees_count} trees, {orphans_count} orphans")
-    log.info(f"✓ Scenario 3: {stacks_count} stacks, {stacks_orphans} orphans")
+    log.info(f"✓ Trees: {trees_count} trees, {orphans_count} orphans")
+    log.info(f"✓ Stacks: {stacks_count} stacks, {stacks_orphans} orphans")
     log.info("✓ All key structures validated")

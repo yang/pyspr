@@ -278,12 +278,9 @@ def merge(ctx: Context, directory: Optional[str], count: Optional[int], no_rebas
 @click.option('--update-only-these-ids', type=str,
               help="Only update PRs for specific commit IDs (comma-separated)")
 @click.option('--stacks', is_flag=True,
-              help="Create multiple PR stacks based on commit dependencies (strongly connected components)")
-@click.option('--stack-mode', type=click.Choice(['components', 'trees', 'stacks'], case_sensitive=False),
-              default='components', 
-              help="Algorithm for --stacks: 'components' (scenario 1), 'trees' (scenario 2), or 'stacks' (scenario 3)")
+              help="Create multiple PR stacks based on commit dependencies")
 @click.pass_context
-def breakup(ctx: Context, directory: Optional[str], verbose: int, pretend: bool, no_rebase: bool, reviewer: List[str], count: Optional[int], update_only_these_ids: Optional[str], stacks: bool, stack_mode: str) -> None:
+def breakup(ctx: Context, directory: Optional[str], verbose: int, pretend: bool, no_rebase: bool, reviewer: List[str], count: Optional[int], update_only_these_ids: Optional[str], stacks: bool) -> None:
     """Breakup command."""
     from ... import setup_logging
     setup_logging(verbose)
@@ -305,7 +302,7 @@ def breakup(ctx: Context, directory: Optional[str], verbose: int, pretend: bool,
         if update_only_these_ids:
             commit_ids = [id.strip() for id in update_only_these_ids.split(',') if id.strip()]
         
-        stackedpr.breakup_pull_requests(ctx, reviewer if reviewer else None, count, commit_ids, stacks, stack_mode)
+        stackedpr.breakup_pull_requests(ctx, reviewer if reviewer else None, count, commit_ids, stacks, 'stacks')
     except Exception as e:
         logger.error(f"Error during breakup: {e}")
         restore_git_state(git_cmd, git_state)

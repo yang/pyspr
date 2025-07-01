@@ -1168,70 +1168,11 @@ class StackedPR:
         if independent_commits:
             print(f"\nTip: You can use 'pyspr breakup' to create independent PRs for the {len(independent_commits)} independent commits.")
         
-        # Show alternative stacking scenarios
-        print_header("Alternative Stacking Scenarios", use_emoji=True)
+        # Show stacking scenarios
+        print_header("Stacking Scenarios", use_emoji=True)
         
-        # Scenario 1: Strongly Connected Components
-        print("\n📊 Scenario 1: Strongly Connected Components")
-        print("   (Grouping commits with mutual dependencies)")
-        
-        # Create extended dependencies that connect all commits with their transitive dependencies
-        # This ensures that any commit that depends on another (directly or indirectly) 
-        # will be grouped together in the same component
-        extended_dependencies: Dict[str, List[str]] = {}
-        
-        # For each commit, find ALL transitive dependencies and create bidirectional connections
-        for commit in non_wip_commits:
-            commit_hash = commit.commit_hash
-            
-            # Find all transitive dependencies of this commit
-            transitive_deps: Set[str] = set()
-            to_process = list(conflict_dependencies.get(commit_hash, []))
-            processed: Set[str] = set()
-            
-            while to_process:
-                dep = to_process.pop(0)
-                if dep in processed:
-                    continue
-                processed.add(dep)
-                transitive_deps.add(dep)
-                # Add this dep's dependencies
-                to_process.extend(conflict_dependencies.get(dep, []))
-            
-            # If this commit has dependencies, create bidirectional connections
-            # This ensures all related commits end up in the same strongly connected component
-            if transitive_deps:
-                extended_dependencies[commit_hash] = list(transitive_deps)
-                # Also add reverse dependencies to ensure strong connectivity
-                for dep in transitive_deps:
-                    if dep not in extended_dependencies:
-                        extended_dependencies[dep] = []
-                    if commit_hash not in extended_dependencies[dep]:
-                        extended_dependencies[dep].append(commit_hash)
-            else:
-                # Independent commits have no dependencies
-                extended_dependencies[commit_hash] = []
-        
-        components = self._find_strongly_connected_components(non_wip_commits, extended_dependencies)
-        
-        print(f"\n   Found {len(components)} component(s):")
-        
-        for i, component in enumerate(components):
-            print(f"\n   Component {i+1} ({len(component)} commits):")
-            for commit in component:
-                if commit.commit_hash in orphan_commits:
-                    print(f"     - {commit.commit_hash[:8]} {commit.subject} (has unresolvable conflicts)")
-                else:
-                    deps = conflict_dependencies.get(commit.commit_hash, [])
-                    # Show dependencies within the analyzed commits
-                    dep_commits = [c for c in non_wip_commits if c.commit_hash in deps]
-                    if dep_commits:
-                        print(f"     - {commit.commit_hash[:8]} {commit.subject} (depends on: {', '.join([c.commit_hash[:8] for c in dep_commits])})")
-                    else:
-                        print(f"     - {commit.commit_hash[:8]} {commit.subject} (independent)")
-        
-        # Scenario 2: Best-Effort Single-Parent Trees
-        print("\n🌳 Scenario 2: Best-Effort Single-Parent Trees")
+        # Trees: Best-Effort Single-Parent Trees
+        print("\n🌳 Trees: Best-Effort Single-Parent Trees")
         print("   (Attempting to create trees where each commit has at most one parent)")
         trees = self._create_single_parent_trees(non_wip_commits, conflict_dependencies)
         
@@ -1272,8 +1213,8 @@ class StackedPR:
             print(f"\n   Orphan {i}:")
             print(f"     - {commit.commit_hash[:8]} {commit.subject} (multiple conflicting dependencies)")
         
-        # Scenario 3: Stack-based approach (less shallow, fewer orphans)
-        print("\n📚 Scenario 3: Stack-Based Approach")
+        # Stacks: Stack-based approach (less shallow, fewer orphans)
+        print("\n📚 Stacks: Stack-Based Approach")
         print("   (Building stacks where commits can be added to existing stack tips)")
         stacks, stack_orphans = self._create_stacks(non_wip_commits, conflict_dependencies)
         
@@ -1479,75 +1420,6 @@ class StackedPR:
                 pass
                 
         return dependencies, orphans
-    
-    def _find_strongly_connected_components(self, commits: List[Commit], dependencies: Dict[str, List[str]]) -> List[List[Commit]]:
-        """Find strongly connected components using Tarjan's algorithm."""
-        # Build reverse dependencies (who depends on me)
-        reverse_deps: Dict[str, List[str]] = {c.commit_hash: [] for c in commits}
-        for commit_hash, deps in dependencies.items():
-            for dep in deps:
-                if dep in reverse_deps:
-                    reverse_deps[dep].append(commit_hash)
-        
-        # Tarjan's algorithm
-        index_counter = [0]
-        stack: List[str] = []
-        lowlinks: Dict[str, int] = {}
-        index: Dict[str, int] = {}
-        on_stack: Dict[str, bool] = {}
-        sccs: List[List[str]] = []
-        
-        def strongconnect(v: str) -> None:
-            index[v] = index_counter[0]
-            lowlinks[v] = index_counter[0]
-            index_counter[0] += 1
-            stack.append(v)
-            on_stack[v] = True
-            
-            # Check both forward and reverse dependencies for strong connectivity
-            neighbors = set(dependencies.get(v, []) + reverse_deps.get(v, []))
-            
-            for w in neighbors:
-                if w not in index:
-                    strongconnect(w)
-                    lowlinks[v] = min(lowlinks[v], lowlinks[w])
-                elif on_stack.get(w, False):
-                    lowlinks[v] = min(lowlinks[v], index[w])
-                    
-            if lowlinks[v] == index[v]:
-                scc: List[str] = []
-                while True:
-                    w = stack.pop()
-                    on_stack[w] = False
-                    scc.append(w)
-                    if w == v:
-                        break
-                sccs.append(scc)
-                
-        # Find all SCCs
-        for commit in commits:
-            if commit.commit_hash not in index:
-                strongconnect(commit.commit_hash)
-                
-        # Convert back to commits and maintain order
-        commit_map: Dict[str, Commit] = {c.commit_hash: c for c in commits}
-        result: List[List[Commit]] = []
-        
-        for scc in sccs:
-            component: List[Commit] = []
-            for hash in scc:
-                if hash in commit_map:
-                    component.append(commit_map[hash])
-            
-            if component:
-                # Sort by original order
-                component.sort(key=lambda c: next(i for i, x in enumerate(commits) if x.commit_hash == c.commit_hash))
-                result.append(component)
-                
-        # Sort components by first commit position
-        result.sort(key=lambda comp: next(i for i, x in enumerate(commits) if x.commit_hash == comp[0].commit_hash))
-        
-        return result
     
     def _create_single_parent_trees(self, commits: List[Commit], dependencies: Dict[str, List[str]]) -> List[List[Commit]]:
         """Create a forest of single-parent trees from commits and dependencies.
@@ -1929,60 +1801,30 @@ class StackedPR:
             is_last_root = i == len(roots) - 1
             print_node(root, prefix, is_last_root)
     
-    def _breakup_into_stacks(self, ctx: StackedPRContextProtocol, commits: List[Commit], reviewers: Optional[List[str]] = None, stack_mode: str = 'components') -> None:
+    def _breakup_into_stacks(self, ctx: StackedPRContextProtocol, commits: List[Commit], reviewers: Optional[List[str]] = None, stack_mode: str = 'stacks') -> None:
         """Break up commits into multiple PR stacks based on dependencies.
         
         Args:
-            stack_mode: 'components' for strongly connected components (scenario 1),
-                       'trees' for single-parent trees (scenario 2),
-                       'stacks' for stack-based approach (scenario 3)
+            stack_mode: Ignored, always uses 'stacks' (stack-based approach)
         """
         from ..pretty import print_header
         
-        mode_names = {
-            'components': 'Strongly Connected Components',
-            'trees': 'Single-Parent Trees',
-            'stacks': 'Stack-Based Approach'
-        }
-        
-        print_header(f"Multi-Stack Breakup Analysis ({mode_names.get(stack_mode, stack_mode)})", use_emoji=True)
+        print_header("Multi-Stack Breakup Analysis (Stack-Based Approach)", use_emoji=True)
         print(f"\nAnalyzing {len(commits)} commits for dependencies...")
         
         # Analyze dependencies using conflict-based detection
         dependencies, orphans = self._analyze_conflict_dependencies(commits)
         
-        # Choose algorithm based on mode
-        if stack_mode == 'trees':
-            # Scenario 2: Single-parent trees
-            components_raw = self._create_single_parent_trees(commits, dependencies)
-            # Convert to list of commits
-            components = []
-            for tree in components_raw:
-                if isinstance(tree, list):
-                    components.append(tree)
-                else:
-                    components.append([tree])
-        elif stack_mode == 'stacks':
-            # Scenario 3: Stack-based approach
-            stacks, orphan_commits = self._create_stacks(commits, dependencies)
-            components = stacks
-            # Add orphans as single-commit components
-            for orphan in orphan_commits:
-                components.append([orphan])
-        else:
-            # Default: Scenario 1 - strongly connected components
-            components = self._find_strongly_connected_components(commits, dependencies)
+        # Always use stack-based approach
+        stacks, orphan_commits = self._create_stacks(commits, dependencies)
+        components = stacks
+        # Add orphans as single-commit components
+        for orphan in orphan_commits:
+            components.append([orphan])
         
-        # Display results based on mode
-        if stack_mode == 'trees':
-            print(f"\nFound {len(components)} tree(s):")
-            label = "Tree"
-        elif stack_mode == 'stacks':
-            print(f"\nFound {len(components)} stack(s):")
-            label = "Stack"
-        else:
-            print(f"\nFound {len(components)} component(s):")
-            label = "Component"
+        # Display results
+        print(f"\nFound {len(components)} stack(s):")
+        label = "Stack"
         
         # Display components
         for i, component in enumerate(components):
