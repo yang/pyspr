@@ -1845,12 +1845,20 @@ class StackedPR:
         single_commit_branches: List[str] = []
         multi_commit_stacks: List[Tuple[str, List[Commit]]] = []  # (stack_branch, commits)
         
+        # Count single vs multi-commit components
+        single_count = sum(1 for c in components if len(c) == 1)
+        multi_count = len(components) - single_count
+        
+        # Process single-commit components first
+        if single_count > 0:
+            print_header(f"Creating Independent PRs ({single_count} commits)", use_emoji=True)
+        
         for i, component in enumerate(components):
             if len(component) == 1:
                 # Single commit - use regular breakup
                 commit = component[0]
                 branch_name = breakup_branch_name_from_commit(self.config, commit)
-                print(f"\nProcessing single-commit component {i+1}: {commit.subject}")
+                print(f"\n  ⏳ Processing \"{commit.subject}\"...")
                 
                 # Check if a PR already exists for this commit (by commit ID)
                 github_info = self.fetch_and_get_github_info(ctx)
@@ -1869,39 +1877,56 @@ class StackedPR:
                 
                 if self._create_breakup_branch(commit, branch_name):
                     single_commit_branches.append(branch_name)
-            else:
-                # Multiple commits - create a stack
-                stack_name = f"pyspr/stack/{self.config.repo.github_branch}/component-{i+1}"
-                print(f"\nProcessing multi-commit component {i+1} with {len(component)} commits")
-                print(f"  Stack branch: {stack_name}")
-                
-                if self._create_stack_branch(component, stack_name):
-                    multi_commit_stacks.append((stack_name, component))
+                    print(f"     ✅ Created branch {branch_name}")
+                else:
+                    print(f"     ❌ Failed to create branch")
+        
+        # Process multi-commit components
+        if multi_count > 0:
+            for i, component in enumerate(components):
+                if len(component) > 1:
+                    # Multiple commits - create a stack
+                    stack_num = len(multi_commit_stacks) + 1
+                    print_header(f"Creating Multi-Commit Stack {stack_num} ({len(component)} commits)", use_emoji=True)
+                    
+                    stack_name = f"pyspr/stack/{self.config.repo.github_branch}/component-{i+1}"
+                    print(f"\n  Stack branch: {stack_name}")
+                    print(f"\n  ⏳ Cherry-picking commits onto stack branch...")
+                    
+                    if self._create_stack_branch(component, stack_name):
+                        multi_commit_stacks.append((stack_name, component))
         
         # Push branches and create PRs
-        print(f"\n{'[PRETEND] Would push' if self.pretend else 'Pushing'} branches...")
+        print_header("Pushing Branches to GitHub", use_emoji=True)
         
         if not self.pretend:
             # Push single-commit branches
             if single_commit_branches:
+                print(f"\n  ⏳ Pushing {len(single_commit_branches)} single-commit branches...")
                 self._push_branches(single_commit_branches)
+                print(f"  ✅ Pushed {len(single_commit_branches)} branches")
             
             # Push stack branches
             if multi_commit_stacks:
+                print(f"\n  ⏳ Pushing {len(multi_commit_stacks)} stack branches...")
                 stack_branches = [name for name, _ in multi_commit_stacks]
                 self._push_branches(stack_branches)
+                print(f"  ✅ Pushed {len(multi_commit_stacks)} branches")
+        else:
+            print(f"\n  [PRETEND] Would push {len(single_commit_branches) + len(multi_commit_stacks)} branches")
         
         # Create PRs
-        print(f"\n{'[PRETEND] Would create' if self.pretend else 'Creating'} pull requests...")
+        print_header("Creating/Updating Pull Requests", use_emoji=True)
         
         if not self.pretend:
             # Create PRs for single commits
             if single_commit_branches:
+                print(f"\n  ⏳ Creating/updating {len(single_commit_branches)} independent PRs...")
                 self._create_breakup_prs(ctx, single_commit_branches, commits, reviewers)
             
             # Create stacked PRs for multi-commit components
-            for stack_branch, stack_commits in multi_commit_stacks:
-                print(f"\nCreating PR stack for {stack_branch}...")
+            for i, (stack_branch, stack_commits) in enumerate(multi_commit_stacks):
+                print(f"\n  ⏳ Creating PR stack {i+1}/{len(multi_commit_stacks)}...")
                 # Switch to the stack branch and run update logic
                 self.git_cmd.must_git(f"checkout {stack_branch}")
                 try:
@@ -1966,16 +1991,30 @@ class StackedPR:
                     # Return to original branch
                     self.git_cmd.must_git(f"checkout {current_branch}")
         
-        # Summary
-        print_header("Multi-Stack Breakup Complete", use_emoji=True)
-        print(f"\nProcessed {len(components)} components:")
-        print(f"  - Single-commit PRs: {len(single_commit_branches)}")
-        print(f"  - Multi-commit stacks: {len(multi_commit_stacks)}")
+        # Check for orphaned commits
+        orphan_count = sum(1 for c in components if len(c) == 1 and c[0] in orphan_commits)
+        if orphan_count > 0:
+            print_header(f"Orphaned Commits ({orphan_count} commits)", use_emoji=True)
+            print("\n  These commits couldn't be added to any stack:")
+            for component in components:
+                if len(component) == 1 and component[0] in orphan_commits:
+                    commit = component[0]
+                    print(f"  - {commit.subject}")
         
-        if multi_commit_stacks:
-            print(f"\nCreated {len(multi_commit_stacks)} PR stack(s):")
-            for i, (stack_branch, stack_commits) in enumerate(multi_commit_stacks):
-                print(f"  Stack {i+1}: {stack_branch} ({len(stack_commits)} PRs)")
+        # Summary
+        print_header("Summary", use_emoji=True)
+        print(f"\n  ✅ Successfully created/updated:")
+        print(f"     - {len(single_commit_branches)} independent PRs")
+        print(f"     - {len(multi_commit_stacks)} multi-commit stacks")
+        
+        if orphan_count > 0:
+            print(f"\n  ⚠️  Issues encountered:")
+            print(f"     - {orphan_count} commits orphaned due to conflicts")
+            
+        print(f"\n  💡 Next steps:")
+        if orphan_count > 0:
+            print(f"     - Resolve conflicts for orphaned commits")
+        print(f"     - Run 'pyspr update' to refresh the stack")
     
     def _create_breakup_branch(self, commit: Commit, branch_name: str) -> bool:
         """Create a branch for a single breakup commit. Returns True if successful."""
@@ -2052,17 +2091,24 @@ class StackedPR:
                 self.git_cmd.must_git(f"checkout -b {stack_name} {remote}/{base_branch}")
                 
                 # Cherry-pick all commits in order
+                successful = 0
                 for commit in commits:
                     try:
                         self.git_cmd.must_git(f"cherry-pick {commit.commit_hash}")
                         logger.info(f"  Added {commit.commit_hash[:8]} to stack")
+                        print(f"     ✅ Added: {commit.subject}")
+                        successful += 1
                     except Exception as e:
                         logger.error(f"  Failed to cherry-pick {commit.commit_hash[:8]}: {e}")
+                        print(f"     ❌ Failed: {commit.subject} (conflict)")
                         # Try to continue with remaining commits
                         try:
                             self.git_cmd.run_cmd("cherry-pick --abort")
                         except Exception:
                             pass
+                
+                if successful < len(commits):
+                    print(f"\n  ⚠️  Partial stack created ({successful}/{len(commits)} commits)")
                             
                 return True
                 
@@ -2123,22 +2169,29 @@ class StackedPR:
                         break
             
             if existing_pr:
+                print(f"\n  ⏳ Updating PR for \"{commit.subject}\"...")
                 logger.info(f"  PR #{existing_pr.number} already exists for {branch}")
                 # Update the PR to remove stack info and target main
                 # Pass the PR in a list so update logic knows it's a single PR (not part of stack)
                 self.github.update_pull_request(ctx, self.git_cmd, [existing_pr], existing_pr, commit, None)
+                print(f"  ✅ PR #{existing_pr.number} updated")
             else:
                 # Create new PR
+                print(f"\n  ⏳ Creating PR for \"{commit.subject}\"...")
                 if github_info:
                     pr = self.github.create_pull_request(ctx, self.git_cmd, github_info, 
                                                        commit, None, use_breakup_branch=True)
                     logger.info(f"  Created PR #{pr.number} for {branch}")
+                    print(f"  ✅ PR #{pr.number} created")
                     
                     # Add reviewers
                     if reviewers:
                         try:
                             self.github.add_reviewers(ctx, pr, reviewers)
+                            print(f"     ✅ Added reviewers: {', '.join(reviewers)}")
                         except Exception as e:
                             logger.error(f"  Failed to add reviewers: {e}")
+                            print(f"     ⚠️  Failed to add reviewers")
                 else:
                     logger.error("  Cannot create PR - GitHub info not available")
+                    print(f"  ❌ Failed to create PR - GitHub info not available")
