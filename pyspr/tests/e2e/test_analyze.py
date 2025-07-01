@@ -33,76 +33,41 @@ def create_commits_from_dag(dependencies: Dict[str, List[str]], commits_order: L
         dependencies: Dict mapping commit name to list of commits it depends on
         commits_order: Order in which to create commits (must be topologically sorted)
     """
-    # Don't create any files in the base - this allows independent commits
-    # to be truly independent by creating their own files
+    # Track which file each commit primarily owns/creates
+    commit_files: Dict[str, str] = {}
     
-    # Now create commits in order
+    # Create commits in topological order
     for commit_name in commits_order:
-        if commit_name == "A":
-            # A is independent - creates its own file
-            with open("file_A.txt", "w") as f:
-                f.write("A's content\n")
-        elif commit_name == "B":
-            # B depends on A - modifies A's file
-            with open("file_A.txt", "a") as f:
-                f.write("B's addition to A's file\n")
-        elif commit_name == "C":
-            # C depends on A - modifies A's file differently than B
-            with open("file_A.txt", "r") as f:
-                content = f.read()
-            # Replace A's content with different modification
-            with open("file_A.txt", "w") as f:
-                f.write(content.replace("A's content", "A's content modified by C"))
-        elif commit_name == "D":
-            # D depends on both A and C - needs C's specific modification
-            with open("file_A.txt", "a") as f:
-                f.write("D's addition (requires C's modification)\n")
-        elif commit_name == "E":
-            # E depends on C - continues C's work
-            with open("file_A.txt", "a") as f:
-                f.write("E's addition to C's work\n")
-        elif commit_name == "F":
-            # F is independent - creates its own file
-            with open("file_F.txt", "w") as f:
-                f.write("F's content\n")
-            # Also create a marker file that will be used by G
-            with open("marker_F.txt", "w") as f:
-                f.write("F was here\n")
-        elif commit_name == "G":
-            # G depends on both E and F - needs files from both chains
-            # Modify E's chain (file_A.txt)
-            with open("file_A.txt", "a") as f:
-                f.write("G's addition to E's chain\n")
-            # AND modify F's file
-            with open("file_F.txt", "a") as f:
-                f.write("G's addition to F's file\n")
-        elif commit_name == "H":
-            # H is independent - creates its own file
-            with open("file_H.txt", "w") as f:
-                f.write("H's content\n")
-        elif commit_name == "I":
-            # I depends on H
-            with open("file_H.txt", "a") as f:
-                f.write("I's addition to H's file\n")
-        elif commit_name == "J":
-            # J depends on H and I
-            with open("file_H.txt", "a") as f:
-                f.write("J's addition (needs both H and I)\n")
-        elif commit_name == "K":
-            # K is independent - creates its own file
-            with open("file_K.txt", "w") as f:
-                f.write("K's content\n")
-        elif commit_name == "L":
-            # L depends on K
-            with open("file_K.txt", "a") as f:
-                f.write("L's addition to K's file\n")
-        elif commit_name == "M":
-            # M is independent - creates its own file
-            with open("file_M.txt", "w") as f:
-                f.write("M's content\n")
+        deps = dependencies.get(commit_name, [])
         
-        # Don't modify any base file - only the files created by this commit
-        # This ensures independent commits are truly independent
+        if not deps:
+            # Independent commit - creates its own file
+            filename = f"file_{commit_name}.txt"
+            commit_files[commit_name] = filename
+            with open(filename, "w") as f:
+                f.write(f"{commit_name}'s content\n")
+        else:
+            # Dependent commit - modifies files from dependencies
+            files_modified = []
+            
+            for dep in deps:
+                if dep in commit_files:
+                    # Modify the file created by the dependency
+                    dep_file = commit_files[dep]
+                    files_modified.append(dep_file)
+                    
+                    # Read current content
+                    with open(dep_file, "r") as f:
+                        content = f.read()
+                    
+                    # Append our modification
+                    with open(dep_file, "a") as f:
+                        f.write(f"{commit_name}'s addition to {dep}'s file\n")
+            
+            # If this commit is depended on by others, track its primary file
+            # (the first dependency's file it modifies)
+            if files_modified and commit_name not in commit_files:
+                commit_files[commit_name] = files_modified[0]
         
         run_cmd("git add .")
         run_cmd(f"git commit -m '{commit_name}'")
