@@ -404,6 +404,8 @@ def merge(
     is_flag=True,
     help="Create multiple PR stacks based on commit dependencies",
 )
+@click.option('--single-stack', is_flag=True,
+              help="Create a single stack with independents removed")
 @click.pass_context
 def breakup(
     ctx: Context,
@@ -415,6 +417,7 @@ def breakup(
     count: Optional[int],
     update_only_these_ids: Optional[str],
     stacks: bool,
+    single_stack: bool,
 ) -> None:
     """Breakup command."""
     from ... import setup_logging
@@ -423,26 +426,43 @@ def breakup(
 
     config, git_cmd, github = setup_git(directory)
     config.tool.pretend = pretend  # Set pretend mode
-
+    
+    # Save current git state for recovery
+    git_state = save_git_state(git_cmd)
+    
     try:
-        with managed_git_state(git_cmd):
-            if no_rebase:
-                config.user.no_rebase = True
-            stackedpr = StackedPR(config, github, git_cmd)
-            stackedpr.pretend = pretend  # Set pretend mode
-
-            # Parse commit IDs if provided
-            commit_ids = None
-            if update_only_these_ids:
-                commit_ids = [
-                    id.strip() for id in update_only_these_ids.split(",") if id.strip()
-                ]
-
-            stackedpr.breakup_pull_requests(
-                ctx, reviewer if reviewer else None, count, commit_ids, stacks, "stacks"
-            )
-    except (Exception, KeyboardInterrupt):
+        if no_rebase:
+            config.user.no_rebase = True
+        stackedpr = StackedPR(config, github, git_cmd)
+        stackedpr.pretend = pretend  # Set pretend mode
+        
+        # Parse commit IDs if provided
+        commit_ids = None
+        if update_only_these_ids:
+            commit_ids = [id.strip() for id in update_only_these_ids.split(',') if id.strip()]
+        
+        # Determine mode based on flags
+        if single_stack:
+            mode = 'single_stack'
+        elif stacks:
+            mode = 'stacks'
+        else:
+            mode = 'stacks'  # default
+        
+        stackedpr.breakup_pull_requests(ctx, reviewer if reviewer else None, count, commit_ids, stacks or single_stack, mode)
+    except Exception as e:
+        logger.error(f"Error during breakup: {e}")
+        restore_git_state(git_cmd, git_state)
         sys.exit(1)
+    finally:
+        # Always try to restore state if we still have uncommitted changes
+        try:
+            status = git_cmd.must_git("status --porcelain")
+            if not status.strip() and git_state.stash_ref:
+                # No uncommitted changes but we have a stash - restore it
+                restore_git_state(git_cmd, git_state)
+        except Exception:
+            pass
 
 
 @cli.command(
