@@ -95,18 +95,13 @@ class StackedPR:
             logger.debug(f"    {commit_id}: PR #{pr.number}")
         
         # First pass: Find any PRs matching local commits by ID
-        # Only consider regular stacked PRs as direct matches, not pyspr/cp/* breakup PRs
         direct_matches: List[PullRequest] = []
         for commit in local_commits:
             logger.debug(f"  Checking commit {commit.commit_hash[:8]} with ID {commit.commit_id}")
             if commit.commit_id in pull_request_map:
                 pr = pull_request_map[commit.commit_id]
-                # Only include spr PRs in direct matches, not breakup PRs
-                if pr.from_branch and not pr.from_branch.startswith('pyspr/cp/'):
-                    direct_matches.append(pr)
-                    logger.debug(f"  Found direct PR match #{pr.number} for commit {commit.commit_id}")
-                else:
-                    logger.debug(f"  Found breakup PR #{pr.number} for commit {commit.commit_id}, skipping")
+                direct_matches.append(pr)
+                logger.debug(f"  Found direct PR match #{pr.number} for commit {commit.commit_id}")
             else:
                 logger.debug(f"  No PR found for commit ID {commit.commit_id}")
                 
