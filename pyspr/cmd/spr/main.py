@@ -6,6 +6,7 @@ import click
 import logging
 from typing import List, Optional, Tuple, Dict, Any
 from click import Context
+from contextlib import contextmanager
 
 from ...config import Config, default_config
 from ...config.config_parser import parse_config
@@ -141,6 +142,33 @@ def restore_git_state(git_cmd: GitInterface, state: GitState) -> None:
             logger.warning(f"Your changes are still saved in {state.stash_ref}")
             logger.warning("You can manually restore with: git stash pop")
 
+@contextmanager
+def managed_git_state(git_cmd: RealGit):
+    """Context manager for git state management with automatic restoration.
+    
+    Saves the current git state (branch, HEAD, uncommitted changes) and ensures
+    it's restored even if the operation is interrupted with Ctrl-C or fails.
+    """
+    git_state = save_git_state(git_cmd)
+    try:
+        yield git_state
+    except (Exception, KeyboardInterrupt) as e:
+        if isinstance(e, KeyboardInterrupt):
+            logger.error("Operation interrupted by user")
+        else:
+            logger.error(f"Error during operation: {e}")
+        restore_git_state(git_cmd, git_state)
+        raise
+    finally:
+        # Always try to restore state if we still have uncommitted changes
+        try:
+            status = git_cmd.must_git("status --porcelain")
+            if not status.strip() and git_state.stash_ref:
+                # No uncommitted changes but we have a stash - restore it
+                restore_git_state(git_cmd, git_state)
+        except Exception:
+            pass
+
 def setup_git(directory: Optional[str] = None) -> Tuple[Config, RealGit, GitHubClient]:
     """Setup Git command and config."""
     if directory:
@@ -207,28 +235,15 @@ def update(ctx: Context, directory: Optional[str], reviewer: List[str],
     config, git_cmd, github = setup_git(directory)
     config.tool.pretend = pretend  # Set pretend mode
     
-    # Save current git state for recovery
-    git_state = save_git_state(git_cmd)
-    
     try:
-        if no_rebase:
-            config.user.no_rebase = True
-        stackedpr = StackedPR(config, github, git_cmd)
-        stackedpr.pretend = pretend  # Set pretend mode
-        stackedpr.update_pull_requests(ctx, reviewer if reviewer else None, count, labels=list(label) if label else None)
-    except Exception as e:
-        logger.error(f"Error during update: {e}")
-        restore_git_state(git_cmd, git_state)
+        with managed_git_state(git_cmd):
+            if no_rebase:
+                config.user.no_rebase = True
+            stackedpr = StackedPR(config, github, git_cmd)
+            stackedpr.pretend = pretend  # Set pretend mode
+            stackedpr.update_pull_requests(ctx, reviewer if reviewer else None, count, labels=list(label) if label else None)
+    except (Exception, KeyboardInterrupt):
         sys.exit(1)
-    finally:
-        # Always try to restore state if we still have uncommitted changes
-        try:
-            status = git_cmd.must_git("status --porcelain")
-            if not status.strip() and git_state.stash_ref:
-                # No uncommitted changes but we have a stash - restore it
-                restore_git_state(git_cmd, git_state)
-        except Exception:
-            pass
 
 @cli.command(name="status", help="Show status of open pull requests")
 @click.option('-C', '--directory', type=click.Path(exists=True, file_okay=False, dir_okay=True),
@@ -288,34 +303,21 @@ def breakup(ctx: Context, directory: Optional[str], verbose: int, pretend: bool,
     config, git_cmd, github = setup_git(directory)
     config.tool.pretend = pretend  # Set pretend mode
     
-    # Save current git state for recovery
-    git_state = save_git_state(git_cmd)
-    
     try:
-        if no_rebase:
-            config.user.no_rebase = True
-        stackedpr = StackedPR(config, github, git_cmd)
-        stackedpr.pretend = pretend  # Set pretend mode
-        
-        # Parse commit IDs if provided
-        commit_ids = None
-        if update_only_these_ids:
-            commit_ids = [id.strip() for id in update_only_these_ids.split(',') if id.strip()]
-        
-        stackedpr.breakup_pull_requests(ctx, reviewer if reviewer else None, count, commit_ids, stacks, 'stacks')
-    except Exception as e:
-        logger.error(f"Error during breakup: {e}")
-        restore_git_state(git_cmd, git_state)
+        with managed_git_state(git_cmd):
+            if no_rebase:
+                config.user.no_rebase = True
+            stackedpr = StackedPR(config, github, git_cmd)
+            stackedpr.pretend = pretend  # Set pretend mode
+            
+            # Parse commit IDs if provided
+            commit_ids = None
+            if update_only_these_ids:
+                commit_ids = [id.strip() for id in update_only_these_ids.split(',') if id.strip()]
+            
+            stackedpr.breakup_pull_requests(ctx, reviewer if reviewer else None, count, commit_ids, stacks, 'stacks')
+    except (Exception, KeyboardInterrupt):
         sys.exit(1)
-    finally:
-        # Always try to restore state if we still have uncommitted changes
-        try:
-            status = git_cmd.must_git("status --porcelain")
-            if not status.strip() and git_state.stash_ref:
-                # No uncommitted changes but we have a stash - restore it
-                restore_git_state(git_cmd, git_state)
-        except Exception:
-            pass
 
 @cli.command(name="analyze", help="Analyze which commits can be independently submitted without stacking")
 @click.option('-C', '--directory', type=click.Path(exists=True, file_okay=False, dir_okay=True),
@@ -329,15 +331,12 @@ def analyze(ctx: Context, directory: Optional[str], verbose: int) -> None:
     
     config, git_cmd, github = setup_git(directory)
     
-    # Save current git state
-    git_state = save_git_state(git_cmd)
-    
     try:
-        stackedpr = StackedPR(config, github, git_cmd)
-        stackedpr.analyze(ctx)
-    finally:
-        # Always restore git state
-        restore_git_state(git_cmd, git_state)
+        with managed_git_state(git_cmd):
+            stackedpr = StackedPR(config, github, git_cmd)
+            stackedpr.analyze(ctx)
+    except (Exception, KeyboardInterrupt):
+        sys.exit(1)
 
 
 def main() -> None:
