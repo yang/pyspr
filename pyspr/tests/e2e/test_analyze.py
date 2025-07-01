@@ -48,17 +48,13 @@ def create_commits_from_dag(dependencies: Dict[str, List[str]], commits_order: L
                 f.write(f"{commit_name}'s content\n")
         else:
             # Dependent commit - modifies files from dependencies
-            files_modified = []
+            files_modified: List[str] = []
             
             for dep in deps:
                 if dep in commit_files:
                     # Modify the file created by the dependency
                     dep_file = commit_files[dep]
                     files_modified.append(dep_file)
-                    
-                    # Read current content
-                    with open(dep_file, "r") as f:
-                        content = f.read()
                     
                     # Append our modification
                     with open(dep_file, "a") as f:
@@ -176,9 +172,9 @@ def test_analyze_complex_dependencies(test_repo_ctx: RepoContext) -> None:
         assert match, f"Could not find {name}"
         return int(match.group(1))
     
-    def extract_commits_from_section(section_text: str) -> set:
+    def extract_commits_from_section(section_text: str) -> set[str]:
         """Extract commit names from a section of output."""
-        commits = set()
+        commits: set[str] = set()
         for line in section_text.strip().split('\n'):
             match = re.search(r"- \w+ (\w+)$", line.strip())
             if match:
@@ -232,12 +228,12 @@ def test_analyze_complex_dependencies(test_repo_ctx: RepoContext) -> None:
     
     def parse_tree_structure(output: str) -> Dict[str, List[Tuple[int, str]]]:
         """Parse tree structure from output. Returns {root: [(depth, node), ...]}"""
-        trees = {}
+        trees: Dict[str, List[Tuple[int, str]]] = {}
         tree_pattern = r"Tree (\d+):\s*\n((?:\s*- \w+ \w+\s*\n)+)"
         
         for match in re.finditer(tree_pattern, output, re.MULTILINE):
             tree_lines = match.group(2).strip().split('\n')
-            nodes = []
+            nodes: List[Tuple[int, str]] = []
             
             for line in tree_lines:
                 depth = (len(line) - len(line.lstrip())) // 2
@@ -293,11 +289,11 @@ def test_analyze_complex_dependencies(test_repo_ctx: RepoContext) -> None:
     
     def parse_stack_structure(output: str) -> List[List[str]]:
         """Parse stack structure from output. Returns list of stacks."""
-        stacks = []
+        stacks: List[List[str]] = []
         stack_pattern = r"Stack \d+:\s*\n((?:\s*- \w+ \w+\s*\n)+)"
         
         for match in re.finditer(stack_pattern, output, re.MULTILINE):
-            stack_nodes = []
+            stack_nodes: List[str] = []
             for line in match.group(1).strip().split('\n'):
                 node_match = re.search(r"- \w+ (\w+)", line)
                 if node_match:
@@ -330,7 +326,7 @@ def test_analyze_complex_dependencies(test_repo_ctx: RepoContext) -> None:
         f"Stack structure mismatch:\nExpected: {expected_sorted}\nGot: {stacks_sorted}"
     
     # Build position map for topological ordering checks
-    commit_positions = {}
+    commit_positions: Dict[str, Tuple[int, int]] = {}
     for stack_idx, stack in enumerate(stacks):
         for pos, commit in enumerate(stack):
             commit_positions[commit] = (stack_idx, pos)

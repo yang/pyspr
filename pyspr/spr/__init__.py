@@ -1187,8 +1187,8 @@ class StackedPR:
         trees = self._create_single_parent_trees(non_wip_commits, conflict_dependencies)
         
         # Separate trees from orphans
-        actual_trees = []
-        orphan_trees = []
+        actual_trees: List[List[Commit]] = []
+        orphan_trees: List[List[Commit]] = []
         for tree in trees:
             if len(tree) == 1:
                 # Check if this single-commit tree is actually placed or is an orphan
@@ -1455,7 +1455,7 @@ class StackedPR:
           - Or else mark as orphan
         This gives you trees.
         """
-        commit_map: Dict[str, Commit] = {c.commit_hash: c for c in commits}
+        commit_map: Dict[str, Commit] = {c.commit_hash: c for c in commits}  # pyright: ignore[reportUnusedVariable]
         
         # Trees will be stored as dict mapping root_hash -> list of commits in tree
         trees: Dict[str, List[Commit]] = {}
@@ -1520,7 +1520,7 @@ class StackedPR:
                         prev_commit = placed_commits[j]
                         
                         # Build the path to this commit in its tree
-                        path_commits = []
+                        path_commits: List[str] = []
                         current = prev_commit.commit_hash
                         while current:
                             path_commits.append(current)
@@ -1573,10 +1573,10 @@ class StackedPR:
                 pass
         
         # Convert trees dict to list format
-        result = []
+        result: List[List[Commit]] = []
         
         # First add all non-empty trees
-        for root_hash, tree_commits in trees.items():
+        for _, tree_commits in trees.items():
             if tree_commits:
                 result.append(tree_commits)
         
@@ -1660,7 +1660,7 @@ class StackedPR:
                 # If not placed and has dependencies, try to add to the stack containing its dependencies
                 if not placed and commit_deps:
                     # Find which stack(s) contain our dependencies
-                    dep_stacks = set()
+                    dep_stacks: Set[int] = set()
                     for dep in commit_deps:
                         if dep in placed_commits:
                             dep_stacks.add(placed_commits[dep])
@@ -1743,7 +1743,7 @@ class StackedPR:
     
     def _get_tree_path(self, commit: Commit, parent_map: Dict[str, Optional[str]], commit_map: Dict[str, Commit]) -> List[Commit]:
         """Get all commits from root to this commit in order."""
-        path = []
+        path: List[Commit] = []
         current = commit.commit_hash
         while current:
             path.append(commit_map[current])
@@ -1755,7 +1755,10 @@ class StackedPR:
         """Find the root of the tree containing this commit."""
         current = commit_hash
         while parent_map.get(current) is not None:
-            current = parent_map[current]
+            next_parent = parent_map.get(current)
+            if next_parent is None:
+                break
+            current = next_parent
         return current
     
     def _build_tree_structure(self, root: Commit, tree_commits: List[Commit], parent_map: Dict[str, Optional[str]]) -> List[Commit]:
@@ -1764,12 +1767,13 @@ class StackedPR:
         children_map: Dict[str, List[Commit]] = {root.commit_hash: []}
         for commit in tree_commits:
             parent = parent_map.get(commit.commit_hash)
-            if parent not in children_map:
-                children_map[parent] = []
-            children_map[parent].append(commit)
+            if parent is not None:
+                if parent not in children_map:
+                    children_map[parent] = []
+                children_map[parent].append(commit)
         
         # Build tree recursively
-        result = []
+        result: List[Optional[Commit]] = []
         
         def add_subtree(commit: Commit, depth: int = 0):
             # Ensure result list is long enough
@@ -1779,7 +1783,7 @@ class StackedPR:
             
             # Add children
             if commit.commit_hash in children_map:
-                for i, child in enumerate(children_map[commit.commit_hash]):
+                for child in children_map[commit.commit_hash]:
                     add_subtree(child, depth + 1)
         
         add_subtree(root)
@@ -1837,7 +1841,7 @@ class StackedPR:
         print(f"\nAnalyzing {len(commits)} commits for dependencies...")
         
         # Analyze dependencies using conflict-based detection
-        dependencies, orphans = self._analyze_conflict_dependencies(commits)
+        dependencies, _ = self._analyze_conflict_dependencies(commits)
         
         # Always use stack-based approach
         stacks, orphan_commits = self._create_stacks(commits, dependencies)
