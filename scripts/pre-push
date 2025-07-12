@@ -1,41 +1,6 @@
 #!/bin/bash
 
-# Pre-push hook with options for long-running tests
-
-# Check if SKIP_TESTS environment variable is set
-if [ "$SKIP_TESTS" = "1" ]; then
-    echo "Skipping tests (SKIP_TESTS=1)"
-    exit 0
-fi
-
-# Check if --no-verify was used (git sets GIT_PUSH_OPTION_COUNT)
-if [ "$GIT_SKIP_TESTS" = "1" ]; then
-    echo "Skipping tests (GIT_SKIP_TESTS=1)"
-    exit 0
-fi
-
-echo "================================================"
-echo "Pre-push hook: Test runner"
-echo "================================================"
-echo "Full test suite takes ~10 minutes."
-echo ""
-echo "Options:"
-echo "  1. Run full tests now (press Enter)"
-echo "  2. Skip tests this time (press 's' then Enter)"
-echo "  3. Cancel push (press Ctrl+C)"
-echo ""
-echo "To always skip: SKIP_TESTS=1 git push"
-echo "Or use: git push --no-verify"
-echo "================================================"
-
-# Read user input with timeout
-read -t 10 -n 1 -p "Your choice (auto-runs tests in 10s): " choice
-echo ""
-
-if [[ "$choice" == "s" || "$choice" == "S" ]]; then
-    echo "Skipping tests for this push..."
-    exit 0
-fi
+# Pre-push hook to run tests before pushing
 
 echo "Running tests before push..."
 
