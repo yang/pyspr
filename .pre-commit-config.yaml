@@ -1,6 +1,13 @@
 repos:
   - repo: local
     hooks:
+      - id: ruff
+        name: ruff
+        entry: rye run ruff check
+        language: system
+        types: [python]
+        pass_filenames: true
+        require_serial: false
       - id: pyright
         name: pyright
         entry: rye run pyright
