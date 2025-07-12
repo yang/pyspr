@@ -1239,18 +1239,18 @@ class StackedPR:
         upstream_ref = f"{remote}/{base_branch}"
         try:
             self.git_cmd.must_git(f"rev-parse {upstream_ref}")
-        except:
+        except Exception:
             # Try origin/staging as fallback (common in anthropic repo)
             try:
                 upstream_ref = f"{remote}/staging"
                 self.git_cmd.must_git(f"rev-parse {upstream_ref}")
                 logger.debug(f"Using {upstream_ref} as upstream (staging branch)")
-            except:
+            except Exception:
                 # If remote/branch doesn't exist, try just branch
                 upstream_ref = base_branch
                 try:
                     self.git_cmd.must_git(f"rev-parse {upstream_ref}")
-                except:
+                except Exception:
                     logger.debug(f"Could not find upstream ref, using {remote}/{base_branch}")
                     upstream_ref = f"{remote}/{base_branch}"
         
@@ -1258,7 +1258,7 @@ class StackedPR:
         try:
             base_ref = self.git_cmd.must_git(f"merge-base HEAD {upstream_ref}").strip()
             logger.debug(f"Using merge-base {base_ref[:8]} between HEAD and {upstream_ref}")
-        except:
+        except Exception:
             logger.debug(f"Could not find merge-base, using HEAD~{len(commits)}")
             base_ref = f"HEAD~{len(commits)}"
         
@@ -1269,7 +1269,7 @@ class StackedPR:
         test_branch = "pyspr-analyze-test"
         try:
             self.git_cmd.must_git(f"branch -D {test_branch}")
-        except:
+        except Exception:
             pass
         
         try:
@@ -1295,7 +1295,7 @@ class StackedPR:
                     logger.debug(f"    Cherry-pick error: {str(e)}")
                     try:
                         self.git_cmd.must_git("cherry-pick --abort")
-                    except:
+                    except Exception:
                         pass
         
         except Exception as e:
@@ -1314,14 +1314,14 @@ class StackedPR:
                 # Try harder to get back
                 try:
                     self.git_cmd.must_git(f"checkout -f {current_branch}")
-                except:
+                except Exception:
                     pass
             
             # Clean up test branch
             try:
                 logger.debug(f"Cleaning up test branch {test_branch}")
                 self.git_cmd.must_git(f"branch -D {test_branch}")
-            except:
+            except Exception:
                 pass
                 
         return independent_commits
@@ -1354,7 +1354,7 @@ class StackedPR:
         
         try:
             base_ref = self.git_cmd.must_git(f"merge-base HEAD {upstream_ref}").strip()
-        except:
+        except Exception:
             base_ref = f"HEAD~{len(commits)}"
         
         # Save current state
@@ -1365,7 +1365,7 @@ class StackedPR:
         test_branch = "pyspr-scenario2-test"
         try:
             self.git_cmd.must_git(f"branch -D {test_branch}")
-        except:
+        except Exception:
             pass
         
         placed_commits: List[Commit] = []  # Commits successfully placed in order
@@ -1389,10 +1389,10 @@ class StackedPR:
                     placed_commits.append(commit)
                     placed = True
                     print(f"  ✅ Placed {commit.commit_hash[:8]} as root (can cherry-pick to merge-base)")
-                except:
+                except Exception:
                     try:
                         self.git_cmd.must_git("cherry-pick --abort")
-                    except:
+                    except Exception:
                         pass
                 
                 # Second try: cherry-pick onto each previously placed commit
@@ -1426,10 +1426,10 @@ class StackedPR:
                             placed = True
                             print(f"  ✅ Placed {commit.commit_hash[:8]} as child of {prev_commit.commit_hash[:8]}")
                             break
-                        except:
+                        except Exception:
                             try:
                                 self.git_cmd.must_git("cherry-pick --abort")
-                            except:
+                            except Exception:
                                 pass
                 
                 # If still not placed, mark as orphan
@@ -1450,7 +1450,7 @@ class StackedPR:
             
             try:
                 self.git_cmd.must_git(f"branch -D {test_branch}")
-            except:
+            except Exception:
                 pass
         
         # Convert trees dict to list format
@@ -1484,7 +1484,7 @@ class StackedPR:
         
         try:
             base_ref = self.git_cmd.must_git(f"merge-base HEAD {upstream_ref}").strip()
-        except:
+        except Exception:
             base_ref = f"HEAD~{len(commits)}"
         
         # Save current state
@@ -1495,7 +1495,7 @@ class StackedPR:
         test_branch = "pyspr-scenario3-test"
         try:
             self.git_cmd.must_git(f"branch -D {test_branch}")
-        except:
+        except Exception:
             pass
         
         stacks: List[List[Commit]] = []  # Each stack is a list of commits
@@ -1518,10 +1518,10 @@ class StackedPR:
                     stacks.append([commit])
                     placed = True
                     print(f"  🆕 Started new stack {stack_idx + 1} with {commit.commit_hash[:8]}")
-                except:
+                except Exception:
                     try:
                         self.git_cmd.must_git("cherry-pick --abort")
-                    except:
+                    except Exception:
                         pass
 
                 # Second try: cherry-pick onto any prior relocated stack tip
@@ -1545,10 +1545,10 @@ class StackedPR:
                             placed = True
                             print(f"  ➕ Added {commit.commit_hash[:8]} to stack {j+1}")
                             break
-                        except:
+                        except Exception:
                             try:
                                 self.git_cmd.must_git("cherry-pick --abort")
-                            except:
+                            except Exception:
                                 pass
                 
                 # If still not placed, it's an orphan
@@ -1569,7 +1569,7 @@ class StackedPR:
             
             try:
                 self.git_cmd.must_git(f"branch -D {test_branch}")
-            except:
+            except Exception:
                 pass
         
         return stacks, orphans
@@ -1590,7 +1590,7 @@ class StackedPR:
         
         try:
             base_ref = self.git_cmd.must_git(f"merge-base HEAD {upstream_ref}").strip()
-        except:
+        except Exception:
             base_ref = f"HEAD~{len(commits)}"
         
         # Save current state
@@ -1601,7 +1601,7 @@ class StackedPR:
         test_branch = "pyspr-single-stack-test"
         try:
             self.git_cmd.must_git(f"branch -D {test_branch}")
-        except:
+        except Exception:
             pass
         
         # Start with all commits in the stack
@@ -1621,11 +1621,11 @@ class StackedPR:
                     self.git_cmd.must_git(f"cherry-pick --no-gpg-sign {commit.commit_hash}")
                     independent_candidates.append(commit)
                     logger.debug(f"  {commit.subject} can cherry-pick cleanly")
-                except:
+                except Exception:
                     logger.debug(f"  {commit.subject} has conflicts")
                     try:
                         self.git_cmd.must_git("cherry-pick --abort")
-                    except:
+                    except Exception:
                         pass
                 
                 # Clean up
@@ -1655,7 +1655,7 @@ class StackedPR:
             
             try:
                 self.git_cmd.must_git(f"branch -D {test_branch}")
-            except:
+            except Exception:
                 pass
         
         # Sort stack alphabetically by subject to match test expectation
@@ -1919,7 +1919,7 @@ class StackedPR:
                     single_commit_branches.append(branch_name)
                     print(f"     ✅ Created branch {branch_name}")
                 else:
-                    print(f"     ❌ Failed to create branch")
+                    print("     ❌ Failed to create branch")
 
         # Process multi-commit components
         if multi_count > 0:
@@ -1931,7 +1931,7 @@ class StackedPR:
 
                     stack_name = f"pyspr/stack/{self.config.repo.github_branch}/component-{i+1}"
                     print(f"\n  Stack branch: {stack_name}")
-                    print(f"\n  ⏳ Cherry-picking commits onto stack branch...")
+                    print("\n  ⏳ Cherry-picking commits onto stack branch...")
 
                     if self._create_stack_branch(component, stack_name):
                         multi_commit_stacks.append((stack_name, component))
@@ -2034,18 +2034,18 @@ class StackedPR:
 
         # Summary
         print_header("Summary", use_emoji=True)
-        print(f"\n  ✅ Successfully created/updated:")
+        print("\n  ✅ Successfully created/updated:")
         print(f"     - {len(single_commit_branches)} independent PRs")
         print(f"     - {len(multi_commit_stacks)} multi-commit stacks")
         
         if orphan_count > 0:
-            print(f"\n  ⚠️  Issues encountered:")
+            print("\n  ⚠️  Issues encountered:")
             print(f"     - {orphan_count} commits orphaned due to conflicts")
 
-        print(f"\n  💡 Next steps:")
+        print("\n  💡 Next steps:")
         if orphan_count > 0:
-            print(f"     - Resolve conflicts for orphaned commits")
-        print(f"     - Run 'pyspr update' to refresh the stack")
+            print("     - Resolve conflicts for orphaned commits")
+        print("     - Run 'pyspr update' to refresh the stack")
     
     def _create_breakup_branch(self, commit: Commit, branch_name: str) -> bool:
         """Create a branch for a single breakup commit. Returns True if successful."""
@@ -2222,7 +2222,7 @@ class StackedPR:
                             print(f"     ✅ Added reviewers: {', '.join(reviewers)}")
                         except Exception as e:
                             logger.error(f"  Failed to add reviewers: {e}")
-                            print(f"     ⚠️  Failed to add reviewers")
+                            print("     ⚠️  Failed to add reviewers")
                 else:
                     logger.error("  Cannot create PR - GitHub info not available")
-                    print(f"  ❌ Failed to create PR - GitHub info not available")
+                    print("  ❌ Failed to create PR - GitHub info not available")

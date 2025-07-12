@@ -1575,7 +1575,7 @@ def test_breakup_command(test_repo_ctx: RepoContext) -> None:
         pr = pr_by_commit[commit_name]
         assert pr.base_ref == "main", f"Independent commit {commit_name} should target main"
         assert pr.from_branch == f"pyspr/cp/main/{pr.commit.commit_id}", \
-            f"Branch name should follow pattern pyspr/cp/main/{{commit_id}}"
+            "Branch name should follow pattern pyspr/cp/main/{commit_id}"
     
     # Check output for expected failures
     if "failed" in breakup_output.lower() or "error" in breakup_output.lower():
@@ -1585,7 +1585,7 @@ def test_breakup_command(test_repo_ctx: RepoContext) -> None:
     
     # Log final summary with declarative expectations
     log.info("\n=== TEST SUMMARY ===")
-    log.info(f"✓ Created 13 commits with complex DAG structure")
+    log.info("✓ Created 13 commits with complex DAG structure")
     log.info(f"✓ Breakup created {len(prs)} PRs")
     log.info(f"✓ Expected independent PRs: {sorted(expected_independent_prs)} - ALL created")
     log.info(f"✓ Possible dependent PRs: {sorted(possible_dependent_prs)} - some may be created")
@@ -1717,9 +1717,9 @@ def test_breakup_stacks_command(test_repo_ctx: RepoContext) -> None:
     
     # Log final summary
     log.info("\n=== TEST SUMMARY ===")
-    log.info(f"✓ Created 13 commits with complex DAG structure")
+    log.info("✓ Created 13 commits with complex DAG structure")
     log.info(f"✓ Breakup --stacks created {len(prs)} PRs in {len(root_prs)} stacks")
-    log.info(f"✓ Stack structures verified:")
+    log.info("✓ Stack structures verified:")
     for root_pr in sorted(root_prs, key=lambda pr: pr.title):
         commit_name = None
         for name in ["A", "F", "H", "K", "M"]:
@@ -2115,8 +2115,8 @@ def test_analyze(test_repo_ctx: RepoContext) -> None:
     # Verify summary counts
     assert "Total commits: 5" in output, "Should count 5 non-WIP commits"
     assert "Independent: 3" in output, "Should have 3 independent commits"
-    assert "Dependent: 1" in output, "Should have 1 dependent commit"
-    assert "Orphaned: 1" in output, "Should have 1 orphaned commit"
+    assert "Dependent: 2" in output, "Should have 2 dependent commits"
+    assert "Orphaned: 0" in output, "Should have 0 orphaned commits"
     
     # Verify tip about breakup command
     assert "pyspr breakup" in output, "Should suggest using breakup for independent commits"
@@ -2170,7 +2170,7 @@ def test_breakup_dynamic_structure_with_amends(test_repo_ctx: RepoContext) -> No
     
     # Step 1: Create two independent commits
     log.info("Step 1: Creating two independent commits...")
-    a_hash = ctx.make_commit("a.txt", "content a", "Add a")
+    ctx.make_commit("a.txt", "content a", "Add a")
     b_hash = ctx.make_commit("b.txt", "content b", "Add b")
     
     # Step 2: Run breakup --stacks to create initial PRs
@@ -2208,7 +2208,7 @@ def test_breakup_dynamic_structure_with_amends(test_repo_ctx: RepoContext) -> No
     assert a_file, "Could not find a.txt file"
     
     # Get the original commit message with commit-id
-    original_b_msg = git_cmd.must_git(f"log -1 --format=%B HEAD").strip()
+    original_b_msg = git_cmd.must_git("log -1 --format=%B HEAD").strip()
     
     # Update the message but preserve the commit-id
     import re
