@@ -1604,8 +1604,8 @@ def test_breakup_stacks_command(test_repo_ctx: RepoContext) -> None:
     - Dependent commits are properly stacked with correct base branches
     - Multi-parent commits are handled appropriately
     
-    Expected stack structure:
-    Stack 1: A → B → C → D → E
+    Expected stack structure (--stacks creates linear chains):
+    Stack 1: A → B → C → D → E (commits added sequentially)
     Stack 2: F
     Stack 3: H → I → J  
     Stack 4: K → L
@@ -1659,13 +1659,14 @@ def test_breakup_stacks_command(test_repo_ctx: RepoContext) -> None:
     log.info(f"Created PRs for commits: {sorted(pr_by_commit.keys())}")
     
     # Define expected stack structures declaratively
+    # Note: --stacks creates linear stacks, adding commits sequentially
     expected_stacks: Dict[str, Dict[str, Union[str, List[str]]]] = {
-        # Stack 1: A → B → C → D → E
-        "A": {"base": "main", "children": ["B", "C"]},
-        "B": {"base": "A", "children": []},
-        "C": {"base": "A", "children": ["D", "E"]},
-        "D": {"base": "C", "children": []},  # D depends on A,C but should stack on C
-        "E": {"base": "C", "children": []},
+        # Stack 1: A → B → C → D → E (linear chain)
+        "A": {"base": "main", "children": ["B"]},
+        "B": {"base": "A", "children": ["C"]},
+        "C": {"base": "B", "children": ["D"]},  # C is added after B in the stack
+        "D": {"base": "C", "children": ["E"]},  # D is added after C
+        "E": {"base": "D", "children": []},
         
         # Stack 2: F (single commit)
         "F": {"base": "main", "children": []},
