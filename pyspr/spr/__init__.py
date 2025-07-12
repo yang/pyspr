@@ -1026,14 +1026,15 @@ class StackedPR:
                 
                 if existing_pr:
                     logger.info(f"  PR #{existing_pr.number} already exists for {branch}")
-                    # Update the PR if needed
-                    if existing_pr.base_ref != base_branch:
-                        if self.pretend:
+                    # Always update the PR to ensure title and body are current
+                    if self.pretend:
+                        logger.info(f"[PRETEND] Would update PR #{existing_pr.number}")
+                        if existing_pr.base_ref != base_branch:
                             logger.info(f"[PRETEND] Would update PR #{existing_pr.number} base from {existing_pr.base_ref} to {base_branch}")
-                        else:
-                            self.github.update_pull_request(ctx, self.git_cmd, [existing_pr], 
-                                                          existing_pr, commit, None)
-                            logger.info(f"  Updated PR #{existing_pr.number}")
+                    else:
+                        self.github.update_pull_request(ctx, self.git_cmd, [existing_pr], 
+                                                      existing_pr, commit, None)
+                        logger.info(f"  Updated PR #{existing_pr.number}")
                     created_prs.append(existing_pr)
                 else:
                     # Create new PR

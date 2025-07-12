@@ -1846,11 +1846,12 @@ def test_breakup_with_existing_prs(test_repo_ctx: RepoContext) -> None:
     all_pyspr_prs.sort(key=lambda pr: pr.number)
     
     # Verify we have the expected PRs
-    # Find PR for first commit
-    pr_first = next((pr for pr in all_pyspr_prs if "First commit" in pr.title), None)
-    assert pr_first is not None, "Should find PR for first commit"
+    # Find PR for first commit - it should have the updated title
+    pr_first = next((pr for pr in all_pyspr_prs if "First commit - updated" in pr.title), None)
+    assert pr_first is not None, "Should find PR for first commit with updated title"
     assert pr_first.number in initial_pr_numbers, "First commit PR should be from initial PRs"
-    log.info(f"First commit PR #{pr_first.number} was correctly reused with branch {pr_first.from_branch}")
+    assert "First commit - updated" in pr_first.title, f"PR title should be updated to match new commit message, got: {pr_first.title}"
+    log.info(f"First commit PR #{pr_first.number} was correctly reused with updated title: {pr_first.title}")
     
     # Find PR for second commit
     pr_second = next((pr for pr in all_pyspr_prs if "Second commit" in pr.title), None)
