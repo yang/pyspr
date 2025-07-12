@@ -1,8 +1,15 @@
 #!/bin/bash
 
 # Pre-push hook to run tests before pushing
+# Note: Tests take ~7-10 minutes to complete
 
-echo "Running tests before push..."
+echo "================================================================"
+echo "Pre-push hook: Running test suite"
+echo "================================================================"
+echo "⏱️  Tests take approximately 7-10 minutes to complete."
+echo "   To skip tests, use: git push --no-verify"
+echo "================================================================"
+echo ""
 
 # Run tests using run_tests.sh
 ./run_tests.sh
