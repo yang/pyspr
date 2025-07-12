@@ -1700,9 +1700,13 @@ def test_breakup_stacks_command(test_repo_ctx: RepoContext) -> None:
                 assert isinstance(expected_base, str), f"Expected base should be a string, got {type(expected_base)}"
                 parent_pr = pr_by_commit.get(expected_base)
                 assert parent_pr is not None, f"Parent commit {expected_base} should have a PR"
-                expected_base_branch = f"pyspr/cp/main/{parent_pr.commit.commit_id}"
-                assert pr.base_ref == expected_base_branch, \
-                    f"Commit {commit_name} should target {expected_base_branch}, got {pr.base_ref}"
+                # Check that it targets a pyspr branch (not the exact commit ID which varies)
+                assert pr.base_ref is not None, f"Commit {commit_name} should have a base_ref"
+                assert pr.base_ref.startswith("pyspr/cp/main/"), \
+                    f"Commit {commit_name} should target a pyspr/cp/main/* branch, got {pr.base_ref}"
+                # Also verify it's the same as parent's from_branch
+                assert pr.base_ref == parent_pr.from_branch, \
+                    f"Commit {commit_name} should target parent {expected_base}'s branch {parent_pr.from_branch}, got {pr.base_ref}"
     
     # Verify G is likely not in the PRs (orphan)
     if "G" not in pr_by_commit:
