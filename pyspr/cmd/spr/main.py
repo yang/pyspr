@@ -243,6 +243,7 @@ def setup_git(directory: Optional[str] = None) -> Tuple[Config, RealGit, GitHubC
     help="Update a specified number of pull requests from the bottom of the stack",
 )
 @click.option("--no-rebase", "-nr", is_flag=True, help="Disable rebasing")
+@click.option("--no-verify", "-nv", is_flag=True, help="Use push --no--verify to skip pre-push hooks")
 @click.option(
     "--label", "-l", multiple=True, help="Add the specified label to new pull requests"
 )
@@ -264,6 +265,7 @@ def update(
     reviewer: List[str],
     count: Optional[int],
     no_rebase: bool,
+    no_verify: bool,
     label: List[str],
     verbose: int,
     pretend: bool,
@@ -280,6 +282,8 @@ def update(
         with managed_git_state(git_cmd):
             if no_rebase:
                 config.user.no_rebase = True
+            if no_verify:
+                config.tool.no_verify = True
             stackedpr = StackedPR(config, github, git_cmd)
             stackedpr.pretend = pretend  # Set pretend mode
             stackedpr.update_pull_requests(
@@ -382,6 +386,7 @@ def merge(
 @click.option(
     "--no-rebase", "-nr", is_flag=True, help="Disable rebasing on latest upstream"
 )
+@click.option("--no-verify", "-nv", is_flag=True, help="Use push --no--verify to skip pre-push hooks")
 @click.option(
     "--reviewer",
     "-r",
@@ -413,6 +418,7 @@ def breakup(
     verbose: int,
     pretend: bool,
     no_rebase: bool,
+    no_verify: bool,
     reviewer: List[str],
     count: Optional[int],
     update_only_these_ids: Optional[str],
@@ -433,6 +439,8 @@ def breakup(
     try:
         if no_rebase:
             config.user.no_rebase = True
+        if no_verify:
+            config.tool.no_verify = True
         stackedpr = StackedPR(config, github, git_cmd)
         stackedpr.pretend = pretend  # Set pretend mode
         

@@ -310,7 +310,7 @@ class StackedPR:
                         with concurrent.futures.ThreadPoolExecutor(max_workers=self.concurrency) as executor:
                             # Type the futures properly - must_git returns str
                             futures: Sequence[Future[str]] = [
-                                executor.submit(self.git_cmd.must_git, f"push --force {remote} {ref_name}")
+                                executor.submit(self.git_cmd.must_git, f"push --force {self._push_flags()} {remote} {ref_name}")
                                 for ref_name in ref_names
                             ]
                             concurrent.futures.wait(futures)
@@ -324,12 +324,15 @@ class StackedPR:
                     else:
                         # Sequential push
                         for ref_name in ref_names:
-                            self.git_cmd.must_git(f"push --force {remote} {ref_name}")
+                            self.git_cmd.must_git(f"push --force {self._push_flags()} {remote} {ref_name}")
                 else:
-                    cmd = f"push --force --atomic {remote} " + " ".join(ref_names)
+                    cmd = f"push --force {self._push_flags()} --atomic {remote} " + " ".join(ref_names)
                     self.git_cmd.must_git(cmd)
                 end_time = time.time()
                 logger.debug(f"Push operation took {end_time - start_time:.2f} seconds")
+
+    def _push_flags(self):
+        return '--no-verify' if self.config.tool.no_verify else ''
 
     def update_pull_requests_with_existing(self, ctx: StackedPRContextProtocol, 
                                           reviewers: Optional[List[str]] = None,
@@ -957,7 +960,7 @@ class StackedPR:
                 for i in range(0, len(ref_names), batch_size):
                     batch = ref_names[i:i + batch_size]
                     batch_refs = [ref for _, ref in batch]
-                    cmd = f"push --force {remote} " + " ".join(batch_refs)
+                    cmd = f"push --force {self._push_flags()} {remote} " + " ".join(batch_refs)
                     
                     try:
                         self.git_cmd.must_git(cmd)
@@ -970,7 +973,7 @@ class StackedPR:
                         logger.warning(f"Batch push failed, trying individually: {str(e)}")
                         for branch, ref in batch:
                             try:
-                                self.git_cmd.must_git(f"push --force {remote} {ref}")
+                                self.git_cmd.must_git(f"push --force {self._push_flags()} {remote} {ref}")
                                 successfully_pushed.append(branch)
                                 logger.info(f"  ✓ Pushed {branch}")
                             except Exception as individual_e:
@@ -2161,7 +2164,7 @@ class StackedPR:
         for i in range(0, len(branches), batch_size):
             batch = branches[i:i + batch_size]
             refs = [f"{branch}:refs/heads/{branch}" for branch in batch]
-            cmd = f"push --force {remote} " + " ".join(refs)
+            cmd = f"push --force {self._push_flags()} {remote} " + " ".join(refs)
             
             try:
                 self.git_cmd.must_git(cmd)

@@ -44,6 +44,8 @@ class ToolConfig(BaseModel):
     concurrency: int = 0
     pretend: bool = False
 
+    no_verify: bool = False  # Whether to skip pre-push hooks
+
     class Config:
         """Pydantic config."""
         extra = "allow"  # Allow extra fields
