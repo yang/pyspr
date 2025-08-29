@@ -734,10 +734,11 @@ class StackedPR:
             pr.merged = True
             print(str(pr))
 
-    def breakup_pull_requests(self, ctx: StackedPRContextProtocol, reviewers: Optional[List[str]] = None, count: Optional[int] = None, commit_ids: Optional[List[str]] = None, stacks: bool = False, stack_mode: str = 'components') -> None:
+    def breakup_pull_requests(self, ctx: StackedPRContextProtocol, reviewers: Optional[List[str]] = None, count: Optional[int] = None, commit_ids: Optional[List[str]] = None, stacks: bool = False, stack_mode: str = 'components', force: bool = False) -> None:
         """Break up current commit stack into independent branches/PRs.
         
         If stacks=True, creates multiple PR stacks based on commit dependencies.
+        If force=True, always push branches even if content hasn't changed.
         """
         from ..pretty import print_header
         
@@ -785,9 +786,9 @@ class StackedPR:
         # If stacks mode is enabled, analyze dependencies and create multiple PR stacks
         if stacks:
             if stack_mode == 'single_stack':
-                return self._breakup_into_single_stack(ctx, non_wip_commits, reviewers)
+                return self._breakup_into_single_stack(ctx, non_wip_commits, reviewers, force=force)
             else:
-                return self._breakup_into_stacks(ctx, non_wip_commits, reviewers)
+                return self._breakup_into_stacks(ctx, non_wip_commits, reviewers, force=force)
         
         # Get current branch to restore at the end
         current_branch = self.git_cmd.must_git("rev-parse --abbrev-ref HEAD").strip()
@@ -867,40 +868,48 @@ class StackedPR:
                     
                     # Compare trees - but also check if rebasing the old commit would produce the same result
                     if branch_exists:
-                        # Get tree of the newly cherry-picked commit
-                        new_tree = self.git_cmd.must_git(f"rev-parse {new_commit_hash}^{{tree}}").strip()
-                        
-                        # First check if trees are identical (fast path)
-                        existing_tree = self.git_cmd.must_git(f"rev-parse {existing_hash}^{{tree}}").strip()
-                        if existing_tree == new_tree:
-                            # Content is identical, keep existing commit
-                            logger.info(f"  Branch {branch_name} already up to date (same content)")
+                        if force:
+                            # Force flag set - always update the branch
+                            if self.pretend:
+                                logger.info(f"[PRETEND] Would force update branch {branch_name} from {existing_hash[:8] if existing_hash else 'unknown'} to {new_commit_hash[:8]}")
+                            else:
+                                self.git_cmd.must_git(f"branch -f {branch_name} {new_commit_hash}")
+                                logger.info(f"  Force updated branch {branch_name}")
                         else:
-                            # Trees differ, but the changes might still be the same
-                            # Use merge-tree to see what tree we'd get if we cherry-picked the old commit onto the new base
-                            try:
-                                # merge-tree simulates merging the commit onto the base
-                                result = self.git_cmd.must_git(f"merge-tree --write-tree {remote}/{base_branch} {existing_hash}")
-                                rebased_tree = result.strip().split('\n')[0]  # First line is the tree hash
-                                
-                                if rebased_tree == new_tree:
-                                    # Would produce the same result - no need to update
-                                    logger.info(f"  Branch {branch_name} already up to date (same changes)")
-                                else:
-                                    # Actually different changes
+                            # Get tree of the newly cherry-picked commit
+                            new_tree = self.git_cmd.must_git(f"rev-parse {new_commit_hash}^{{tree}}").strip()
+                            
+                            # First check if trees are identical (fast path)
+                            existing_tree = self.git_cmd.must_git(f"rev-parse {existing_hash}^{{tree}}").strip()
+                            if existing_tree == new_tree:
+                                # Content is identical, keep existing commit
+                                logger.info(f"  Branch {branch_name} already up to date (same content)")
+                            else:
+                                # Trees differ, but the changes might still be the same
+                                # Use merge-tree to see what tree we'd get if we cherry-picked the old commit onto the new base
+                                try:
+                                    # merge-tree simulates merging the commit onto the base
+                                    result = self.git_cmd.must_git(f"merge-tree --write-tree {remote}/{base_branch} {existing_hash}")
+                                    rebased_tree = result.strip().split('\n')[0]  # First line is the tree hash
+                                    
+                                    if rebased_tree == new_tree:
+                                        # Would produce the same result - no need to update
+                                        logger.info(f"  Branch {branch_name} already up to date (same changes)")
+                                    else:
+                                        # Actually different changes
+                                        if self.pretend:
+                                            logger.info(f"[PRETEND] Would update branch {branch_name} from {existing_hash[:8] if existing_hash else 'unknown'} to {new_commit_hash[:8]}")
+                                        else:
+                                            self.git_cmd.must_git(f"branch -f {branch_name} {new_commit_hash}")
+                                            logger.info(f"  Updated branch {branch_name}")
+                                except Exception as e:
+                                    # If merge-tree fails, fall back to updating the branch
+                                    logger.debug(f"merge-tree failed: {e}, updating branch")
                                     if self.pretend:
                                         logger.info(f"[PRETEND] Would update branch {branch_name} from {existing_hash[:8] if existing_hash else 'unknown'} to {new_commit_hash[:8]}")
                                     else:
                                         self.git_cmd.must_git(f"branch -f {branch_name} {new_commit_hash}")
                                         logger.info(f"  Updated branch {branch_name}")
-                            except Exception as e:
-                                # If merge-tree fails, fall back to updating the branch
-                                logger.debug(f"merge-tree failed: {e}, updating branch")
-                                if self.pretend:
-                                    logger.info(f"[PRETEND] Would update branch {branch_name} from {existing_hash[:8] if existing_hash else 'unknown'} to {new_commit_hash[:8]}")
-                                else:
-                                    self.git_cmd.must_git(f"branch -f {branch_name} {new_commit_hash}")
-                                    logger.info(f"  Updated branch {branch_name}")
                     else:
                         if self.pretend:
                             logger.info(f"[PRETEND] Would create branch {branch_name} at {new_commit_hash[:8]}")
@@ -1666,7 +1675,7 @@ class StackedPR:
         
         return stack, independents
     
-    def _breakup_into_single_stack(self, ctx: StackedPRContextProtocol, commits: List[Commit], reviewers: Optional[List[str]] = None) -> None:
+    def _breakup_into_single_stack(self, ctx: StackedPRContextProtocol, commits: List[Commit], reviewers: Optional[List[str]] = None, force: bool = False) -> None:
         """Break up commits into a single stack plus independents.
         
         Uses the Single Stack algorithm: removes independents and keeps the rest as one stack.
@@ -1846,7 +1855,7 @@ class StackedPR:
             indent = prefix + ("  " * i)
             print(f"{indent}- {commit.commit_hash[:8]} {commit.subject}")
     
-    def _breakup_into_stacks(self, ctx: StackedPRContextProtocol, commits: List[Commit], reviewers: Optional[List[str]] = None) -> None:
+    def _breakup_into_stacks(self, ctx: StackedPRContextProtocol, commits: List[Commit], reviewers: Optional[List[str]] = None, force: bool = False) -> None:
         """Break up commits into multiple PR stacks based on dependencies.
         
         Args:

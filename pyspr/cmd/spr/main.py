@@ -411,6 +411,12 @@ def merge(
 )
 @click.option('--single-stack', is_flag=True,
               help="Create a single stack with independents removed")
+@click.option(
+    "-f",
+    "--force",
+    is_flag=True,
+    help="Force push branches even if content hasn't changed",
+)
 @click.pass_context
 def breakup(
     ctx: Context,
@@ -424,6 +430,7 @@ def breakup(
     update_only_these_ids: Optional[str],
     stacks: bool,
     single_stack: bool,
+    force: bool,
 ) -> None:
     """Breakup command."""
     from ... import setup_logging
@@ -457,7 +464,7 @@ def breakup(
         else:
             mode = 'stacks'  # default
         
-        stackedpr.breakup_pull_requests(ctx, reviewer if reviewer else None, count, commit_ids, stacks or single_stack, mode)
+        stackedpr.breakup_pull_requests(ctx, reviewer if reviewer else None, count, commit_ids, stacks or single_stack, mode, force=force)
     except Exception as e:
         logger.error(f"Error during breakup: {e}")
         restore_git_state(git_cmd, git_state)
