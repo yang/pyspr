@@ -245,16 +245,33 @@ class PyGithubProtocol(Protocol):
         ...
 
 def find_github_token() -> Optional[str]:
-    """Find GitHub token from env var, gh CLI config, or token file."""
+    """Find GitHub token from env var, gh CLI, gh config file, or token file."""
     import yaml
     from pathlib import Path
+    import subprocess
 
     # First try environment variable
     token = os.environ.get("GITHUB_TOKEN")
     if token:
         return token
 
-    # Then try gh CLI config at ~/.config/gh/hosts.yml
+    # Try getting token directly from gh CLI (handles keyring storage)
+    try:
+        result = subprocess.run(
+            ["gh", "auth", "token"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0 and result.stdout:
+            token = result.stdout.strip()
+            if token:
+                logger.debug("Got token from gh CLI")
+                return token
+    except (subprocess.SubprocessError, FileNotFoundError) as e:
+        logger.debug(f"Could not get token from gh CLI: {e}")
+
+    # Then try gh CLI config at ~/.config/gh/hosts.yml (legacy location)
     try:
         gh_config_path = Path.home() / ".config" / "gh" / "hosts.yml"
         if gh_config_path.exists():
