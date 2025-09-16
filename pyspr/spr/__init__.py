@@ -319,20 +319,41 @@ class StackedPR:
                                 try:
                                     future.result()  # This will raise any exceptions from the thread
                                 except Exception as e:
+                                    if self._is_merge_queue_error(e) and self.config.user.best_effort:
+                                        logger.warning(f"Skipping push due to merge queue (best_effort mode): {e}")
+                                        continue
                                     logger.error(f"Push failed: {e}")
                                     raise
                     else:
                         # Sequential push
                         for ref_name in ref_names:
-                            self.git_cmd.must_git(f"push --force {self._push_flags()} {remote} {ref_name}")
+                            try:
+                                self.git_cmd.must_git(f"push --force {self._push_flags()} {remote} {ref_name}")
+                            except Exception as e:
+                                if self._is_merge_queue_error(e) and self.config.user.best_effort:
+                                    logger.warning(f"Skipping push due to merge queue (best_effort mode): {e}")
+                                    continue
+                                raise
                 else:
-                    cmd = f"push --force {self._push_flags()} --atomic {remote} " + " ".join(ref_names)
-                    self.git_cmd.must_git(cmd)
+                    try:
+                        cmd = f"push --force {self._push_flags()} --atomic {remote} " + " ".join(ref_names)
+                        self.git_cmd.must_git(cmd)
+                    except Exception as e:
+                        if self._is_merge_queue_error(e) and self.config.user.best_effort:
+                            logger.warning(f"Skipping push due to merge queue (best_effort mode): {e}")
+                        else:
+                            raise
                 end_time = time.time()
                 logger.debug(f"Push operation took {end_time - start_time:.2f} seconds")
 
     def _push_flags(self):
         return '--no-verify' if self.config.tool.no_verify else ''
+
+    def _is_merge_queue_error(self, error: Exception) -> bool:
+        """Check if error is due to merge queue blocking the push."""
+        error_str = str(error)
+        return "has been added to a merge queue" in error_str or \
+               ("protected branch hook declined" in error_str and "merge queue" in error_str.lower())
 
     def update_pull_requests_with_existing(self, ctx: StackedPRContextProtocol, 
                                           reviewers: Optional[List[str]] = None,

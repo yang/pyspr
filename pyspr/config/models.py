@@ -34,6 +34,7 @@ class UserConfig(BaseModel):
     """User configuration."""
     no_rebase: bool = False
     log_git_commands: bool = False
+    best_effort: bool = False  # Skip pushes that fail due to merge queue
 
     class Config:
         """Pydantic config."""
