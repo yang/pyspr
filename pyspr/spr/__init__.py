@@ -132,7 +132,7 @@ class StackedPR:
             if not curr_pr.base_ref:
                 logger.error("  Error: Empty base branch")
                 raise Exception("Empty base branch")
-            match = re.match(r'pyspr/cp/[^/]+/([a-f0-9]{8})', curr_pr.base_ref)
+            match = re.match(r'pyspr/([a-f0-9]{8})', curr_pr.base_ref)
             if not match:
                 logger.debug(f"  Base is {curr_pr.base_ref} which doesn't match pattern, stopping")
                 break
@@ -503,7 +503,7 @@ class StackedPR:
                     branch_name = branch_name_from_commit(self.config, commit)
                     base_branch = self.config.repo.github_branch
                     if prev_commit:
-                        base_branch = f"pyspr/cp/{base_branch}/{prev_commit.commit_id}"
+                        base_branch = f"pyspr/{prev_commit.commit_id}"
                     logger.info(f"  Branch: {branch_name}")
                     logger.info(f"  Base branch: {base_branch}")
                     # Create dummy PR object for the update queue
@@ -609,7 +609,7 @@ class StackedPR:
                     continue
                 base_branch = self.config.repo.github_branch
                 if prev_commit:
-                    base_branch = f"pyspr/cp/{base_branch}/{prev_commit.commit_id}"
+                    base_branch = f"pyspr/{prev_commit.commit_id}"
                 logger.info(f"  PR #{pr.number}: Update base branch to {base_branch}")
 
         # Status
@@ -687,7 +687,7 @@ class StackedPR:
             next_pr = None
             for pr in github_info.pull_requests:
                 # If this PR targets current PR's branch
-                if pr.base_ref == f"pyspr/cp/{branch}/{current_pr.commit.commit_id}":
+                if pr.base_ref == f"pyspr/{current_pr.commit.commit_id}":
                     next_pr = pr
                     break
             current_pr = next_pr
@@ -1752,7 +1752,8 @@ class StackedPR:
         # Process the stack if it exists
         stack_branch = None
         if stack:
-            stack_name = f"pyspr/stack/{self.config.repo.github_branch}/single"
+            # Use the first commit's ID for the stack branch name
+            stack_name = f"pyspr/{stack[0].commit_id}"
             print(f"\nProcessing stack with {len(stack)} commits")
             print(f"  Stack branch: {stack_name}")
             
@@ -1962,7 +1963,8 @@ class StackedPR:
                     stack_num = len(multi_commit_stacks) + 1
                     print_header(f"Creating Multi-Commit Stack {stack_num} ({len(component)} commits)", use_emoji=True)
 
-                    stack_name = f"pyspr/stack/{self.config.repo.github_branch}/component-{i+1}"
+                    # Use the first commit's ID for the stack branch name
+                    stack_name = f"pyspr/{component[0].commit_id}"
                     print(f"\n  Stack branch: {stack_name}")
                     print("\n  ⏳ Cherry-picking commits onto stack branch...")
 
@@ -2000,8 +2002,7 @@ class StackedPR:
                     # that we should reuse - check all possible branch patterns
                     existing_prs: Dict[str, PullRequest] = {}
                     for commit in stack_commits:
-                        # Check for existing PR on any branch pattern
-                        # Since we unified to pyspr/cp/, both branch patterns should be the same
+                        # Check for existing PR
                         branch_name = branch_name_from_commit(self.config, commit)
                         pr = self.github.get_pull_request_for_branch(ctx, branch_name)
                         if pr and commit.commit_id is not None:

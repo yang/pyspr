@@ -78,9 +78,9 @@ def test_delete_insert(test_repo_ctx: RepoContext) -> None:
     
     # Verify PR chain
     assert pr1.base_ref == "main", "First PR should target main"
-    assert pr2.base_ref == f"pyspr/cp/main/{pr1.commit.commit_id}", "Second PR should target first PR's branch"
-    assert pr3.base_ref == f"pyspr/cp/main/{pr2.commit.commit_id}", "Third PR should target second PR's branch"
-    assert pr4.base_ref == f"pyspr/cp/main/{pr3.commit.commit_id}", "Fourth PR should target third PR's branch"
+    assert pr2.base_ref == f"pyspr/{pr1.commit.commit_id}", "Second PR should target first PR's branch"
+    assert pr3.base_ref == f"pyspr/{pr2.commit.commit_id}", "Third PR should target second PR's branch"
+    assert pr4.base_ref == f"pyspr/{pr3.commit.commit_id}", "Fourth PR should target third PR's branch"
     
     log.info(f"\nInitial PRs created: #{pr1_num}, #{pr2_num}, #{pr3_num}, #{pr4_num}")
     
@@ -138,9 +138,9 @@ def test_delete_insert(test_repo_ctx: RepoContext) -> None:
     
     # Verify new PR chain
     assert pr1_after.base_ref == "main", "First PR should target main"
-    assert pr3_after.base_ref == f"pyspr/cp/main/{pr1_after.commit.commit_id}", "Third PR should now target first PR's branch"
-    assert pr35.base_ref == f"pyspr/cp/main/{pr3_after.commit.commit_id}", "New PR should target third PR's branch"
-    assert pr4_after.base_ref == f"pyspr/cp/main/{pr35.commit.commit_id}", "Fourth PR should target new PR's branch"
+    assert pr3_after.base_ref == f"pyspr/{pr1_after.commit.commit_id}", "Third PR should now target first PR's branch"
+    assert pr35.base_ref == f"pyspr/{pr3_after.commit.commit_id}", "New PR should target third PR's branch"
+    assert pr4_after.base_ref == f"pyspr/{pr35.commit.commit_id}", "Fourth PR should target new PR's branch"
     
     # Verify PR order and proper chain connectivity
     current_shas: Dict[str, str] = {
@@ -270,7 +270,7 @@ def test_wip_behavior(test_repo_ctx: RepoContext, caplog: pytest.LogCaptureFixtu
     # Check remaining structure
     pr1, pr2 = prs
     assert pr1.base_ref == "main", "First PR should target main"
-    assert pr2.base_ref is not None and pr2.base_ref.startswith("pyspr/cp/main/"), "Second PR should target first PR's branch"
+    assert pr2.base_ref is not None and pr2.base_ref.startswith("pyspr/"), "Second PR should target first PR's branch"
 
 
 @run_twice_in_mock_mode
@@ -317,7 +317,7 @@ def test_reviewer_functionality(test_repo_ctx: RepoContext) -> None:
             if info is None:
                 return []
             for pr in info.pull_requests:
-                if pr.from_branch and pr.from_branch.startswith('pyspr/cp/main/'):
+                if pr.from_branch and pr.from_branch.startswith('pyspr/'):
                     try:
                         # Look for our unique tag in the commit message
                         assert pr.commit is not None
@@ -521,9 +521,9 @@ def test_reorder(test_repo_ctx: RepoContext) -> None:
 
     # Verify PR chain
     assert pr1.base_ref == "main", "First PR should target main"
-    assert pr2.base_ref == f"pyspr/cp/main/{pr1.commit.commit_id}", "Second PR should target first PR's branch"
-    assert pr3.base_ref == f"pyspr/cp/main/{pr2.commit.commit_id}", "Third PR should target second PR's branch"
-    assert pr4.base_ref == f"pyspr/cp/main/{pr3.commit.commit_id}", "Fourth PR should target third PR's branch"
+    assert pr2.base_ref == f"pyspr/{pr1.commit.commit_id}", "Second PR should target first PR's branch"
+    assert pr3.base_ref == f"pyspr/{pr2.commit.commit_id}", "Third PR should target second PR's branch"
+    assert pr4.base_ref == f"pyspr/{pr3.commit.commit_id}", "Fourth PR should target third PR's branch"
 
     log.info(f"\nInitial PRs created: #{pr1_num}, #{pr2_num}, #{pr3_num}, #{pr4_num}")
 
@@ -581,9 +581,9 @@ def test_reorder(test_repo_ctx: RepoContext) -> None:
 
     # Verify new PR chain after reordering
     assert pr1_after.base_ref == "main", "First PR should target main"
-    assert pr2_after.base_ref == f"pyspr/cp/main/{pr1_after.commit.commit_id}", "Second PR should target first PR's branch"
-    assert pr4_after.base_ref == f"pyspr/cp/main/{pr2_after.commit.commit_id}", "Fourth PR should now target second PR's branch"
-    assert pr3_after.base_ref == f"pyspr/cp/main/{pr4_after.commit.commit_id}", "Third PR should now target fourth PR's branch"
+    assert pr2_after.base_ref == f"pyspr/{pr1_after.commit.commit_id}", "Second PR should target first PR's branch"
+    assert pr4_after.base_ref == f"pyspr/{pr2_after.commit.commit_id}", "Fourth PR should now target second PR's branch"
+    assert pr3_after.base_ref == f"pyspr/{pr4_after.commit.commit_id}", "Third PR should now target fourth PR's branch"
 
     # Log the final PR numbers in the new order
     pr_chain = f"#{pr1_after.number} -> #{pr2_after.number} -> #{pr4_after.number} -> #{pr3_after.number}"
@@ -678,7 +678,7 @@ def _run_merge_test(
     # Verify initial PR chain
     assert prs[0].base_ref == "main", f"Bottom PR should target main, got {prs[0].base_ref}"
     for i in range(1, len(prs)):
-        assert prs[i].base_ref == f"pyspr/cp/main/{prs[i-1].commit.commit_id}", \
+        assert prs[i].base_ref == f"pyspr/{prs[i-1].commit.commit_id}", \
             f"PR #{prs[i].number} should target PR #{prs[i-1].number}, got {prs[i].base_ref}"
 
     # Run merge for all or some PRs
@@ -897,8 +897,8 @@ def test_replace_commit(test_repo_ctx: RepoContext) -> None:
 
     # Verify PR stack
     assert pr1.base_ref == "main", "PR1 should target main"
-    assert pr2.base_ref == f"pyspr/cp/main/{pr1.commit.commit_id}", "PR2 should target PR1"
-    assert pr3.base_ref == f"pyspr/cp/main/{pr2.commit.commit_id}", "PR3 should target PR2"
+    assert pr2.base_ref == f"pyspr/{pr1.commit.commit_id}", "PR2 should target PR1"
+    assert pr3.base_ref == f"pyspr/{pr2.commit.commit_id}", "PR3 should target PR2"
 
     # 2. Replace commit B with new commit D
     log.info("\nReplacing commit B with new commit D...")
@@ -968,8 +968,8 @@ def test_replace_commit(test_repo_ctx: RepoContext) -> None:
     log.info(f"Final PR stack: #{pr1.number} <- #{pr_d.number} <- #{pr3.number}")
 
     assert pr1.base_ref == "main", "PR1 should target main"
-    assert pr_d.base_ref == f"pyspr/cp/main/{pr1.commit.commit_id}", "New PR should target PR1" 
-    assert pr3.base_ref == f"pyspr/cp/main/{pr_d.commit.commit_id}", "PR3 should target new PR"
+    assert pr_d.base_ref == f"pyspr/{pr1.commit.commit_id}", "New PR should target PR1" 
+    assert pr3.base_ref == f"pyspr/{pr_d.commit.commit_id}", "PR3 should target new PR"
 
 @run_twice_in_mock_mode
 def test_no_rebase_functionality(test_repo_ctx: RepoContext, caplog: pytest.LogCaptureFixture, capsys: pytest.CaptureFixture[str]) -> None:
@@ -1280,7 +1280,7 @@ def test_no_rebase_pr_stacking(test_repo_ctx: RepoContext) -> None:
     # Verify stack structure
     assert pr1_after is not None, f"PR #{pr1_number} should exist after update"
     assert pr1_after.base_ref == "main", f"PR1 should target main, got {pr1_after.base_ref}"
-    assert pr2.base_ref is not None and pr2.base_ref.startswith('pyspr/cp/main/'), f"PR2 should target PR1's branch, got {pr2.base_ref}"
+    assert pr2.base_ref is not None and pr2.base_ref.startswith('pyspr/'), f"PR2 should target PR1's branch, got {pr2.base_ref}"
     assert pr2.base_ref and pr1_after.commit.commit_id in pr2.base_ref, "PR2 should target PR1's branch"
     log.info(f"Verified stack structure: #{pr1_number} <- #{pr2.number}")
 
@@ -1381,7 +1381,7 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
         if info is None:
             return []
         for pr in info.pull_requests:
-            if pr.from_branch and pr.from_branch.startswith('pyspr/cp/main/'):
+            if pr.from_branch and pr.from_branch.startswith('pyspr/'):
                 try:
                     # Look for our unique tags in the commit message
                     assert pr.commit is not None
@@ -1423,12 +1423,12 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
     # Verify stack 1 connections
     assert pr1a.base_ref == "main", "PR1A should target main"
     assert pr1a.commit is not None, "PR1A commit should not be None"
-    assert pr1b.base_ref == f"pyspr/cp/main/{pr1a.commit.commit_id}", "PR1B should target PR1A"
+    assert pr1b.base_ref == f"pyspr/{pr1a.commit.commit_id}", "PR1B should target PR1A"
 
     # Verify stack 2 connections
     assert pr2a.base_ref == "main", "PR2A should target main" 
     assert pr2a.commit is not None, "PR2A commit should not be None"
-    assert pr2b.base_ref == f"pyspr/cp/main/{pr2a.commit.commit_id}", "PR2B should target PR2A"
+    assert pr2b.base_ref == f"pyspr/{pr2a.commit.commit_id}", "PR2B should target PR2A"
 
     log.info(f"Created stacks - Stack1: #{pr1a.number} <- #{pr1b.number}, Stack2: #{pr2a.number} <- #{pr2b.number}")
 
@@ -1460,7 +1460,7 @@ def test_stack_isolation(test_repo: Tuple[str, str, str, str]) -> None:
     assert pr2a.number in remaining_prs, f"PR2A #{pr2a.number} should still exist"
     assert pr2b.number in remaining_prs, f"PR2B #{pr2b.number} should still exist"
     assert remaining_prs[pr2a.number] == "main", f"PR2A should target main, got {remaining_prs[pr2a.number]}"
-    assert remaining_prs[pr2b.number] == f"pyspr/cp/main/{c2a_id}", f"PR2B should target PR2A, got {remaining_prs[pr2b.number]}"
+    assert remaining_prs[pr2b.number] == f"pyspr/{c2a_id}", f"PR2B should target PR2A, got {remaining_prs[pr2b.number]}"
 
 @run_twice_in_mock_mode
 def test_breakup_command(test_repo_ctx: RepoContext) -> None:
@@ -1515,7 +1515,7 @@ def test_breakup_command(test_repo_ctx: RepoContext) -> None:
     assert info is not None, "Should get GitHub info"
     
     # Filter PRs created by breakup command (pyspr branches)
-    prs = [pr for pr in info.pull_requests if pr.from_branch and pr.from_branch.startswith("pyspr/cp/main/")]
+    prs = [pr for pr in info.pull_requests if pr.from_branch and pr.from_branch.startswith("pyspr/")]
     log.info(f"Found {len(prs)} breakup PRs")
     
     # Extract which commits got PRs
@@ -1559,8 +1559,8 @@ def test_breakup_command(test_repo_ctx: RepoContext) -> None:
     # Verify PR properties - WITHOUT --stacks flag, all PRs should target main
     pr_by_commit = {}  # Map commit name to PR for easy lookup
     for pr in prs:
-        assert pr.from_branch and pr.from_branch.startswith("pyspr/cp/main/"), \
-            f"PR branch should start with pyspr/cp/main/, got {pr.from_branch}"
+        assert pr.from_branch and pr.from_branch.startswith("pyspr/"), \
+            f"PR branch should start with pyspr/, got {pr.from_branch}"
         assert pr.base_ref == "main", f"All breakup PRs (without --stacks) should target main, got {pr.base_ref} for {pr.title}"
         
         # Map commit to PR
@@ -1574,8 +1574,8 @@ def test_breakup_command(test_repo_ctx: RepoContext) -> None:
         assert commit_name in pr_by_commit, f"Expected PR for commit {commit_name}"
         pr = pr_by_commit[commit_name]
         assert pr.base_ref == "main", f"Independent commit {commit_name} should target main"
-        assert pr.from_branch == f"pyspr/cp/main/{pr.commit.commit_id}", \
-            "Branch name should follow pattern pyspr/cp/main/{commit_id}"
+        assert pr.from_branch == f"pyspr/{pr.commit.commit_id}", \
+            "Branch name should follow pattern pyspr/{commit_id}"
     
     # Check output for expected failures
     if "failed" in breakup_output.lower() or "error" in breakup_output.lower():
@@ -1645,7 +1645,7 @@ def test_breakup_stacks_command(test_repo_ctx: RepoContext) -> None:
     assert info is not None, "Should get GitHub info"
     
     # Filter PRs created by breakup command
-    prs = [pr for pr in info.pull_requests if pr.from_branch and pr.from_branch.startswith("pyspr/cp/")]
+    prs = [pr for pr in info.pull_requests if pr.from_branch and pr.from_branch.startswith("pyspr/")]
     log.info(f"Found {len(prs)} breakup PRs")
     
     # Build a map of commit to PR
@@ -1703,8 +1703,8 @@ def test_breakup_stacks_command(test_repo_ctx: RepoContext) -> None:
                 assert parent_pr is not None, f"Parent commit {expected_base} should have a PR"
                 # Check that it targets a pyspr branch (not the exact commit ID which varies)
                 assert pr.base_ref is not None, f"Commit {commit_name} should have a base_ref"
-                assert pr.base_ref.startswith("pyspr/cp/main/"), \
-                    f"Commit {commit_name} should target a pyspr/cp/main/* branch, got {pr.base_ref}"
+                assert pr.base_ref.startswith("pyspr/"), \
+                    f"Commit {commit_name} should target a pyspr/* branch, got {pr.base_ref}"
                 # Also verify it's the same as parent's from_branch
                 assert pr.base_ref == parent_pr.from_branch, \
                     f"Commit {commit_name} should target parent {expected_base}'s branch {parent_pr.from_branch}, got {pr.base_ref}"
@@ -1754,7 +1754,7 @@ def test_breakup_with_existing_prs(test_repo_ctx: RepoContext) -> None:
     # Get initial PRs
     info = ctx.github.get_info(None, ctx.git_cmd)
     assert info is not None, "Should get GitHub info"
-    initial_prs = [pr for pr in info.pull_requests if pr.from_branch and pr.from_branch.startswith("pyspr/cp/main/")]
+    initial_prs = [pr for pr in info.pull_requests if pr.from_branch and pr.from_branch.startswith("pyspr/")]
     initial_pr_count = len(initial_prs)
     assert initial_pr_count >= 2, f"Should create at least 2 PRs, found {initial_pr_count}"
     
@@ -1801,7 +1801,7 @@ def test_breakup_with_existing_prs(test_repo_ctx: RepoContext) -> None:
     # Filter to pyspr PRs for this test - check for test tag
     all_pyspr_prs: List[PullRequest] = []
     for pr in all_open_prs:
-        if pr.head.ref.startswith("pyspr/cp/main/"):
+        if pr.head.ref.startswith("pyspr/"):
             # Check if this PR belongs to our test by looking for test tag in title
             # (body might not always have the tag, but title always does)
             tag_to_find = f"test-tag:{ctx.tag}"
@@ -1885,12 +1885,12 @@ def test_breakup_pretend_mode(test_repo_ctx: RepoContext, capsys: pytest.Capture
     # Verify no actual PRs were created
     info = ctx.github.get_info(None, ctx.git_cmd)
     if info is not None:
-        prs = [pr for pr in info.pull_requests if pr.from_branch and pr.from_branch.startswith("pyspr/cp/main/")]
+        prs = [pr for pr in info.pull_requests if pr.from_branch and pr.from_branch.startswith("pyspr/")]
         assert len(prs) == 0, "Should not create actual PRs in pretend mode"
     
     # Verify no branches were created
     branches = run_cmd("git branch -a")
-    assert "pyspr/cp/" not in branches, "Should not create branches in pretend mode"
+    assert "pyspr/" not in branches, "Should not create branches in pretend mode"
 
 @run_twice_in_mock_mode
 def test_breakup_preserves_unchanged_commit_hashes(test_repo_ctx: RepoContext) -> None:
@@ -1908,7 +1908,7 @@ def test_breakup_preserves_unchanged_commit_hashes(test_repo_ctx: RepoContext) -
     # Get the branch name and hash for the second commit
     info = ctx.github.get_info(None, ctx.git_cmd)
     assert info is not None, "Should get GitHub info"
-    prs = [pr for pr in info.pull_requests if pr.from_branch and pr.from_branch.startswith("pyspr/cp/main/")]
+    prs = [pr for pr in info.pull_requests if pr.from_branch and pr.from_branch.startswith("pyspr/")]
     assert len(prs) == 2, f"Should have 2 PRs, found {len(prs)}"
     
     # Find the PR for the second commit
@@ -2021,7 +2021,7 @@ def test_breakup_pr_already_exists_error(test_repo_ctx: RepoContext) -> None:
     # Get the PR info
     info = ctx.github.get_info(None, ctx.git_cmd)
     assert info is not None
-    [pr for pr in info.pull_requests if pr.from_branch and pr.from_branch.startswith("pyspr/cp/")]
+    [pr for pr in info.pull_requests if pr.from_branch and pr.from_branch.startswith("pyspr/")]
     
     # We should have 0 breakup PRs in the regular PR list (they're not part of the stack)
     # But let's check via the repo directly
@@ -2029,7 +2029,7 @@ def test_breakup_pr_already_exists_error(test_repo_ctx: RepoContext) -> None:
     assert repo is not None
     
     all_prs = list(repo.get_pulls(state='open'))
-    initial_breakup_prs = [pr for pr in all_prs if pr.head.ref.startswith("pyspr/cp/")]
+    initial_breakup_prs = [pr for pr in all_prs if pr.head.ref.startswith("pyspr/")]
     initial_count = len(initial_breakup_prs)
     assert initial_count >= 1, f"Should have created at least 1 breakup PR, found {initial_count}"
     
@@ -2041,7 +2041,7 @@ def test_breakup_pr_already_exists_error(test_repo_ctx: RepoContext) -> None:
     
     # Check that we didn't create duplicate PRs
     all_prs_after = list(repo.get_pulls(state='open'))
-    final_breakup_prs = [pr for pr in all_prs_after if pr.head.ref.startswith("pyspr/cp/")]
+    final_breakup_prs = [pr for pr in all_prs_after if pr.head.ref.startswith("pyspr/")]
     final_count = len(final_breakup_prs)
     
     log.info(f"Final breakup PRs: {[(pr.number, pr.head.ref) for pr in final_breakup_prs]}")

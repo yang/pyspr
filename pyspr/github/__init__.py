@@ -396,8 +396,8 @@ class GitHubClient:
           }
         }
         """
-        # Match both spr/main/ID and pyspr/cp/main/ID patterns
-        spr_branch_pattern = r'^(?:spr|pyspr/cp)/[^/]+/([a-f0-9]{8})'
+        # Match pyspr/ID pattern (also support legacy spr pattern)
+        spr_branch_pattern = r'^(?:spr/[^/]+/|pyspr/)([a-f0-9]{8})'
         
         logger.info("> github fetch pull requests")
         
@@ -594,8 +594,7 @@ class GitHubClient:
         
         # Use breakup branch name if requested
         if use_breakup_branch:
-            remote_branch = self.config.repo.github_branch
-            branch_name = f"pyspr/cp/{remote_branch}/{commit.commit_id}"
+            branch_name = f"pyspr/{commit.commit_id}"
         else:
             branch_name = self.branch_name_from_commit(commit)
         
@@ -698,7 +697,7 @@ class GitHubClient:
         if commit:
             # Check if this is a breakup PR by looking at the branch name
             # BUT: if we have multiple PRs in the stack, we should show stack info regardless
-            is_breakup = bool(pr.from_branch and pr.from_branch.startswith('pyspr/cp/')) and len(prs) <= 1
+            is_breakup = bool(pr.from_branch and pr.from_branch.startswith('pyspr/')) and len(prs) <= 1
             body = self.format_body(commit, prs, is_breakup=is_breakup)
             logger.debug(f"Updating body for PR #{pr.number}:\n{body}")
             gh_pr.edit(body=body)
@@ -727,13 +726,8 @@ class GitHubClient:
             desired_base = None
             
             if prev_commit:
-                # If the current PR is a breakup PR, the previous PR in the stack is likely also a breakup PR
-                if pr.from_branch and pr.from_branch.startswith('pyspr/cp/'):
-                    # Use breakup branch pattern for consistency
-                    from ..git import breakup_branch_name_from_commit
-                    desired_base = breakup_branch_name_from_commit(self.config, prev_commit)
-                else:
-                    desired_base = self.branch_name_from_commit(prev_commit)
+                # All branches now use the same pattern
+                desired_base = self.branch_name_from_commit(prev_commit)
                 logger.debug(f"  Should target: {desired_base} (prev commit: {prev_commit.commit_hash[:8]})")
             else:
                 # Use github_branch_target if available, default to 'main'
@@ -850,10 +844,8 @@ class GitHubClient:
                 gh_pr.merge(merge_method='merge')
 
     def branch_name_from_commit(self, commit: Commit) -> str:
-        """Generate branch name from commit. Now unified to use pyspr/cp/ prefix."""
-        # Use github_branch if available, default to 'main'
-        remote_branch = self.config.repo.github_branch
-        return f"pyspr/cp/{remote_branch}/{commit.commit_id}"
+        """Generate branch name from commit. Uses pyspr/{commit_id} pattern."""
+        return f"pyspr/{commit.commit_id}"
         
     def format_stack_markdown(self, commit: Commit, stack: List[PullRequest]) -> str:
         """Format stack of PRs as markdown."""
