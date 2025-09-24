@@ -2242,8 +2242,8 @@ def test_breakup_dynamic_structure_with_amends(test_repo_ctx: RepoContext) -> No
     output2 = run_cmd("pyspr breakup --stacks -v")
     log.info(f"Second breakup output:\n{output2}")
     
-    # Should now recognize them as a multi-commit component
-    assert "multi-commit component" in output2.lower() or "component" in output2.lower()
+    # Should now recognize them as a multi-commit stack
+    assert "multi-commit stack" in output2.lower() or "stack" in output2.lower()
     
     # Get the PRs after second breakup
     prs_after = ctx.get_test_prs()
