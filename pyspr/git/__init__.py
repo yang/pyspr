@@ -287,7 +287,7 @@ class RealGit:
                     break
 
                 if first_detection:
-                    logger.debug(f"Detected index.lock, waiting for it to be released (NFS lag workaround)")
+                    logger.debug("Detected index.lock, waiting for it to be released (NFS lag workaround)")
                     first_detection = False
 
                 time.sleep(check_interval)
