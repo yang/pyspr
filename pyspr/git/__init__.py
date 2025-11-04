@@ -270,6 +270,8 @@ class RealGit:
 
         max_wait = self.config.tool.index_lock_max_wait
         check_interval = self.config.tool.index_lock_check_interval
+        stale_threshold = self.config.tool.index_lock_stale_threshold
+
         try:
             # Find the git directory
             repo = git.Repo(os.getcwd(), search_parent_directories=True)
@@ -279,11 +281,38 @@ class RealGit:
             start_time = time.time()
             first_detection = True
 
+            # Check if lock file exists and might be stale
+            if os.path.exists(index_lock_path):
+                try:
+                    # Get file modification time
+                    lock_mtime = os.path.getmtime(index_lock_path)
+                    lock_age = time.time() - lock_mtime
+
+                    # If lock is old, it's likely stale from NFS lag
+                    if lock_age > stale_threshold:
+                        logger.warning(f"Found stale index.lock (age: {lock_age:.1f}s), removing it")
+                        try:
+                            os.remove(index_lock_path)
+                            logger.info("Successfully removed stale index.lock")
+                            return
+                        except OSError as e:
+                            logger.debug(f"Failed to remove stale index.lock: {e}")
+                            # Continue with normal wait logic
+                except OSError:
+                    # Can't get mtime, continue with normal wait logic
+                    pass
+
             while os.path.exists(index_lock_path):
                 elapsed = time.time() - start_time
 
                 if elapsed > max_wait:
-                    logger.warning(f"index.lock still exists after {max_wait}s, proceeding anyway")
+                    # Try to remove it as a last resort
+                    logger.warning(f"index.lock still exists after {max_wait}s, attempting to remove it")
+                    try:
+                        os.remove(index_lock_path)
+                        logger.info("Successfully removed stuck index.lock")
+                    except OSError as e:
+                        logger.warning(f"Failed to remove index.lock: {e}, proceeding anyway")
                     break
 
                 if first_detection:
