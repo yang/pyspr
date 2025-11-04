@@ -5,6 +5,7 @@ import re
 import uuid
 import logging
 import time
+import shlex
 from typing import List, Optional, Tuple
 import git
 from git.exc import GitCommandError, InvalidGitRepositoryError
@@ -121,12 +122,12 @@ def get_local_commit_stack(config: PysprConfig, git_cmd: GitInterface) -> List[C
                         logging.warning(f"Failed to check git processes: {e}")
                     
                     git_cmd.must_git(f"checkout {cid}")
-                    
+
                     # Amend with ID
-                    # Use direct GitPython call to handle multiline messages properly
-                    repo = git.Repo(os.getcwd(), search_parent_directories=True)
-                    repo.git.commit("--amend", "-m", new_msg)
-                    
+                    # Use run_cmd to ensure index.lock waiting works
+                    # Quote the message properly for shell execution
+                    git_cmd.must_git(f"commit --amend -m {shlex.quote(new_msg)}")
+
                     # Get new hash
                     new_hash = git_cmd.must_git("rev-parse HEAD").strip()
                     
@@ -340,7 +341,6 @@ class RealGit:
                 repo = git.Repo(os.getcwd(), search_parent_directories=True)
                 git_cmd = repo.git
                 # Convert command to method call
-                import shlex
                 cmd_parts = shlex.split(cmd_str)
                 git_command = cmd_parts[0]
                 git_args = cmd_parts[1:]
