@@ -255,10 +255,58 @@ class RealGit:
         """Initialize with config."""
         self.config: PysprConfig = config
 
+    def _wait_for_index_lock(self) -> None:
+        """Wait for git index.lock to be released.
+
+        This handles NFS lag issues where index.lock might persist briefly
+        even after the git operation that created it has completed.
+
+        Uses config values for wait time and check interval.
+        """
+        # Check if waiting is enabled
+        if not self.config.tool.index_lock_wait_enabled:
+            return
+
+        max_wait = self.config.tool.index_lock_max_wait
+        check_interval = self.config.tool.index_lock_check_interval
+        try:
+            # Find the git directory
+            repo = git.Repo(os.getcwd(), search_parent_directories=True)
+            git_dir = repo.git_dir
+            index_lock_path = os.path.join(git_dir, 'index.lock')
+
+            start_time = time.time()
+            first_detection = True
+
+            while os.path.exists(index_lock_path):
+                elapsed = time.time() - start_time
+
+                if elapsed > max_wait:
+                    logger.warning(f"index.lock still exists after {max_wait}s, proceeding anyway")
+                    break
+
+                if first_detection:
+                    logger.debug(f"Detected index.lock, waiting for it to be released (NFS lag workaround)")
+                    first_detection = False
+
+                time.sleep(check_interval)
+
+            if not first_detection:
+                # We did wait for the lock
+                elapsed = time.time() - start_time
+                logger.debug(f"index.lock released after {elapsed:.2f}s")
+
+        except (InvalidGitRepositoryError, AttributeError):
+            # Not in a git repo or couldn't find git_dir, proceed without waiting
+            pass
+        except Exception as e:
+            # Log but don't fail - we want git commands to proceed
+            logger.debug(f"Error checking for index.lock: {e}")
+
     def run_cmd(self, command: str, output: Optional[str] = None) -> str:
         """Run git command."""
         cmd_str = command.strip()
-        
+
         # Check for no-rebase flag
         no_rebase = self.config.user.no_rebase
         if no_rebase:
@@ -271,6 +319,9 @@ class RealGit:
             # Pretend mode - just log
             logger.info(f"> git {cmd_str}")
             return ""
+
+        # Wait for index.lock to be released (NFS lag workaround)
+        self._wait_for_index_lock()
 
         # Log git commands at debug level
         logger.info(f"> git {cmd_str}")

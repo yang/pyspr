@@ -47,6 +47,11 @@ class ToolConfig(BaseModel):
 
     no_verify: bool = False  # Whether to skip pre-push hooks
 
+    # Git index.lock handling (for NFS lag issues)
+    index_lock_wait_enabled: bool = True  # Whether to wait for index.lock
+    index_lock_max_wait: float = 30.0  # Max seconds to wait for index.lock
+    index_lock_check_interval: float = 0.1  # How often to check for index.lock
+
     class Config:
         """Pydantic config."""
         extra = "allow"  # Allow extra fields
