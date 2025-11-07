@@ -104,23 +104,6 @@ def get_local_commit_stack(config: PysprConfig, git_cmd: GitInterface) -> List[C
                     new_msg = f"{full_msg}\n\ncommit-id:{new_id}"
                     
                     # Checkout commit
-                    # Debug: Check for git processes
-                    import subprocess
-                    try:
-                        ps_output = subprocess.run(['ps', 'aux'], capture_output=True, text=True).stdout
-                        git_processes = [line for line in ps_output.split('\n') if 'git' in line and 'grep' not in line and 'gitstatus' not in line and 'rsync' not in line]
-                        if git_processes:
-                            logging.debug(f"Active git processes before checkout {cid}:")
-                            for proc in git_processes:
-                                logging.debug(f"  {proc}")
-                        
-                        # Check for index.lock
-                        lock_path = os.path.join(os.getcwd(), '.git', 'index.lock')
-                        if os.path.exists(lock_path):
-                            logging.warning(f"index.lock already exists before checkout {cid}!")
-                    except Exception as e:
-                        logging.warning(f"Failed to check git processes: {e}")
-                    
                     git_cmd.must_git(f"checkout {cid}")
 
                     # Amend with ID
@@ -154,23 +137,6 @@ def get_local_commit_stack(config: PysprConfig, git_cmd: GitInterface) -> List[C
             return commits_new
         except Exception as e:
             # Clean up on error
-            # Debug: Check for git processes before cleanup checkout
-            import subprocess
-            try:
-                ps_output = subprocess.run(['ps', 'aux'], capture_output=True, text=True).stdout
-                git_processes = [line for line in ps_output.split('\n') if 'git' in line and 'grep' not in line and 'gitstatus' not in line and 'rsync' not in line]
-                if git_processes:
-                    logging.debug(f"Active git processes before cleanup checkout {curr_branch}:")
-                    for proc in git_processes:
-                        logging.debug(f"  {proc}")
-                
-                # Check for index.lock
-                lock_path = os.path.join(os.getcwd(), '.git', 'index.lock')
-                if os.path.exists(lock_path):
-                    logging.warning(f"index.lock already exists before cleanup checkout {curr_branch}!")
-            except Exception as debug_e:
-                logging.warning(f"Failed to check git processes: {debug_e}")
-            
             git_cmd.must_git(f"checkout {curr_branch}")
             git_cmd.must_git(f"reset --hard {original_head}")
             raise Exception(f"Failed to add commit IDs: {e}")
@@ -281,26 +247,31 @@ class RealGit:
             start_time = time.time()
             first_detection = True
 
+            logger.info(f"Checking {index_lock_path=}")
             # Check if lock file exists and might be stale
-            if os.path.exists(index_lock_path):
-                try:
-                    # Get file modification time
-                    lock_mtime = os.path.getmtime(index_lock_path)
-                    lock_age = time.time() - lock_mtime
+            start = time.time()
+            while time.time() - start < 0:
+                if os.path.exists(index_lock_path):
+                    try:
+                        # Get file modification time
+                        lock_mtime = os.path.getmtime(index_lock_path)
+                        lock_age = time.time() - lock_mtime
 
-                    # If lock is old, it's likely stale from NFS lag
-                    if lock_age > stale_threshold:
-                        logger.warning(f"Found stale index.lock (age: {lock_age:.1f}s), removing it")
-                        try:
-                            os.remove(index_lock_path)
-                            logger.info("Successfully removed stale index.lock")
-                            return
-                        except OSError as e:
-                            logger.debug(f"Failed to remove stale index.lock: {e}")
-                            # Continue with normal wait logic
-                except OSError:
-                    # Can't get mtime, continue with normal wait logic
-                    pass
+                        # If lock is old, it's likely stale from NFS lag
+                        if lock_age > stale_threshold:
+                            logger.warning(f"Found stale index.lock (age: {lock_age:.1f}s), removing it")
+                            try:
+                                os.remove(index_lock_path)
+                                logger.info("Successfully removed stale index.lock")
+                                return
+                            except OSError as e:
+                                logger.debug(f"Failed to remove stale index.lock: {e}")
+                                # Continue with normal wait logic
+                    except OSError:
+                        # Can't get mtime, continue with normal wait logic
+                        pass
+
+            logger.info(f"No {index_lock_path=}")
 
             while os.path.exists(index_lock_path):
                 elapsed = time.time() - start_time
@@ -351,6 +322,7 @@ class RealGit:
             return ""
 
         # Wait for index.lock to be released (NFS lag workaround)
+        logger.info(f"< git {cmd_str}")
         self._wait_for_index_lock()
 
         # Log git commands at debug level
@@ -358,13 +330,14 @@ class RealGit:
         
         # Check if this is a cherry-pick command without --no-gpg-sign
         is_cherry_pick = cmd_str.startswith("cherry-pick") and "--no-gpg-sign" not in cmd_str
-        max_retries = 3 if is_cherry_pick else 1
+        max_retries = 3
         
         if is_cherry_pick:
             logger.debug(f"Detected cherry-pick command, will retry up to {max_retries} times on GPG signing failure")
         
         last_exception = None
         for attempt in range(max_retries):
+            logger.info(f"Attempt {attempt=}")
             try:
                 # Use GitPython
                 repo = git.Repo(os.getcwd(), search_parent_directories=True)
@@ -379,9 +352,10 @@ class RealGit:
             except GitCommandError as e:
                 last_exception = e
                 # Check if this is a GPG signing failure
-                if is_cherry_pick and any(msg in str(e) for msg in [
+                if any(msg in str(e) for msg in [
+                    "Another git process",
                     "communication with agent failed",
-                    "Couldn't sign message", 
+                    "Couldn't sign message",
                     "failed to write commit object",
                     "Signing file"
                 ]):
