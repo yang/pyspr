@@ -404,169 +404,122 @@ class GitHubClient:
         # Build PR map keyed by commit ID, like Go version
         pull_request_map: Dict[str, PullRequest] = {}
             
-        try:
-            # Execute GraphQL query directly like Go version does
-            # Use github_repo_owner and github_repo_name if available
-            owner = self.config.repo.github_repo_owner
-            name = self.config.repo.github_repo_name
-            current_user = ensure(self.client.get_user()).login.lower()
-            search_query = f"author:{current_user} is:pr is:open repo:{owner}/{name} sort:updated-desc"
-            # Note: github_branch_target is used elsewhere in the code
-            
-            # Variables for GraphQL query
-            variables = {
-                "searchQuery": search_query
-            }
+        # Execute GraphQL query with retries
+        import time
+        max_retries = 3
+        retry_delay = 1.0  # seconds
 
-            # Single query (no pagination for now)
-            from typing import cast
-            # Access private requester - need cast since it's not part of the protocol
-            req = cast(GitHubRequester, getattr(self.client, '_Github__requester'))
-            
-            # Use protocol-defined response type
-            result: GraphQLResponseType = req.requestJsonAndCheck(
-                "POST",
-                "https://api.github.com/graphql", 
-                input={
-                    "query": query,
-                    "variables": variables
-                }
-            )
-            
-            # Handle response - it's always a tuple of (headers, data)
-            _headers, resp = result  # The response is always a tuple
-            
-            # Use Pydantic to parse and validate the response
-            graphql_resp = parse_graphql_response(resp)
-            
-            # Get PR nodes using the validated model
-            pr_nodes = graphql_resp.data.search.nodes
-            
-            logger.info(f"GraphQL returned {len(pr_nodes)} open PRs (newest first)")
+        # Use github_repo_owner and github_repo_name if available
+        owner = self.config.repo.github_repo_owner
+        name = self.config.repo.github_repo_name
+        current_user = ensure(self.client.get_user()).login.lower()
+        search_query = f"author:{current_user} is:pr is:open repo:{owner}/{name} sort:updated-desc"
+        # Note: github_branch_target is used elsewhere in the code
 
-            logger.debug("PRs returned by GraphQL:")
-            for pr in pr_nodes:
-                num = str(pr.number)
-                base = pr.baseRefName
-                head = pr.headRefName
-                logger.debug(f"  PR #{num}: base={base} head={head}")
-        
-            # Process PRs into map
-            for pr_data in pr_nodes:
-                    branch_match = re.match(spr_branch_pattern, pr_data.headRefName)
-                    if branch_match:
-                        logger.debug(f"Processing PR #{pr_data.number} with branch {pr_data.headRefName}")
-                        commit_id = branch_match.group(1)
-                        
-                        # Get commit info
-                        commit_nodes = pr_data.commits.nodes
-                        all_commits: List[Commit] = []  # Will be populated if there are commits 
-                        commit: Optional[Commit] = None
+        # Variables for GraphQL query
+        variables = {
+            "searchQuery": search_query
+        }
 
-                        if commit_nodes:
-                            last_commit_data = commit_nodes[0]
-                            last_commit = last_commit_data.commit
-                            commit_hash = last_commit.oid
-                            commit_msg = last_commit.messageBody
-                            # Try to get commit ID from message
-                            logger.debug(f"PR #{pr_data.number} last commit message:\n{commit_msg}")
-                            msg_commit_id = re.search(r'commit-id:([a-f0-9]{8})', commit_msg)
-                                
-                            headline = last_commit.messageHeadline
-                            commit = Commit.from_strings(commit_id, commit_hash, headline)
+        # Single query (no pagination for now)
+        from typing import cast
+        # Access private requester - need cast since it's not part of the protocol
+        req = cast(GitHubRequester, getattr(self.client, '_Github__requester'))
 
-                            # Process all commits
-                            for node in commit_nodes:
-                                c = node.commit
-                                c_msg = c.messageBody
-                                c_id_match = re.search(r'commit-id:([a-f0-9]{8})', c_msg)
-                                if c_id_match:
-                                    c_id = c_id_match.group(1)
-                                    c_oid = c.oid
-                                    c_headline = c.messageHeadline
-                                    all_commits.append(Commit.from_strings(c_id, c_oid, c_headline))
-                            
-                            # Get basic PR info from Pydantic model
-                            number = pr_data.number
-                            base_ref = pr_data.baseRefName
-                            title = pr_data.title
-                            body = pr_data.body
-                            
-                            in_queue = False  # Auto merge info not critical
-                            
-                            from_branch = pr_data.headRefName
+        for attempt in range(max_retries):
+            try:
+                # Use protocol-defined response type
+                result: GraphQLResponseType = req.requestJsonAndCheck(
+                    "POST",
+                    "https://api.github.com/graphql",
+                    input={
+                        "query": query,
+                        "variables": variables
+                    }
+                )
 
-                            # We know commit is initialized because we're in the commit_nodes block
-                            assert commit is not None
-                            pr = PullRequest(number, commit, all_commits,
-                                          base_ref=base_ref, from_branch=from_branch,
-                                          in_queue=in_queue, title=title, body=body)
-                                          
-                            # Add PR to map regardless of local commits to follow chain
-                            logger.debug(f"Adding PR #{number} to map with commit ID {commit_id}")
-                            pull_request_map[commit_id] = pr
-            
-        except Exception as e:
-            logger.error(f"GraphQL query failed: {e}")
-            logger.info("Falling back to REST API")
-            
-            # Fallback to REST API if GraphQL fails
-            current_user = ensure(self.client.get_user()).login
-            repo = ensure(self.repo)
-                
-            # Get PRs more efficiently by checking branch pattern first
-            open_prs = repo.get_pulls(state='open')
-            user_prs: List[GitHubPullRequestProtocol] = []
-            for pr in open_prs:
-                # Check if it's our user and matches spr branch pattern before adding
-                if pr.user and pr.user.login == current_user:
-                    if re.match(spr_branch_pattern, str(pr.head.ref)):
-                        user_prs.append(pr)
-            logger.info(f"Found {len(user_prs)} spr PRs by {current_user}")
-            
-            for pr in user_prs:
-                branch_match = re.match(spr_branch_pattern, str(pr.head.ref))
-                if branch_match:
-                    logger.debug(f"Processing PR #{pr.number} with branch {pr.head.ref}")
-                    commit_id = branch_match.group(1)
-                    commit_hash = pr.head.sha
-                    all_commits: List[Commit] = []
-                    try:
-                        commits_in_pr = pr.get_commits()
-                        if commits_in_pr:
-                            commits_list = list(commits_in_pr)
-                            if commits_list:
-                                last_commit = commits_list[-1]
-                                msg_commit_id = re.search(r'commit-id:([a-f0-9]{8})', str(last_commit.commit.message))
-                                if msg_commit_id:
-                                    commit_id = msg_commit_id.group(1)
-                                
-                                # Get all commit IDs
-                                for c in commits_list:
-                                    c_msg = str(c.commit.message)
+                # Handle response - it's always a tuple of (headers, data)
+                _headers, resp = result  # The response is always a tuple
+
+                # Use Pydantic to parse and validate the response
+                graphql_resp = parse_graphql_response(resp)
+
+                # Get PR nodes using the validated model
+                pr_nodes = graphql_resp.data.search.nodes
+
+                logger.info(f"GraphQL returned {len(pr_nodes)} open PRs (newest first)")
+
+                logger.debug("PRs returned by GraphQL:")
+                for pr in pr_nodes:
+                    num = str(pr.number)
+                    base = pr.baseRefName
+                    head = pr.headRefName
+                    logger.debug(f"  PR #{num}: base={base} head={head}")
+
+                # Process PRs into map
+                for pr_data in pr_nodes:
+                        branch_match = re.match(spr_branch_pattern, pr_data.headRefName)
+                        if branch_match:
+                            logger.debug(f"Processing PR #{pr_data.number} with branch {pr_data.headRefName}")
+                            commit_id = branch_match.group(1)
+
+                            # Get commit info
+                            commit_nodes = pr_data.commits.nodes
+                            all_commits: List[Commit] = []  # Will be populated if there are commits
+                            commit: Optional[Commit] = None
+
+                            if commit_nodes:
+                                last_commit_data = commit_nodes[0]
+                                last_commit = last_commit_data.commit
+                                commit_hash = last_commit.oid
+                                commit_msg = last_commit.messageBody
+                                logger.debug(f"PR #{pr_data.number} last commit message:\n{commit_msg}")
+
+                                headline = last_commit.messageHeadline
+                                commit = Commit.from_strings(commit_id, commit_hash, headline)
+
+                                # Process all commits
+                                for node in commit_nodes:
+                                    c = node.commit
+                                    c_msg = c.messageBody
                                     c_id_match = re.search(r'commit-id:([a-f0-9]{8})', c_msg)
                                     if c_id_match:
                                         c_id = c_id_match.group(1)
-                                        c_subject = c_msg.split('\n')[0]
-                                        all_commits.append(Commit.from_strings(c_id, c.sha, c_subject))
-                    except Exception as e:
-                        logger.error(f"Error getting commits for PR #{pr.number}: {e}")
-                        pass
+                                        c_oid = c.oid
+                                        c_headline = c.messageHeadline
+                                        all_commits.append(Commit.from_strings(c_id, c_oid, c_headline))
 
-                    commit = Commit.from_strings(commit_id, commit_hash, pr.title)
-                    try:
-                        in_queue = False
-                    except Exception:
-                        in_queue = False
-                        
-                    new_pr = PullRequest(pr.number, commit, all_commits,
-                                     base_ref=pr.base.ref, from_branch=pr.head.ref,
-                                     in_queue=in_queue,
-                                     title=pr.title, body=pr.body)
-                                     
-                    # Add PR to map regardless of local commits to follow chain
-                    logger.debug(f"Adding PR #{pr.number} to map with commit ID {commit_id}")
-                    pull_request_map[commit_id] = new_pr
+                                # Get basic PR info from Pydantic model
+                                number = pr_data.number
+                                base_ref = pr_data.baseRefName
+                                title = pr_data.title
+                                body = pr_data.body
+
+                                in_queue = False  # Auto merge info not critical
+
+                                from_branch = pr_data.headRefName
+
+                                # We know commit is initialized because we're in the commit_nodes block
+                                assert commit is not None
+                                pr = PullRequest(number, commit, all_commits,
+                                              base_ref=base_ref, from_branch=from_branch,
+                                              in_queue=in_queue, title=title, body=body)
+
+                                # Add PR to map regardless of local commits to follow chain
+                                logger.debug(f"Adding PR #{number} to map with commit ID {commit_id}")
+                                pull_request_map[commit_id] = pr
+
+                # Success - break out of retry loop
+                break
+
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"GraphQL query failed (attempt {attempt + 1}/{max_retries}): {e}")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    logger.error(f"GraphQL query failed after {max_retries} attempts: {e}")
+                    raise
 
         # Build PR stack like Go version
         pull_requests: List[PullRequest] = []
