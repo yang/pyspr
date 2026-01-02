@@ -28,7 +28,7 @@ rye run pre-commit install
 
 # Persist rye in PATH for the rest of the session
 if [ -n "$CLAUDE_ENV_FILE" ]; then
-  echo 'source "$HOME/.rye/env"' >> "$CLAUDE_ENV_FILE"
+  echo "export PATH=\"$HOME/.rye/shims:\$PATH\"" >> "$CLAUDE_ENV_FILE"
 fi
 
 echo "Setup complete!"
