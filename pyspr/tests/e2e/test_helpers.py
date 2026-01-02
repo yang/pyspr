@@ -226,12 +226,24 @@ def run_cmd(cmd: str, cwd: Optional[str] = None, check: bool = True,
     except Exception:
         pass
 
-    # Replace standalone pyspr command with rye run pyspr from project root
+    # Replace standalone pyspr command with venv or rye run pyspr from project root
     actual_cwd = cwd
     if cmd.startswith("pyspr ") or cmd == "pyspr":
         # Preserve the current SPR_USING_MOCK_GITHUB setting
         mock_setting = os.environ.get("SPR_USING_MOCK_GITHUB", "true")
-        cmd = f"SPR_USING_MOCK_GITHUB={mock_setting} rye run " + cmd
+
+        # Check if rye is available, otherwise use venv's pyspr directly
+        rye_available = subprocess.run(
+            ["which", "rye"], capture_output=True, text=True
+        ).returncode == 0
+
+        if rye_available:
+            cmd = f"SPR_USING_MOCK_GITHUB={mock_setting} rye run " + cmd
+        else:
+            # Use venv's pyspr directly
+            venv_pyspr = os.path.join(project_root, ".venv", "bin", "pyspr") if project_root else "pyspr"
+            cmd = f"SPR_USING_MOCK_GITHUB={mock_setting} {venv_pyspr} " + cmd.replace("pyspr ", "", 1)
+
         if project_root:
             actual_cwd = project_root
             cmd = f"cd {actual_cwd} && {cmd} -C {cwd}" if cwd else f"cd {actual_cwd} && {cmd} -C {orig_cwd}"
