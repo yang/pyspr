@@ -209,12 +209,14 @@ def parse_local_commit_stack(commit_log: str) -> Tuple[List[Commit], bool]:
     return commits, True
 
 def branch_name_from_commit(config: PysprConfig, commit: Commit) -> str:
-    """Get branch name for commit. Uses pyspr/{commit_id} pattern."""
-    return f"pyspr/{commit.commit_id}"
+    """Get branch name for commit. Uses {prefix}{commit_id} pattern."""
+    prefix = config.repo.branch_prefix
+    return f"{prefix}{commit.commit_id}"
 
 def breakup_branch_name_from_commit(config: PysprConfig, commit: Commit) -> str:
-    """Get branch name for breakup commit. Uses pyspr/{commit_id} pattern."""
-    return f"pyspr/{commit.commit_id}"
+    """Get branch name for breakup commit. Uses {prefix}{commit_id} pattern."""
+    prefix = config.repo.branch_prefix
+    return f"{prefix}{commit.commit_id}"
 
 class RealGit:
     """Real Git implementation."""

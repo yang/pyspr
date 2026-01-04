@@ -396,8 +396,10 @@ class GitHubClient:
           }
         }
         """
-        # Match pyspr/ID pattern (also support legacy spr pattern)
-        spr_branch_pattern = r'^(?:spr/[^/]+/|pyspr/)([a-f0-9]{8})'
+        # Match configured branch prefix pattern (also support legacy spr pattern)
+        prefix = self.config.repo.branch_prefix
+        escaped_prefix = re.escape(prefix)
+        spr_branch_pattern = rf'^(?:spr/[^/]+/|{escaped_prefix})([a-f0-9]{{8}})'
         
         logger.info("> github fetch pull requests")
         
@@ -546,8 +548,9 @@ class GitHubClient:
             raise Exception("GitHub repo not initialized - check token and repo owner/name config")
         
         # Use breakup branch name if requested
+        prefix = self.config.repo.branch_prefix
         if use_breakup_branch:
-            branch_name = f"pyspr/{commit.commit_id}"
+            branch_name = f"{prefix}{commit.commit_id}"
         else:
             branch_name = self.branch_name_from_commit(commit)
         
@@ -646,11 +649,12 @@ class GitHubClient:
                 gh_pr.edit(title=commit.subject)
                 pr.title = commit.subject
         
-        # Always update body with current stack info 
+        # Always update body with current stack info
         if commit:
             # Check if this is a breakup PR by looking at the branch name
             # BUT: if we have multiple PRs in the stack, we should show stack info regardless
-            is_breakup = bool(pr.from_branch and pr.from_branch.startswith('pyspr/')) and len(prs) <= 1
+            prefix = self.config.repo.branch_prefix
+            is_breakup = bool(pr.from_branch and pr.from_branch.startswith(prefix)) and len(prs) <= 1
             body = self.format_body(commit, prs, is_breakup=is_breakup)
             logger.debug(f"Updating body for PR #{pr.number}:\n{body}")
             gh_pr.edit(body=body)
@@ -797,8 +801,9 @@ class GitHubClient:
                 gh_pr.merge(merge_method='merge')
 
     def branch_name_from_commit(self, commit: Commit) -> str:
-        """Generate branch name from commit. Uses pyspr/{commit_id} pattern."""
-        return f"pyspr/{commit.commit_id}"
+        """Generate branch name from commit. Uses {prefix}{commit_id} pattern."""
+        prefix = self.config.repo.branch_prefix
+        return f"{prefix}{commit.commit_id}"
         
     def format_stack_markdown(self, commit: Commit, stack: List[PullRequest]) -> str:
         """Format stack of PRs as markdown."""
