@@ -9,12 +9,15 @@ class RepoConfig(BaseModel):
     """Repository configuration."""
     # GitHub connection settings
     github_remote: str = "origin"
-    github_branch: str = "main" 
+    github_branch: str = "main"
     github_branch_target: str = "main"  # Target branch for PRs, defaults to main
     github_repo_owner: Optional[str] = None
     github_repo_name: Optional[str] = None
     github_host: str = "github.com"  # GitHub host, defaults to github.com
-    
+
+    # Branch naming
+    branch_prefix: str = "pyspr/"  # Prefix for PR branch names (e.g., "pyspr/" -> "pyspr/{commit_id}")
+
     # PR and merge settings
     merge_queue: bool = False
     merge_method: str = "squash"  # Merge method, one of: merge, squash, rebase
@@ -22,7 +25,7 @@ class RepoConfig(BaseModel):
     show_pr_titles_in_stack: bool = False
     branch_push_individually: bool = False  # Whether to push branches individually
     auto_close_prs: bool = False  # Whether to automatically close PRs
-    
+
     # Labels for PRs
     labels: List[str] = Field(default_factory=list)  # Labels to apply to PRs
 
