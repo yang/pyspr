@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, TypedDict, Sequence, Tuple
 import time
 from concurrent.futures import Future
 
-from ..git import Commit, get_local_commit_stack, branch_name_from_commit, breakup_branch_name_from_commit, GitInterface
+from ..git import Commit, get_local_commit_stack, branch_name_from_commit, GitInterface
 from ..config.models import PysprConfig
 from ..github import GitHubInfo, PullRequest, GitHubClient
 from ..typing import StackedPRContextProtocol
@@ -38,8 +38,6 @@ class StackedPR:
         self.config = config
         self.github = github
         self.git_cmd = git_cmd
-        self.output = sys.stdout
-        self.input = sys.stdin
         self.pretend = False  # Default to not pretend mode
         self.concurrency: int = config.tool.concurrency  # Get from tool config
 
@@ -845,7 +843,7 @@ class StackedPR:
         
         # Process each commit
         for i, commit in enumerate(non_wip_commits):
-            branch_name = breakup_branch_name_from_commit(self.config, commit)
+            branch_name = branch_name_from_commit(self.config, commit)
             logger.info(f"\nProcessing commit {i+1}/{len(non_wip_commits)}: {commit.subject}")
             logger.debug(f"  Commit hash: {commit.commit_hash}")
             logger.debug(f"  Branch name: {branch_name}")
@@ -1043,7 +1041,7 @@ class StackedPR:
                 # Find the commit for this branch
                 commit = None
                 for c in non_wip_commits:
-                    if breakup_branch_name_from_commit(self.config, c) == branch:
+                    if branch_name_from_commit(self.config, c) == branch:
                         commit = c
                         break
                         
@@ -1734,7 +1732,7 @@ class StackedPR:
         single_commit_branches: List[str] = []
         
         for commit in independents:
-            branch_name = breakup_branch_name_from_commit(self.config, commit)
+            branch_name = branch_name_from_commit(self.config, commit)
             print(f"\nProcessing independent commit: {commit.subject}")
             
             # Check if a PR already exists for this commit
@@ -1937,7 +1935,7 @@ class StackedPR:
             if len(component) == 1:
                 # Single commit - use regular breakup
                 commit = component[0]
-                branch_name = breakup_branch_name_from_commit(self.config, commit)
+                branch_name = branch_name_from_commit(self.config, commit)
                 print(f"\n  ⏳ Processing \"{commit.subject}\"...")
                 
                 # Check if a PR already exists for this commit (by commit ID)
@@ -2029,7 +2027,7 @@ class StackedPR:
                     # For each commit in the stack, find its PR (either just created or pre-existing)
                     for commit in stack_commits:
                         # Try to find PR by branch name
-                        branch_name = breakup_branch_name_from_commit(self.config, commit)
+                        branch_name = branch_name_from_commit(self.config, commit)
                         logger.debug(f"Looking for PR with breakup branch: {branch_name}")
                         pr = self.github.get_pull_request_for_branch(ctx, branch_name)
                         
@@ -2212,14 +2210,14 @@ class StackedPR:
                 
     def _create_breakup_prs(self, ctx: StackedPRContextProtocol, branches: List[str], all_commits: List[Commit], reviewers: Optional[List[str]] = None) -> None:
         """Create PRs for breakup branches."""
-        from ..git import breakup_branch_name_from_commit
+        from ..git import branch_name_from_commit
         
         github_info = self.github.get_info(ctx, self.git_cmd)
         
         # Map branches to commits
         commit_map: Dict[str, Commit] = {}
         for commit in all_commits:
-            branch = breakup_branch_name_from_commit(self.config, commit)
+            branch = branch_name_from_commit(self.config, commit)
             if branch in branches:
                 commit_map[branch] = commit
                 
