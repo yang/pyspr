@@ -1,26 +1,7 @@
 """Common types used across the codebase."""
 
-from typing import Dict, List, Optional, Protocol, Type, TypeVar, Union, NewType, Literal
+from typing import Dict, Optional, Protocol, Type, TypeVar, Union, NewType, Literal
 from dataclasses import dataclass
-
-
-class DuplicateCommitIDError(Exception):
-    """Raised when multiple commits in the stack have the same commit-id."""
-
-    def __init__(self, duplicates: Dict[str, List[str]]):
-        """Initialize with a dict mapping commit-id to list of commit hashes that share it."""
-        self.duplicates = duplicates
-        # Build a descriptive message
-        messages: List[str] = []
-        for commit_id, hashes in duplicates.items():
-            hash_list = ", ".join(h[:8] for h in hashes)
-            messages.append(f"  commit-id:{commit_id} appears in commits: {hash_list}")
-        super().__init__(
-            f"Duplicate commit-id(s) detected in stack:\n" + "\n".join(messages) +
-            "\n\nEach commit must have a unique commit-id. "
-            "This can happen if commits were copied (e.g., via cherry-pick) "
-            "without amending to get new commit-ids."
-        )
 
 # Shared TypeVars
 T = TypeVar('T')
