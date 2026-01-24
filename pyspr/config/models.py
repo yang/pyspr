@@ -52,9 +52,6 @@ class ToolConfig(BaseModel):
 
     # Git index.lock handling (for NFS lag issues)
     index_lock_wait_enabled: bool = True  # Whether to wait for index.lock
-    index_lock_max_wait: float = 30.0  # Max seconds to wait for index.lock
-    index_lock_check_interval: float = 0.1  # How often to check for index.lock
-    index_lock_stale_threshold: float = 5.0  # Consider lock stale after this many seconds
 
     class Config:
         """Pydantic config."""

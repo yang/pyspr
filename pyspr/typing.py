@@ -1,20 +1,15 @@
 """Common types used across the codebase."""
 
-from typing import Dict, Optional, Protocol, Type, TypeVar, Union, NewType, Literal
+from typing import Dict, Optional, Protocol, TypeVar, NewType, Literal
 from dataclasses import dataclass
 
 # Shared TypeVars
 T = TypeVar('T')
-# No config type variables needed
 GitT = TypeVar('GitT', bound='GitInterface')
 ContextT = TypeVar('ContextT', bound='StackedPRContextProtocol')
 
 # Literal types for string constants
 MergeMethod = Literal['merge', 'squash', 'rebase']
-LogLevel = Literal['DEBUG', 'INFO', 'WARNING', 'ERROR']
-PRState = Literal['open', 'closed']
-GitRemote = Literal['origin']  # Add more as needed
-GitBranch = Literal['main', 'master']  # Add more as needed
 
 # Create NewTypes for commit identifiers
 CommitID = NewType('CommitID', str)
@@ -39,8 +34,8 @@ class StackedPRContextProtocol(Protocol):
     """Protocol for what StackedPR expects from a context."""
     obj: Dict[str, object]  # Click context object storage
 
-# Allow Optional[StackedPRContextProtocol] to be used where StackedPRContextProtocol is expected
-StackedPRContextType = Optional[Union[StackedPRContextProtocol, Type[None]]]
+# Context type alias
+StackedPRContextType = Optional[StackedPRContextProtocol]
 
 # Common Protocol definitions - move from their individual modules
 
