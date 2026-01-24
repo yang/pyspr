@@ -9,7 +9,7 @@ import shlex
 from typing import List, Optional, Tuple
 import git
 from git.exc import GitCommandError, InvalidGitRepositoryError
-from ..typing import CommitID, GitInterface, Commit
+from ..typing import CommitID, GitInterface, Commit, DuplicateCommitIDError
 from ..config.models import PysprConfig
 
 # Get module logger
@@ -45,7 +45,11 @@ def get_local_commit_stack(config: PysprConfig, git_cmd: GitInterface) -> List[C
         logger.debug("Parsed commits:")
         for c in commits:
             logger.debug(f"  {c.commit_hash[:8]}: id={c.commit_id}, subject='{c.subject}'")
-    
+
+    # Check for duplicate commit-ids before proceeding
+    # This catches cases where commits were copied (e.g., cherry-pick) without getting new IDs
+    check_for_duplicate_commit_ids(commits)
+
     # If not valid, it means commits are missing IDs - add them
     if not valid:
         logger.debug("Parsing marked as invalid - some commits are missing commit-ids")
@@ -207,6 +211,35 @@ def parse_local_commit_stack(commit_log: str) -> Tuple[List[Commit], bool]:
         return commits, False
         
     return commits, True
+
+
+def check_for_duplicate_commit_ids(commits: List[Commit]) -> None:
+    """Check for duplicate commit-ids in the commit stack.
+
+    Raises DuplicateCommitIDError if any commit-id appears more than once.
+    This can happen if commits are copied (e.g., via cherry-pick) without
+    amending to get new commit-ids.
+    """
+    from collections import defaultdict
+    from typing import Dict
+
+    # Map commit-id to list of commit hashes that have that ID
+    id_to_hashes: Dict[str, List[str]] = defaultdict(list)
+
+    for commit in commits:
+        if commit.commit_id:  # Only check commits with IDs
+            id_to_hashes[commit.commit_id].append(commit.commit_hash)
+
+    # Find duplicates (commit-ids that appear more than once)
+    duplicates = {
+        commit_id: hashes
+        for commit_id, hashes in id_to_hashes.items()
+        if len(hashes) > 1
+    }
+
+    if duplicates:
+        raise DuplicateCommitIDError(duplicates)
+
 
 def branch_name_from_commit(config: PysprConfig, commit: Commit) -> str:
     """Get branch name for commit. Uses {prefix}{commit_id} pattern."""
