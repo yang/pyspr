@@ -45,7 +45,12 @@ def get_local_commit_stack(config: PysprConfig, git_cmd: GitInterface) -> List[C
         logger.debug("Parsed commits:")
         for c in commits:
             logger.debug(f"  {c.commit_hash[:8]}: id={c.commit_id}, subject='{c.subject}'")
-    
+
+    # Check for duplicate commit-ids
+    ids = [c.commit_id for c in commits if c.commit_id]
+    if dupes := [id for id in ids if ids.count(id) > 1]:
+        raise Exception(f"Duplicate commit-id(s): {', '.join(set(dupes))}")
+
     # If not valid, it means commits are missing IDs - add them
     if not valid:
         logger.debug("Parsing marked as invalid - some commits are missing commit-ids")
@@ -207,6 +212,7 @@ def parse_local_commit_stack(commit_log: str) -> Tuple[List[Commit], bool]:
         return commits, False
         
     return commits, True
+
 
 def branch_name_from_commit(config: PysprConfig, commit: Commit) -> str:
     """Get branch name for commit. Uses {prefix}{commit_id} pattern."""
