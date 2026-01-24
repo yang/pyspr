@@ -47,14 +47,9 @@ def get_local_commit_stack(config: PysprConfig, git_cmd: GitInterface) -> List[C
             logger.debug(f"  {c.commit_hash[:8]}: id={c.commit_id}, subject='{c.subject}'")
 
     # Check for duplicate commit-ids
-    seen_ids: dict[str, str] = {}
-    for c in commits:
-        if c.commit_id and c.commit_id in seen_ids:
-            raise Exception(
-                f"Duplicate commit-id:{c.commit_id} in commits {seen_ids[c.commit_id][:8]} and {c.commit_hash[:8]}"
-            )
-        if c.commit_id:
-            seen_ids[c.commit_id] = c.commit_hash
+    ids = [c.commit_id for c in commits if c.commit_id]
+    if dupes := [id for id in ids if ids.count(id) > 1]:
+        raise Exception(f"Duplicate commit-id(s): {', '.join(set(dupes))}")
 
     # If not valid, it means commits are missing IDs - add them
     if not valid:
